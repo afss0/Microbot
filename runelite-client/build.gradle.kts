@@ -414,7 +414,7 @@ val shadowJar = tasks.register<Jar>("shadowJar") {
 
     group = BasePlugin.BUILD_GROUP
     archiveClassifier = "shadow"
-    archiveFileName = project.name + "-" + project.version + "-shaded.jar"
+    archiveFileName = "microbot_afss0-" + project.version + "-shaded.jar"
 }
 tasks.assemble { dependsOn(shadowJar) }
 
@@ -494,7 +494,7 @@ val microbotReleaseJar = tasks.register<Copy>("microbotReleaseJar") {
     dependsOn(shadowJar)
     from(shadowJar.flatMap { it.archiveFile })
     into(layout.buildDirectory.dir("libs"))
-    rename { "microbot-${microbotVersionProvider.get()}.jar" }
+    rename { "microbot_afss0-${microbotVersionProvider.get()}.jar" }
 }
 
 tasks.assemble { dependsOn(microbotReleaseJar) }
