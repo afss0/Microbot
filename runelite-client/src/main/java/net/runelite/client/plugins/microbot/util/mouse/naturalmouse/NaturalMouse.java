@@ -6,8 +6,10 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.Global;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.enums.ActivityIntensity;
+import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.SpeedManager;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.MouseInfoAccessor;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.MouseMotionFactory;
@@ -115,6 +117,14 @@ public class NaturalMouse {
             log.debug("Default: Creating super fast gamer motion factory");
             factory = FactoryTemplates.createSuperFastGamerMotionFactory(nature);
         }
+        // Apply weather speed factor: divide time by factor so lower factor = slower movement
+        SpeedManager baseManager = factory.getSpeedManager();
+        factory.setSpeedManager(distance -> {
+            var pair = baseManager.getFlowWithTime(distance);
+            double factor = WeatherModulation.combinedSpeedFactor();
+            long adjustedTime = (long) (pair.y / Math.max(0.1, factor));
+            return new Pair<>(pair.x, adjustedTime);
+        });
         cachedIntensity = intensity;
         cachedFactory = factory;
         return factory;

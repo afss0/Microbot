@@ -454,7 +454,7 @@ public interface ShortestPathConfig extends Config {
             section = sectionSettings
     )
     default int recalculateDistance() {
-        return 10;
+        return 15;
     }
 
     @Range(
@@ -469,7 +469,7 @@ public interface ShortestPathConfig extends Config {
             section = sectionSettings
     )
     default int reachedDistance() {
-        return 5;
+        return 10;
     }
 
     @ConfigItem(

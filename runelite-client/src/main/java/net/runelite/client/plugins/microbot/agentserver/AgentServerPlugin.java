@@ -88,6 +88,7 @@ public class AgentServerPlugin extends Plugin {
 
 		String token = ensureAuthToken();
 		AgentHandler.setTokenSupplier(() -> configManager.getConfiguration(AgentServerConfig.GROUP, AgentServerConfig.KEY_TOKEN));
+		AgentHandler.setAllowRemoteAccess(config.bindAllInterfaces());
 
 		executor = Executors.newFixedThreadPool(4, new ThreadFactory() {
 			private final AtomicInteger count = new AtomicInteger(1);
@@ -158,8 +159,9 @@ public class AgentServerPlugin extends Plugin {
 
 	private boolean startTcp(List<AgentHandler> handlers) {
 		int port = ensurePort();
+		String bindHost = config.bindAllInterfaces() ? "0.0.0.0" : "127.0.0.1";
 		try {
-			server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+			server = HttpServer.create(new InetSocketAddress(bindHost, port), 0);
 		} catch (java.net.BindException e) {
 			log.warn("Agent server port {} is already in use (likely another Microbot client). Skipping agent server startup for this instance.", port);
 			stopServer();
@@ -175,7 +177,7 @@ public class AgentServerPlugin extends Plugin {
 			server.createContext(handler.getPath(), handler);
 		}
 		server.start();
-		log.info("Agent server bound to 127.0.0.1:{}", port);
+		log.info("Agent server bound to {}:{}", bindHost, port);
 		return true;
 	}
 

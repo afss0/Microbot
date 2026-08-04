@@ -301,7 +301,23 @@ public final class RouteRecovery {
             if (candidate == null || candidate.getPlane() != startWp.getPlane()) break;
             if (j > startIdx && isTransportOrigin != null && isTransportOrigin.test(candidate)) break;
             if (playerLoc != null && euclideanSq(candidate, playerLoc) > maxSq) break;
+            // Skip the tile the player is already standing on — clicking it on the minimap
+            // produces no movement, and the walker treats the click as successful, looping
+            // on the same tile until stall recovery eventually fires.
+            if (playerLoc != null && candidate.equals(playerLoc)) continue;
             bestIdx = j;
+        }
+        // If every candidate in range was the player's own tile, advance past it rather than
+        // returning startIdx (which maps to the occupied tile). The next tiles may be close
+        // enough to click; if not, the caller's click-failed-off-minimap path handles it.
+        if (bestIdx == startIdx && path.get(startIdx).equals(playerLoc)) {
+            for (int j = startIdx + 1; j < path.size(); j++) {
+                WorldPoint next = path.get(j);
+                if (next == null || next.getPlane() != playerLoc.getPlane()) break;
+                if (playerLoc != null && euclideanSq(next, playerLoc) > maxSq) break;
+                bestIdx = j;
+                break;
+            }
         }
         return bestIdx;
     }

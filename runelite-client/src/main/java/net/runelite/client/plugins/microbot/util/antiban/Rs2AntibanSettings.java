@@ -117,6 +117,11 @@ public class Rs2AntibanSettings {
         private Double microBreakChance;
         private Double moveMouseRandomlyChance;
         private Double moveMouseOffScreenChance;
+        // Weather modulation
+        private Boolean weatherEnabled;
+        private Double weatherLat;
+        private Double weatherLon;
+        private String weatherCityName;
     }
 
     public static void saveToProfile() {
@@ -185,6 +190,11 @@ public class Rs2AntibanSettings {
         settings.microBreakChance = microBreakChance;
         settings.moveMouseRandomlyChance = moveMouseRandomlyChance;
         settings.moveMouseOffScreenChance = moveMouseOffScreenChance;
+        // Weather modulation
+        settings.weatherEnabled = weatherEnabled;
+        settings.weatherLat = weatherLat;
+        settings.weatherLon = weatherLon;
+        settings.weatherCityName = weatherCityName;
         return settings;
     }
 
@@ -270,6 +280,19 @@ public class Rs2AntibanSettings {
         if (settings.moveMouseOffScreenChance != null) {
             moveMouseOffScreenChance = settings.moveMouseOffScreenChance;
         }
+        // Weather modulation
+        if (settings.weatherEnabled != null) {
+            weatherEnabled = settings.weatherEnabled;
+        }
+        if (settings.weatherLat != null) {
+            weatherLat = settings.weatherLat;
+        }
+        if (settings.weatherLon != null) {
+            weatherLon = settings.weatherLon;
+        }
+        if (settings.weatherCityName != null) {
+            weatherCityName = settings.weatherCityName;
+        }
     }
 
     public static boolean actionCooldownActive = false;
@@ -292,6 +315,12 @@ public class Rs2AntibanSettings {
     public static boolean dynamicActivity = false;
     public static boolean devDebug = false;
     public static boolean overwriteScriptSettings = false;
+
+    // Weather modulation settings
+    public static boolean weatherEnabled = false;
+    public static double weatherLat = 0.0;
+    public static double weatherLon = 0.0;
+    public static String weatherCityName = "";
 
     public static boolean takeMicroBreaks = false; // will take micro breaks lasting 3-15 minutes at random intervals by default.
     public static boolean playSchedule = false; //TODO: Implement this
@@ -333,5 +362,10 @@ public class Rs2AntibanSettings {
         microBreakChance = 0.1;
         moveMouseRandomlyChance = 0.1;
         moveMouseOffScreenChance = 0.1;
+        // Weather modulation
+        weatherEnabled = false;
+        weatherLat = 0.0;
+        weatherLon = 0.0;
+        weatherCityName = "";
     }
 }

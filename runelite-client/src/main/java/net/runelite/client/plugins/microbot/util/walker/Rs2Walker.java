@@ -601,6 +601,11 @@ public class Rs2Walker {
      * Without this, a large "Finish distance" (e.g. 5) allows {@link WalkerState#ARRIVED} on the
      * wrong side of a wall/door for small interiors. When {@code dLast &lt; TIGHT_PATH_GOAL_GAP}, cap is {@code 1};
      * when {@code dLast == TIGHT_PATH_GOAL_GAP}, cap is {@code 2} (outdoor micro-walking relief at the gap radius).
+     * <p>
+     * The cap is skipped when the goal tile is reachable from the player's current position (no wall,
+     * closed door, or other collision obstacle in between). Without this guard, even an open-field
+     * finish forces the walker to keep clicking tiles until it is within 1–2 tiles of the goal,
+     * ignoring the configured finish distance entirely.
      */
     private static int tightFinishThreshold(WorldPoint goal, WorldPoint pathLastWalkable, int configuredChebyshev) {
         int cfg = Math.max(0, configuredChebyshev);
@@ -612,12 +617,31 @@ public class Rs2Walker {
         }
         int dLast = pathLastWalkable.distanceTo2D(goal);
         if (dLast <= TIGHT_PATH_GOAL_GAP) {
+            // If the goal is reachable from the player's current position (no wall/door
+            // blocking), the tight cap is unnecessary — the walker can walk directly to
+            // the goal without needing to be 1-2 tiles away first.
+            if (isGoalReachable(goal)) {
+                return cfg;
+            }
             if (dLast < TIGHT_PATH_GOAL_GAP) {
                 return Math.min(cfg, 1);
             }
             return Math.min(cfg, 2);
         }
         return cfg;
+    }
+
+    /**
+     * Returns {@code true} when the goal tile is on the same plane as the player and
+     * walkable/reachable via the collision map from the player's current position.
+     * Used by {@link #tightFinishThreshold} to determine whether a wall or closed door
+     * actually separates the player from the goal.
+     */
+    private static boolean isGoalReachable(WorldPoint goal) {
+        if (goal == null) return false;
+        WorldPoint playerLoc = Rs2Player.getWorldLocation();
+        if (playerLoc == null || playerLoc.getPlane() != goal.getPlane()) return false;
+        return Rs2Tile.isTileReachable(goal);
     }
 
     /**
@@ -3503,9 +3527,9 @@ public class Rs2Walker {
 
     private static void manageRunEnergy(int pathRemaining) {
         try {
-            if (!Rs2Player.isRunEnabled() && Rs2Player.getRunEnergy() > 10) {
-                Rs2Player.toggleRunEnergy(true);
-            }
+            // Run toggle intentionally NOT done here — the in-game settings already handle
+            // auto-run, and re-enabling it programmatically every time it gets disabled is a
+            // detectable automation marker. The walker only manages stamina potions below.
             if (pathRemaining < STAMINA_MIN_PATH_TILES) return;
             if (Rs2Player.getRunEnergy() >= staminaThreshold()) return;
             if (Rs2Player.hasStaminaBuffActive()) return;

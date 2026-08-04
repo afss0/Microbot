@@ -176,6 +176,12 @@ public class AntibanPlugin extends Plugin {
         Rs2AntibanSettings.loadFromProfile();
         validateAndSetBreakDurations();
 
+        // Initialise weather modulation from saved settings (no-op if disabled)
+        WeatherModulation.initFromSettings();
+        if (Rs2AntibanSettings.weatherEnabled) {
+            WeatherModulation.refreshWeather();
+        }
+
         panelRefreshTimer = new Timer();
         panelRefreshTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
@@ -211,6 +217,10 @@ public class AntibanPlugin extends Plugin {
         Rs2Antiban.resetAntibanSettings();
         Rs2AntibanSettings.loadFromProfile();
         validateAndSetBreakDurations();
+        WeatherModulation.initFromSettings();
+        if (Rs2AntibanSettings.weatherEnabled) {
+            WeatherModulation.refreshWeather();
+        }
     }
 
     @Subscribe

@@ -94,10 +94,9 @@ public abstract class Script extends Global implements IScript {
             return false;
 
         if (Microbot.isLoggedIn()) {
-            boolean hasRunEnergy = Microbot.getClientThread().runOnClientThreadOptional(() -> Microbot.getClient().getEnergy()).orElse(0) > Microbot.runEnergyThreshold;
-            if (Microbot.enableAutoRunOn && hasRunEnergy)
-                Rs2Player.toggleRunEnergy(true);
-            if (!hasRunEnergy && Microbot.useStaminaPotsIfNeeded && Rs2Player.isMoving()) {
+            // Run toggle intentionally NOT done here — the in-game settings already handle
+            // auto-run, and re-enabling it programmatically is a detectable automation marker.
+            if (Microbot.useStaminaPotsIfNeeded && Rs2Player.isMoving()) {
                 Rs2Inventory.useRestoreEnergyItem();
             }
             Microbot.getConfigManager().setConfiguration(MicrobotConfig.configGroup, MicrobotConfig.keyEnableAutoRunOn, Microbot.enableAutoRunOn);

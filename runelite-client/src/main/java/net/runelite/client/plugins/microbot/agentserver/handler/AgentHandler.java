@@ -22,6 +22,7 @@ public abstract class AgentHandler implements HttpHandler {
 	private static final String AUTH_HEADER = "X-Agent-Token";
 
 	private static volatile Supplier<String> tokenSupplier = () -> null;
+	private static volatile boolean allowRemoteAccess = false;
 
 	protected final Gson gson;
 
@@ -31,6 +32,10 @@ public abstract class AgentHandler implements HttpHandler {
 
 	public static void setTokenSupplier(Supplier<String> supplier) {
 		tokenSupplier = supplier != null ? supplier : () -> null;
+	}
+
+	public static void setAllowRemoteAccess(boolean allow) {
+		allowRemoteAccess = allow;
 	}
 
 	public abstract String getPath();
@@ -49,7 +54,7 @@ public abstract class AgentHandler implements HttpHandler {
 		}
 
 		String host = exchange.getRequestHeaders().getFirst("Host");
-		if (host == null || !isLoopbackHost(host)) {
+		if (host == null || (!allowRemoteAccess && !isLoopbackHost(host))) {
 			sendOpaqueNotFound(exchange);
 			return;
 		}
