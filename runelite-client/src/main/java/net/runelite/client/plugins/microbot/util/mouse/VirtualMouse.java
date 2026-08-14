@@ -159,6 +159,7 @@ public class VirtualMouse extends Mouse {
         if (point == null) return this;
 
         mouseSyncOnStart();
+        interactionInProgress = true;
 
         Runnable clickAction = () -> {
             try {
@@ -167,6 +168,7 @@ public class VirtualMouse extends Mouse {
                 }
                 handleClick(point, rightClick);
             } finally {
+                interactionInProgress = false;
                 mouseSyncOnEnd();
             }
         };
@@ -185,6 +187,7 @@ public class VirtualMouse extends Mouse {
         if (point == null) return this;
 
         mouseSyncOnStart();
+        interactionInProgress = true;
 
         Runnable clickAction = () -> {
             try {
@@ -213,6 +216,7 @@ public class VirtualMouse extends Mouse {
                 Microbot.targetMenu = entry;
                 handleClick(newPoint, rightClick);
             } finally {
+                interactionInProgress = false;
                 mouseSyncOnEnd();
             }
         };
@@ -354,6 +358,7 @@ public class VirtualMouse extends Mouse {
         if (startPoint == null || endPoint == null) return this;
 
         mouseSyncOnStart();
+        interactionInProgress = true;
         try {
             if (shouldMoveNaturally(startPoint))
                 Microbot.naturalMouse.moveTo(startPoint.getX(), startPoint.getY());
@@ -369,6 +374,7 @@ public class VirtualMouse extends Mouse {
             sleep(Rs2Random.logNormalBounded(80, 120));
             released(endPoint, MouseEvent.BUTTON1);
         } finally {
+            interactionInProgress = false;
             mouseSyncOnEnd();
         }
 

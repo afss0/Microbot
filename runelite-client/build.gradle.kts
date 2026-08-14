@@ -453,6 +453,22 @@ dependencies {
     testImplementation(libs.okhttp.mockserver)
 }
 
+// ── Build number management ────────────────────────────────────────────────
+val buildNumberFile = rootProject.file("build-number.txt")
+
+fun getAndIncrementBuildNumber(): Int {
+    val current = if (buildNumberFile.exists()) {
+        buildNumberFile.readText().trim().toIntOrNull() ?: 0
+    } else {
+        0
+    }
+    buildNumberFile.writeText("${current + 1}")
+    return current + 1
+}
+
+val buildNumber = getAndIncrementBuildNumber()
+val buildNumberPadded = String.format("b%04d", buildNumber)
+
 val shadowJar = tasks.register<Jar>("shadowJar") {
     dependsOn(configurations.runtimeClasspath)
     manifest {
@@ -479,7 +495,7 @@ val shadowJar = tasks.register<Jar>("shadowJar") {
 
     group = BasePlugin.BUILD_GROUP
     archiveClassifier = "shadow"
-    archiveFileName = "microbot_afss0-" + project.version + "-shaded.jar"
+    archiveFileName = "microbot_afss0-" + project.version + "-" + buildNumberPadded + "-shaded.jar"
 }
 tasks.assemble { dependsOn(shadowJar) }
 
@@ -559,7 +575,7 @@ val microbotReleaseJar = tasks.register<Copy>("microbotReleaseJar") {
     dependsOn(shadowJar)
     from(shadowJar.flatMap { it.archiveFile })
     into(layout.buildDirectory.dir("libs"))
-    rename { "microbot_afss0-${microbotVersionProvider.get()}.jar" }
+    rename { "microbot_afss0-${microbotVersionProvider.get()}-${buildNumberPadded}.jar" }
 }
 
 tasks.assemble { dependsOn(microbotReleaseJar) }
