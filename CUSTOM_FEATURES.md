@@ -39,6 +39,10 @@ Used during merges to verify nothing is lost.
 - **File:** `RouteRecovery.java`
 - **What:** Skips the tile the player is already standing on during minimap click recovery. Clicking own tile produces no movement but walker treats it as successful, causing loop until stall recovery fires.
 
+### Interim Close Tiles Threshold
+- **File:** `Rs2Walker.java`
+- **What:** `INTERIM_CLOSE_TILES` 5→6. When the player is within this many tiles of the interim minimap click target, the walker considers it "arrived" and selects a new checkpoint. Raising it from 5 to 6 gives the walker a slightly larger arrival window, reducing unnecessary re-clicks on short segments while still keeping movement smooth.
+
 ### ShortestPath Default Distances
 - **File:** `ShortestPathConfig.java`
 - **What:** `recalculateDistance` 10→15, `reachedDistance` 5→10. More lenient thresholds reduce unnecessary path recalculations.
@@ -59,6 +63,18 @@ Used during merges to verify nothing is lost.
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
+
+## Build Fixes
+
+Upstream merge breakage resolved without modifying any upstream RuneLite source files.
+
+### AgilityOverlay RS2Item Adaptation
+- **File:** `AgilityOverlay.java`
+- **What:** Adapted `marksOfGrace` from `List<Tile>` to `List<RS2Item>`. The fork's `AgilityPlugin` changed the field type to `RS2Item` (which wraps a `Tile`), but the upstream overlay still expected `List<Tile>`. Fixed by importing `RS2Item` and calling `.getTile()` on each entry.
+
+### ETAOverlayPanel Travel Time Inlining
+- **File:** `ETAOverlayPanel.java`
+- **What:** Inlined `calculateTravelTime()` directly in the overlay class. The original code called `RunEnergyPlugin.calculateTravelTime()`, a static method that was removed from upstream during a merge. Rather than patching upstream `RunEnergyPlugin`, the travel time simulation (run/walk/recovery cycle) was reimplemented as a private static method in this Microbot overlay.
 
 ---
 

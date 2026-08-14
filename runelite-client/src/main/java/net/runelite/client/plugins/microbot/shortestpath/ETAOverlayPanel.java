@@ -37,7 +37,6 @@ public class ETAOverlayPanel extends OverlayPanel {
                 WorldPoint playerLocation = Rs2Player.getWorldLocation();
 
                 int progressIndex = findClosestPointIndex(playerLocation, path);
-
                 int remainingPathLength = path.size() - progressIndex;
 
                 String remainingTime = calculateTravelTime(remainingPathLength, plugin.getConfig().showInSeconds());

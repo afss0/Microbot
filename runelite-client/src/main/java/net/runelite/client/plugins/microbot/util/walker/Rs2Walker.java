@@ -134,7 +134,7 @@ public class Rs2Walker {
 	/** A single delayed client tick must not turn an otherwise healthy blocking walk into EXIT. */
 	private static final int CLIENT_THREAD_TIMEOUT_RETRIES = 2;
 
-	private static final int INTERIM_CLOSE_TILES = 5;
+	private static final int INTERIM_CLOSE_TILES = 6;
 
 	/**
 	 * Floor for the jittered per-click route reach. Deliberately above {@link #INTERIM_CLOSE_TILES}
