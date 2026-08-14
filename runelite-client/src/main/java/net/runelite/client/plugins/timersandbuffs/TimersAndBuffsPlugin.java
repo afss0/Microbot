@@ -29,25 +29,6 @@ package net.runelite.client.plugins.timersandbuffs;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.Provides;
-import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.*;
-import net.runelite.api.annotations.Varp;
-import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.events.*;
-import net.runelite.client.config.ConfigManager;
-import net.runelite.client.eventbus.Subscribe;
-import net.runelite.client.events.ConfigChanged;
-import net.runelite.client.game.ItemManager;
-import net.runelite.client.game.ItemVariationMapping;
-import net.runelite.client.game.SpriteManager;
-import net.runelite.client.plugins.Plugin;
-import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.microbot.util.player.Rs2Player;
-import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
-import net.runelite.client.util.RSTimeUnit;
-import org.apache.commons.lang3.ArrayUtils;
-
-import javax.inject.Inject;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumMap;
@@ -96,6 +77,9 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import static net.runelite.client.plugins.timersandbuffs.GameCounter.*;
 import static net.runelite.client.plugins.timersandbuffs.GameTimer.*;
+import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
+import net.runelite.client.util.RSTimeUnit;
+import org.apache.commons.lang3.ArrayUtils;
 
 @PluginDescriptor(
 	name = "Timers & Buffs",
@@ -179,8 +163,6 @@ public class TimersAndBuffsPlugin extends Plugin
 
 	@Inject
 	private InfoBoxManager infoBoxManager;
-
-	public static TimerTimer t;
 
 	@Provides
 	TimersAndBuffsConfig getConfig(ConfigManager configManager)
@@ -1220,7 +1202,12 @@ public class TimersAndBuffsPlugin extends Plugin
 	public void onGameTick(GameTick event)
 	{
 		Player player = client.getLocalPlayer();
-		WorldPoint currentWorldPoint = Rs2Player.getWorldLocation();
+		if (player == null)
+		{
+			return;
+		}
+
+		WorldPoint currentWorldPoint = player.getWorldLocation();
 
 		if (freezeTimer != null)
 		{
@@ -1400,7 +1387,7 @@ public class TimersAndBuffsPlugin extends Plugin
 	{
 		removeGameTimer(timer);
 
-		t = new TimerTimer(timer, duration, this);
+		TimerTimer t = new TimerTimer(timer, duration, this);
 		switch (timer.getImageType())
 		{
 			case SPRITE:
