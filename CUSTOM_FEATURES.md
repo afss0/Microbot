@@ -78,6 +78,10 @@ Used during merges to verify nothing is lost.
 - **File:** `MouseSyncPlugin.java`
 - **What:** Added `cursorTracker` — a scheduled task (50ms interval) that reads the user's OS cursor position via `MouseInfo.getPointerInfo()`, converts screen→canvas coordinates (stretched-mode aware), and updates `VirtualMouse.lastMove`. Only runs while `ClientUI.getClient().isEnabled()` is true (user has input control). Skips during bot interactions and when the user clicked "Disable Input". Starts in `startUp()`, stops in `shutDown()`.
 
+### Walker Activity Guard
+- **File:** `MouseSyncPlugin.java`
+- **What:** `onBotInteractionStart()`, `onBotInteractionEnd()`, and `cursorTracker` now skip entirely when `Rs2Walker.getCurrentTarget() != null`. Prevents MouseSync from disabling input, starting grace timers, or tracking cursor position while the walker is executing minimap clicks. Uses the public `getCurrentTarget()` API — no new flags or lock exposure needed.
+
 ## Build
 
 ### Project Rename
@@ -119,5 +123,6 @@ grep "interactionInProgress" runelite-client/src/main/java/net/runelite/client/p
 grep "inputWasAlreadyDisabled" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
 grep "InputSelector.disableClick\|InputSelector.enableClick" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
 grep "cursorTracker" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
+grep "getCurrentTarget" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
 grep "getAndIncrementBuildNumber" runelite-client/build.gradle.kts | head -1
 ```

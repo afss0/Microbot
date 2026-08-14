@@ -11,6 +11,7 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.InputSelector;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.util.HotkeyListener;
 
@@ -135,6 +136,8 @@ public class MouseSyncPlugin extends Plugin {
      */
     public void onBotInteractionStart() {
         if (!config.enabled() || state == State.BOT_ACTIVE) return;
+        // Walker manages its own minimap clicks — do not interfere
+        if (Rs2Walker.getCurrentTarget() != null) return;
         cancelGraceTimer();
         // Track if user input was already disabled before we touched it
         inputWasAlreadyDisabled = !ClientUI.getClient().isEnabled();
@@ -150,6 +153,8 @@ public class MouseSyncPlugin extends Plugin {
      */
     public void onBotInteractionEnd() {
         if (!config.enabled() || state != State.BOT_ACTIVE) return;
+        // Walker manages its own minimap clicks — do not interfere
+        if (Rs2Walker.getCurrentTarget() != null) return;
         state = State.GRACE_PERIOD;
 
         // Snapshot the user's current OS mouse position *now* so we know
@@ -310,6 +315,8 @@ public class MouseSyncPlugin extends Plugin {
         cursorTracker = executor.scheduleAtFixedRate(() -> {
             // Only track when user has input control
             if (!ClientUI.getClient().isEnabled()) return;
+            // Skip during walker activity — walker manages cursor via minimap clicks
+            if (Rs2Walker.getCurrentTarget() != null) return;
             try {
                 PointerInfo info = MouseInfo.getPointerInfo();
                 if (info == null) return;
