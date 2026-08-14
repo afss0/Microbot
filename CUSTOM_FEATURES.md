@@ -50,7 +50,7 @@ Used during merges to verify nothing is lost.
 ## Mouse Sync
 
 ### Cursor Synchronization with User
-- **Files:** `MouseSyncPlugin.java`, `MouseSyncConfig.java` (new package: `mousesync/`), `VirtualMouse.java`
+- **Files:** `MouseSyncPlugin.java`, `MouseSyncConfig.java` (new package: `mousesync/`)
 - **What:** When enabled, the bot disables user mouse input during interactions, waits a grace period after the interaction completes, then naturally moves the cursor (via NaturalMouse) back to the user's physical OS mouse position and re-enables input. Prevents "teleporting" and user/bot input conflicts.
 - **State machine:** IDLE → BOT_ACTIVE → GRACE_PERIOD → RETURNING → IDLE
 - **Emergency hotkey:** CTRL+X — immediately stops plugin and restores mouse control. Plugin disables itself via `Microbot.stopPlugin()`.
@@ -58,31 +58,11 @@ Used during merges to verify nothing is lost.
 - **Integration:** VirtualMouse hooks `onBotInteractionStart()` / `onBotInteractionEnd()` in all click/drag methods. Standalone moves also trigger start/end.
 - **Re-enable:** Toggle the plugin off and on via the Microbot plugin list.
 
-### Guice Injection Fix
-- **Files:** `Microbot.java`, `MouseSyncPlugin.java`
-- **What:** Removed `@Inject` from `MouseSyncPlugin` static field in `Microbot.java`. Guice's `requestStaticInjection(Microbot.class)` runs before plugin discovery, so `MouseSyncConfig` wasn't bound yet. Plugin now self-registers in `startUp()` (`Microbot.mouseSyncPlugin = this`) and clears in `shutDown()`. Field made `public` for cross-package access.
-
-### interactionInProgress Flag Fix
-- **File:** `VirtualMouse.java`
-- **What:** `interactionInProgress` was declared but never set to `true`. NaturalMouse internal moves during `click()`/`drag()` triggered `mouseSyncOnEnd()` repeatedly, re-enabling user input during walker steps. Now set on entry and cleared in finally blocks of all click/drag methods.
-
-### Respect User's Global Disable Input
-- **File:** `MouseSyncPlugin.java`
-- **What:** Added `inputWasAlreadyDisabled` flag. When `onBotInteractionStart()` fires, it checks `ClientUI.getClient().isEnabled()` — if input was already disabled (user clicked "Disable Input" button), the flag is set. `enableUserInput()` now skips re-enabling when this flag is true, respecting the user's explicit choice. Flag resets when state returns to IDLE.
-
-### Cursor Position Tracking When Idle
-- **File:** `MouseSyncPlugin.java`
-- **What:** Added `cursorTracker` — a scheduled task (50ms interval) that reads the user's OS cursor position via `MouseInfo.getPointerInfo()`, converts screen→canvas coordinates (stretched-mode aware), and updates `VirtualMouse.lastMove`. Only runs while `state == IDLE` to avoid interfering with bot moves. Ensures the bot knows where the user's cursor is when starting a new interaction.
-
 ## Build
 
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
-
-### Build Number Auto-Increment
-- **Files:** `runelite-client/build.gradle.kts`, `build-number.txt`
-- **What:** `shadowJar` and `microbotReleaseJar` now include a build number (`b0001`, `b0002`, ...) in the JAR filename. `build-number.txt` at repo root auto-increments on each `assemble` run. Format: `microbot_afss0-<version>-<buildN>-shaded.jar`. Ensures every build produces a uniquely-named artifact.
 
 ## Build Fixes
 
@@ -111,8 +91,4 @@ grep -r "Skip the tile" runelite-client/src/main/java/ | head -5
 grep "microbot_afss0" settings.gradle.kts
 grep "return 15" runelite-client/src/main/java/net/runelite/client/plugins/microbot/shortestpath/ShortestPathConfig.java | head -1
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java
-grep "interactionInProgress" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/VirtualMouse.java | head -3
-grep "inputWasAlreadyDisabled" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
-grep "cursorTracker" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
-grep "getAndIncrementBuildNumber" runelite-client/build.gradle.kts | head -1
 ```
