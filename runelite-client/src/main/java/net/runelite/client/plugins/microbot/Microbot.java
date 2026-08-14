@@ -152,6 +152,8 @@ public class Microbot {
     @Inject
     private static PluginManager pluginManager;
     @Getter
+    public static InputSelector inputSelector;
+    @Getter
     @Inject
     private static WorldMapOverlay worldMapOverlay;
     @Getter

@@ -188,7 +188,7 @@ public class MicrobotPlugin extends Plugin
 
 		clientToolbar.addNavigation(navButton);
 
-		new InputSelector(clientToolbar);
+		Microbot.inputSelector = new InputSelector(clientToolbar);
 
 		Microbot.getPouchScript().startUp();
 

@@ -9,6 +9,7 @@ import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.input.KeyManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.microbot.InputSelector;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.util.HotkeyListener;
@@ -220,25 +221,27 @@ public class MouseSyncPlugin extends Plugin {
     // ── Input control ──────────────────────────────────────────────────
 
     private void disableUserInput() {
-        try {
+        InputSelector sel = Microbot.getInputSelector();
+        if (sel != null) {
+            sel.disableClick();
+        } else {
+            // Fallback if InputSelector not yet initialized
             ClientUI.getClient().setEnabled(false);
             Microbot.getClient().getCanvas().setFocusable(false);
-        } catch (Exception e) {
-            log.warn("MouseSync: failed to disable user input", e);
         }
     }
 
     private void enableUserInput() {
-        // Don't re-enable if user explicitly disabled input before the bot interaction
         if (inputWasAlreadyDisabled) {
             log.debug("MouseSync: skipping input re-enable — user had input disabled before bot interaction");
             return;
         }
-        try {
+        InputSelector sel = Microbot.getInputSelector();
+        if (sel != null) {
+            sel.enableClick();
+        } else {
             ClientUI.getClient().setEnabled(true);
             Microbot.getClient().getCanvas().setFocusable(true);
-        } catch (Exception e) {
-            log.warn("MouseSync: failed to enable user input", e);
         }
     }
 
