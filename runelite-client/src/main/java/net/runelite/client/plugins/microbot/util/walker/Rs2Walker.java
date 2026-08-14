@@ -935,6 +935,13 @@ public class Rs2Walker {
     // can still see null only when setTarget(null) is intended. recalculatePath no longer nulls
     // currentTarget between restarts (avoids false cancel during sleepUntil).
     private static final ReentrantLock walkerLock = new ReentrantLock();
+
+    /**
+     * Set to {@code true} while the walker holds {@link #walkerLock}.
+     * MouseSync checks this to avoid interfering with minimap clicks.
+     */
+    public static volatile boolean walkerActive = false;
+
     /**
      * Optional completion rule owned by the thread currently executing {@link #walkUntil}.
      *
@@ -1338,11 +1345,13 @@ public class Rs2Walker {
                 return WalkerState.EXIT;
             }
         }
+        walkerActive = true;
         try {
 			return withShadowExecutionEvidence(() -> config.walkWithBankedTransports()
 					? walkWithBankedTransportsAndStateLocked(target, distance, false)
 					: walkWithStateInternal(target, distance));
         } finally {
+            walkerActive = false;
             walkerLock.unlock();
         }
     }
@@ -1398,6 +1407,7 @@ public class Rs2Walker {
                     lockWaitMs, Thread.currentThread().getName(), target);
             return WalkerState.EXIT;
         }
+        walkerActive = true;
         try
         {
 			return withShadowExecutionEvidence(() -> config.walkWithBankedTransports()
@@ -1406,6 +1416,7 @@ public class Rs2Walker {
         }
         finally
         {
+            walkerActive = false;
             walkerLock.unlock();
         }
     }
