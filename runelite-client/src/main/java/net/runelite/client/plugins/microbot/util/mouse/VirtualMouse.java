@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.Point;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.mousesync.MouseSyncPlugin;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
@@ -20,8 +21,14 @@ import static net.runelite.client.plugins.microbot.util.Global.sleep;
 
 @Slf4j
 public class VirtualMouse extends Mouse {
-
     private final ScheduledExecutorService scheduledExecutorService;
+
+    /**
+     * When true, a top-level click or drag is in progress. Prevents
+     * internal NaturalMouse intermediate moves from triggering
+     * MouseSync start/end independently.
+     */
+    private volatile boolean interactionInProgress = false;
 
     @Inject
     public VirtualMouse() {
@@ -126,14 +133,42 @@ public class VirtualMouse extends Mouse {
                 && Microbot.naturalMouse != null;
     }
 
+    // ── MouseSync helpers ──────────────────────────────────────────────
+
+    private static MouseSyncPlugin getMouseSync() {
+        return Microbot.getMouseSyncPlugin();
+    }
+
+    private void mouseSyncOnStart() {
+        MouseSyncPlugin p = getMouseSync();
+        if (p != null && p.isInputDisabled()) {
+            // Already in a bot interaction (e.g. recursive call) — don't re-enter
+            return;
+        }
+        if (p != null) p.onBotInteractionStart();
+    }
+
+    private void mouseSyncOnEnd() {
+        MouseSyncPlugin p = getMouseSync();
+        if (p != null) p.onBotInteractionEnd();
+    }
+
+    // ── Click methods ──────────────────────────────────────────────────
+
     public Mouse click(Point point, boolean rightClick) {
         if (point == null) return this;
 
+        mouseSyncOnStart();
+
         Runnable clickAction = () -> {
-            if (shouldMoveNaturally(point)) {
-                Microbot.naturalMouse.moveTo(point.getX(), point.getY());
+            try {
+                if (shouldMoveNaturally(point)) {
+                    Microbot.naturalMouse.moveTo(point.getX(), point.getY());
+                }
+                handleClick(point, rightClick);
+            } finally {
+                mouseSyncOnEnd();
             }
-            handleClick(point, rightClick);
         };
 
         if (Microbot.getClient().isClientThread()) {
@@ -149,31 +184,37 @@ public class VirtualMouse extends Mouse {
     public Mouse click(Point point, boolean rightClick, NewMenuEntry entry) {
         if (point == null) return this;
 
+        mouseSyncOnStart();
+
         Runnable clickAction = () -> {
-            Point newPoint = point;
-            if (shouldMoveNaturally(point)) {
-                Microbot.naturalMouse.moveTo(point.getX(), point.getY());
+            try {
+                Point newPoint = point;
+                if (shouldMoveNaturally(point)) {
+                    Microbot.naturalMouse.moveTo(point.getX(), point.getY());
 
-                if (Rs2UiHelper.hasActor(entry)) {
-                    Rectangle rectangle = Rs2UiHelper.getActorClickbox(entry.getActor());
-                    if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
-                        newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
-                        Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+                    if (Rs2UiHelper.hasActor(entry)) {
+                        Rectangle rectangle = Rs2UiHelper.getActorClickbox(entry.getActor());
+                        if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
+                            newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
+                            Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+                        }
+                    }
+
+                    if (Rs2UiHelper.isGameObject(entry)) {
+                        Rectangle rectangle = Rs2UiHelper.getObjectClickbox(entry.getGameObject());
+                        if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
+                            newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
+                            Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+
+                        }
                     }
                 }
 
-                if (Rs2UiHelper.isGameObject(entry)) {
-                    Rectangle rectangle = Rs2UiHelper.getObjectClickbox(entry.getGameObject());
-                    if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
-                        newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
-                        Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
-
-                    }
-                }
+                Microbot.targetMenu = entry;
+                handleClick(newPoint, rightClick);
+            } finally {
+                mouseSyncOnEnd();
             }
-
-            Microbot.targetMenu = entry;
-            handleClick(newPoint, rightClick);
         };
 
         if (Microbot.getClient().isClientThread()) {
@@ -218,24 +259,33 @@ public class VirtualMouse extends Mouse {
         return click(Microbot.getClient().getMouseCanvasPosition());
     }
 
+    // ── Move methods ───────────────────────────────────────────────────
+
+    /**
+     * Only trigger MouseSync for standalone moves (scripts calling move
+     * directly). Moves that happen inside a NaturalMouse path during a
+     * click are internal and guarded by {@link #interactionInProgress}.
+     */
     public Mouse move(Point point) {
-        setLastMove(point);
-        dispatchMouseMove(MouseEvent.MOUSE_MOVED, point);
+        boolean standalone = !interactionInProgress;
+        if (standalone) mouseSyncOnStart();
+        try {
+            setLastMove(point);
+            dispatchMouseMove(MouseEvent.MOUSE_MOVED, point);
+        } finally {
+            if (standalone) mouseSyncOnEnd();
+        }
         return this;
     }
 
     public Mouse move(Rectangle rect) {
         Point pt = new Point((int) rect.getCenterX(), (int) rect.getCenterY());
-        setLastMove(pt);
-        dispatchMouseMove(MouseEvent.MOUSE_MOVED, pt);
-        return this;
+        return move(pt);
     }
 
     public Mouse move(Polygon polygon) {
         Point point = new Point((int) polygon.getBounds().getCenterX(), (int) polygon.getBounds().getCenterY());
-        setLastMove(point);
-        dispatchMouseMove(MouseEvent.MOUSE_MOVED, point);
-        return this;
+        return move(point);
     }
 
     public Mouse scrollDown(Point point) {
@@ -298,22 +348,29 @@ public class VirtualMouse extends Mouse {
         scheduledExecutorService.shutdownNow();
     }
 
+    // ── Drag ───────────────────────────────────────────────────────────
+
     public Mouse drag(Point startPoint, Point endPoint) {
         if (startPoint == null || endPoint == null) return this;
 
-        if (shouldMoveNaturally(startPoint))
-            Microbot.naturalMouse.moveTo(startPoint.getX(), startPoint.getY());
-        else
-            move(startPoint);
-        sleep(Rs2Random.logNormalBounded(50, 80));
-        pressed(startPoint, MouseEvent.BUTTON1);
-        sleep(Rs2Random.logNormalBounded(80, 120));
-        if (shouldMoveNaturally(endPoint))
-            Microbot.naturalMouse.moveTo(endPoint.getX(), endPoint.getY());
-        else
-            move(endPoint);
-        sleep(Rs2Random.logNormalBounded(80, 120));
-        released(endPoint, MouseEvent.BUTTON1);
+        mouseSyncOnStart();
+        try {
+            if (shouldMoveNaturally(startPoint))
+                Microbot.naturalMouse.moveTo(startPoint.getX(), startPoint.getY());
+            else
+                move(startPoint);
+            sleep(Rs2Random.logNormalBounded(50, 80));
+            pressed(startPoint, MouseEvent.BUTTON1);
+            sleep(Rs2Random.logNormalBounded(80, 120));
+            if (shouldMoveNaturally(endPoint))
+                Microbot.naturalMouse.moveTo(endPoint.getX(), endPoint.getY());
+            else
+                move(endPoint);
+            sleep(Rs2Random.logNormalBounded(80, 120));
+            released(endPoint, MouseEvent.BUTTON1);
+        } finally {
+            mouseSyncOnEnd();
+        }
 
         return this;
     }

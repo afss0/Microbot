@@ -43,6 +43,17 @@ Used during merges to verify nothing is lost.
 - **File:** `ShortestPathConfig.java`
 - **What:** `recalculateDistance` 10→15, `reachedDistance` 5→10. More lenient thresholds reduce unnecessary path recalculations.
 
+## Mouse Sync
+
+### Cursor Synchronization with User
+- **Files:** `MouseSyncPlugin.java`, `MouseSyncConfig.java` (new package: `mousesync/`)
+- **What:** When enabled, the bot disables user mouse input during interactions, waits a grace period after the interaction completes, then naturally moves the cursor (via NaturalMouse) back to the user's physical OS mouse position and re-enables input. Prevents "teleporting" and user/bot input conflicts.
+- **State machine:** IDLE → BOT_ACTIVE → GRACE_PERIOD → RETURNING → IDLE
+- **Emergency hotkey:** CTRL+X — immediately stops plugin and restores mouse control. Plugin disables itself via `Microbot.stopPlugin()`.
+- **Config:** `enabled` (default false), `gracePeriodMs` (default 5000), `emergencyHotkey` (default CTRL+X)
+- **Integration:** VirtualMouse hooks `onBotInteractionStart()` / `onBotInteractionEnd()` in all click/drag methods. Standalone moves also trigger start/end.
+- **Re-enable:** Toggle the plugin off and on via the Microbot plugin list.
+
 ## Build
 
 ### Project Rename
@@ -63,4 +74,5 @@ grep -r "isGoalReachable" runelite-client/src/main/java/ | head -5
 grep -r "Skip the tile" runelite-client/src/main/java/ | head -5
 grep "microbot_afss0" settings.gradle.kts
 grep "return 15" runelite-client/src/main/java/net/runelite/client/plugins/microbot/shortestpath/ShortestPathConfig.java | head -1
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java
 ```
