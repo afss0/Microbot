@@ -78,6 +78,7 @@ public class MouseSyncPlugin extends Plugin {
     // ── Lifecycle ──────────────────────────────────────────────────────
     @Override
     protected void startUp() {
+        Microbot.mouseSyncPlugin = this;
         executor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "MouseSync");
             t.setDaemon(true);
@@ -98,6 +99,7 @@ public class MouseSyncPlugin extends Plugin {
             executor.shutdownNow();
             executor = null;
         }
+        Microbot.mouseSyncPlugin = null;
         log.info("Mouse Sync stopped");
     }
 
