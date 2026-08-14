@@ -56,6 +56,14 @@ public class MouseSyncPlugin extends Plugin {
 
     private volatile State state = State.IDLE;
 
+    /**
+     * Tracks whether user input was already disabled (by the "Disable Input"
+     * button or other means) BEFORE the bot interaction started. When true,
+     * {@link #enableUserInput()} will NOT re-enable input — the user's
+     * explicit choice to keep input disabled is respected.
+     */
+    private volatile boolean inputWasAlreadyDisabled = false;
+
     // ── Injected dependencies ──────────────────────────────────────────
     @Inject private Client client;
     @Inject private MouseSyncConfig config;
@@ -95,6 +103,7 @@ public class MouseSyncPlugin extends Plugin {
         // Always restore input on shutdown so the user is never stuck
         enableUserInput();
         state = State.IDLE;
+        inputWasAlreadyDisabled = false;
         if (executor != null) {
             executor.shutdownNow();
             executor = null;
@@ -123,9 +132,11 @@ public class MouseSyncPlugin extends Plugin {
     public void onBotInteractionStart() {
         if (!config.enabled() || state == State.BOT_ACTIVE) return;
         cancelGraceTimer();
+        // Track if user input was already disabled before we touched it
+        inputWasAlreadyDisabled = !ClientUI.getClient().isEnabled();
         disableUserInput();
         state = State.BOT_ACTIVE;
-        log.debug("MouseSync: BOT_ACTIVE — user input disabled");
+        log.debug("MouseSync: BOT_ACTIVE — user input disabled (wasAlreadyDisabled={})", inputWasAlreadyDisabled);
     }
 
     /**
@@ -159,6 +170,7 @@ public class MouseSyncPlugin extends Plugin {
             log.debug("MouseSync: no OS position captured — restoring input immediately");
             enableUserInput();
             state = State.IDLE;
+            inputWasAlreadyDisabled = false;
             return;
         }
 
@@ -170,6 +182,7 @@ public class MouseSyncPlugin extends Plugin {
             log.debug("MouseSync: canvas not visible — restoring input");
             enableUserInput();
             state = State.IDLE;
+            inputWasAlreadyDisabled = false;
             return;
         }
 
@@ -190,6 +203,7 @@ public class MouseSyncPlugin extends Plugin {
             } finally {
                 enableUserInput();
                 state = State.IDLE;
+                inputWasAlreadyDisabled = false;
                 log.debug("MouseSync: IDLE — user input restored");
             }
         });
@@ -199,6 +213,7 @@ public class MouseSyncPlugin extends Plugin {
         cancelGraceTimer();
         enableUserInput();
         state = State.IDLE;
+        inputWasAlreadyDisabled = false;
         log.info("MouseSync: emergency release — input restored");
     }
 
@@ -214,6 +229,11 @@ public class MouseSyncPlugin extends Plugin {
     }
 
     private void enableUserInput() {
+        // Don't re-enable if user explicitly disabled input before the bot interaction
+        if (inputWasAlreadyDisabled) {
+            log.debug("MouseSync: skipping input re-enable — user had input disabled before bot interaction");
+            return;
+        }
         try {
             ClientUI.getClient().setEnabled(true);
             Microbot.getClient().getCanvas().setFocusable(true);
