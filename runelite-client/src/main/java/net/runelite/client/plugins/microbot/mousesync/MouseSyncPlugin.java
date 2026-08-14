@@ -73,6 +73,7 @@ public class MouseSyncPlugin extends Plugin {
     // ── Scheduling ─────────────────────────────────────────────────────
     private ScheduledExecutorService executor;
     private ScheduledFuture<?> graceTimer;
+    private ScheduledFuture<?> cursorTracker;
 
     // ── Last known OS mouse position (screen coordinates) ─────────────
     private volatile java.awt.Point lastOsMousePosition;
@@ -93,6 +94,7 @@ public class MouseSyncPlugin extends Plugin {
             return t;
         });
         keyManager.registerKeyListener(emergencyKeyListener);
+        startCursorTracker();
         log.info("Mouse Sync started (grace={}ms, hotkey=CTRL+X)", config.gracePeriodMs());
     }
 
@@ -100,6 +102,7 @@ public class MouseSyncPlugin extends Plugin {
     protected void shutDown() {
         keyManager.unregisterKeyListener(emergencyKeyListener);
         cancelGraceTimer();
+        stopCursorTracker();
         // Always restore input on shutdown so the user is never stuck
         enableUserInput();
         state = State.IDLE;
@@ -288,6 +291,40 @@ public class MouseSyncPlugin extends Plugin {
         if (graceTimer != null && !graceTimer.isDone()) {
             graceTimer.cancel(false);
             graceTimer = null;
+        }
+    }
+
+    // ── Cursor position tracking ───────────────────────────────────────
+
+    /**
+     * Periodically reads the user's OS cursor position and updates the
+     * VirtualMouse so that when the bot starts an interaction it knows
+     * where the user's cursor actually is (for return movement).
+     * Only runs while state == IDLE to avoid interfering with bot moves.
+     */
+    private void startCursorTracker() {
+        if (cursorTracker != null && !cursorTracker.isDone()) return;
+        cursorTracker = executor.scheduleAtFixedRate(() -> {
+            if (state != State.IDLE) return;
+            try {
+                PointerInfo info = MouseInfo.getPointerInfo();
+                if (info == null) return;
+                java.awt.Point screen = info.getLocation();
+                net.runelite.api.Point canvas = screenToCanvas(screen);
+                if (canvas != null) {
+                    Microbot.getMouse().setLastMove(
+                        new net.runelite.api.Point(canvas.getX(), canvas.getY()));
+                }
+            } catch (Exception e) {
+                log.debug("MouseSync: cursor tracker error", e);
+            }
+        }, 50, 50, TimeUnit.MILLISECONDS);
+    }
+
+    private void stopCursorTracker() {
+        if (cursorTracker != null && !cursorTracker.isDone()) {
+            cursorTracker.cancel(false);
+            cursorTracker = null;
         }
     }
 
