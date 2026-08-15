@@ -151,8 +151,6 @@ public class MouseSyncPlugin extends Plugin {
      */
     public void onBotInteractionEnd() {
         if (!config.enabled() || state != State.BOT_ACTIVE) return;
-        // Walker manages its own minimap clicks — do not interfere
-        if (Rs2Walker.getCurrentTarget() != null) return;
         state = State.GRACE_PERIOD;
 
         // Snapshot the user's current OS mouse position *now* so we know
@@ -170,6 +168,12 @@ public class MouseSyncPlugin extends Plugin {
 
     private void finishGracePeriod() {
         if (state != State.GRACE_PERIOD) return;
+        // Walker started during grace period — go back to BOT_ACTIVE
+        if (Rs2Walker.getCurrentTarget() != null) {
+            log.debug("MouseSync: walker active during grace — returning to BOT_ACTIVE");
+            state = State.BOT_ACTIVE;
+            return;
+        }
 
         snapshotOsMousePosition();
         java.awt.Point target = lastOsMousePosition;
