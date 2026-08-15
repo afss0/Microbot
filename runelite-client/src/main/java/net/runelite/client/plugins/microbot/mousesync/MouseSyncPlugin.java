@@ -135,7 +135,7 @@ public class MouseSyncPlugin extends Plugin {
      * Disables user input and transitions to {@link State#BOT_ACTIVE}.
      */
     public void onBotInteractionStart() {
-        if (!config.enabled() || state == State.BOT_ACTIVE) return;
+        if (!config.enabled() || state == State.BOT_ACTIVE || state == State.RETURNING) return;
         cancelGraceTimer();
         // Track if user input was already disabled before we touched it
         inputWasAlreadyDisabled = !ClientUI.getClient().isEnabled();
