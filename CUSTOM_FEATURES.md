@@ -80,7 +80,7 @@ Used during merges to verify nothing is lost.
 
 ### Walker Activity Guard
 - **File:** `MouseSyncPlugin.java`
-- **What:** `cursorTracker` skips when `Rs2Walker.getCurrentTarget() != null` (no cursor tracking during walker activity). `finishGracePeriod()` retries every 1s while walker is active — keeps input disabled, preventing cursor teleportation. When walker finishes (currentTarget cleared), retry detects it and completes normally → cursor return → input re-enable. `onBotInteractionStart()` cancels retry via `cancelGraceTimer()`. During walking: each walker click disables input (BOT_ACTIVE), each click end starts grace period, next walker click cancels it.
+- **What:** `cursorTracker` skips when `Rs2Walker.getCurrentTarget() != null`. `finishGracePeriod()` retries every 1s while walker is active — prevents cursor teleportation. `onBotInteractionStart()` also skips when `state == RETURNING` — prevents NaturalMouse cursor-return movement from triggering MouseSync (which would set `inputWasAlreadyDisabled=true` and permanently block input re-enable). During walking: each walker click disables input (BOT_ACTIVE), each click end starts grace period, next walker click cancels it.
 
 ## Build
 
