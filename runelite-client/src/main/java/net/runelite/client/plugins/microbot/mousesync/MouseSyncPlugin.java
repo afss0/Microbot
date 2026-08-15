@@ -169,6 +169,17 @@ public class MouseSyncPlugin extends Plugin {
     private void finishGracePeriod() {
         if (state != State.GRACE_PERIOD) return;
 
+        // Walker still active — keep input disabled, retry in 1s.
+        // This prevents cursor teleportation: returning the cursor while the
+        // walker is mid-route would snap the cursor to the user's physical
+        // position, only for the walker to re-disable input on the next click.
+        if (Rs2Walker.getCurrentTarget() != null) {
+            log.debug("MouseSync: walker still active during grace — retrying in 1s");
+            cancelGraceTimer();
+            graceTimer = executor.schedule(this::finishGracePeriod, 1, TimeUnit.SECONDS);
+            return;
+        }
+
         snapshotOsMousePosition();
         java.awt.Point target = lastOsMousePosition;
         if (target == null) {
