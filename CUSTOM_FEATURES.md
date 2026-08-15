@@ -80,7 +80,7 @@ Used during merges to verify nothing is lost.
 
 ### Walker Activity Guard
 - **File:** `MouseSyncPlugin.java`
-- **What:** `finishGracePeriod()` checks `Rs2Walker.getCurrentTarget() != null` — if walker starts during grace period, transitions back to BOT_ACTIVE (input stays disabled, no cursor return). `cursorTracker` skips during walker activity. Input IS disabled during walker clicks (prevents user interference). When walker finishes, the normal grace period flow re-enables input and returns cursor. Uses the public `getCurrentTarget()` API.
+- **What:** `cursorTracker` skips when `Rs2Walker.getCurrentTarget() != null` (no cursor tracking during walker activity). No walker guard on `onBotInteractionStart`/`onBotInteractionEnd`/`finishGracePeriod` — the normal MouseSync flow runs unmodified. During walking: each walker click disables input (BOT_ACTIVE), each click end starts grace period, next walker click cancels it. When walker finishes, last grace period completes normally → cursor return → input re-enable. Self-correcting: if grace fires during a long walker wait, next click re-disables input.
 
 ## Build
 

@@ -168,12 +168,6 @@ public class MouseSyncPlugin extends Plugin {
 
     private void finishGracePeriod() {
         if (state != State.GRACE_PERIOD) return;
-        // Walker started during grace period — go back to BOT_ACTIVE
-        if (Rs2Walker.getCurrentTarget() != null) {
-            log.debug("MouseSync: walker active during grace — returning to BOT_ACTIVE");
-            state = State.BOT_ACTIVE;
-            return;
-        }
 
         snapshotOsMousePosition();
         java.awt.Point target = lastOsMousePosition;
