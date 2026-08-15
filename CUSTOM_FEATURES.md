@@ -80,7 +80,7 @@ Used during merges to verify nothing is lost.
 
 ### Walker Activity Guard
 - **File:** `MouseSyncPlugin.java`
-- **What:** `onBotInteractionStart()`, `onBotInteractionEnd()`, and `cursorTracker` now skip entirely when `Rs2Walker.getCurrentTarget() != null`. Prevents MouseSync from disabling input, starting grace timers, or tracking cursor position while the walker is executing minimap clicks. Uses the public `getCurrentTarget()` API — no new flags or lock exposure needed.
+- **What:** `onBotInteractionEnd()` and `cursorTracker` skip when `Rs2Walker.getCurrentTarget() != null`. Input IS still disabled during walker clicks (prevents user interference), but grace period and cursor return are suppressed — the walker manages its own lifecycle. When the walker finishes (currentTarget cleared), the next `onBotInteractionEnd()` transitions to GRACE_PERIOD normally. Uses the public `getCurrentTarget()` API.
 
 ## Build
 

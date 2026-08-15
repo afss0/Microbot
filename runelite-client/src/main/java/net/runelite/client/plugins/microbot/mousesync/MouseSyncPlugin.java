@@ -136,8 +136,6 @@ public class MouseSyncPlugin extends Plugin {
      */
     public void onBotInteractionStart() {
         if (!config.enabled() || state == State.BOT_ACTIVE) return;
-        // Walker manages its own minimap clicks — do not interfere
-        if (Rs2Walker.getCurrentTarget() != null) return;
         cancelGraceTimer();
         // Track if user input was already disabled before we touched it
         inputWasAlreadyDisabled = !ClientUI.getClient().isEnabled();
