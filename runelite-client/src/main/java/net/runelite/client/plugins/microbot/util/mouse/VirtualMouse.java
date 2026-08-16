@@ -5,6 +5,8 @@ import net.runelite.api.Client;
 import net.runelite.api.Point;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.mousesync.MouseSyncPlugin;
+import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
@@ -158,15 +160,31 @@ public class VirtualMouse extends Mouse {
     public Mouse click(Point point, boolean rightClick) {
         if (point == null) return this;
 
+        // Weather-based click error — slight offset in bad conditions
+        final Point clickPoint;
+        if (Rs2AntibanSettings.weatherEnabled) {
+            double errorChance = WeatherModulation.mistakeProbabilityOffset();
+            if (errorChance > 0 && Rs2Random.diceFractional(errorChance)) {
+                clickPoint = new Point(
+                        point.getX() + Rs2Random.between(-3, 3),
+                        point.getY() + Rs2Random.between(-3, 3)
+                );
+            } else {
+                clickPoint = point;
+            }
+        } else {
+            clickPoint = point;
+        }
+
         mouseSyncOnStart();
         interactionInProgress = true;
 
         Runnable clickAction = () -> {
             try {
-                if (shouldMoveNaturally(point)) {
-                    Microbot.naturalMouse.moveTo(point.getX(), point.getY());
+                if (shouldMoveNaturally(clickPoint)) {
+                    Microbot.naturalMouse.moveTo(clickPoint.getX(), clickPoint.getY());
                 }
-                handleClick(point, rightClick);
+                handleClick(clickPoint, rightClick);
             } finally {
                 interactionInProgress = false;
                 mouseSyncOnEnd();

@@ -7,6 +7,7 @@ import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.RuneLiteProperties;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.text.Rs2TextSanitizer;
@@ -64,11 +65,27 @@ public class Rs2UiHelper {
         if (!randomize) return new Point((int) rectangle.getCenterX(), (int) rectangle.getCenterY());
 
         double force = getSessionClickForce();
+        Point basePoint;
         if (Rs2AntibanSettings.naturalMouse) {
             java.awt.Point mousePos = Microbot.getMouse().getMousePosition();
-            return Rs2Random.randomPointEx(new Point(mousePos.x, mousePos.y), rectangle, force);
-        } else
-            return Rs2Random.randomPointEx(Microbot.getMouse().getLastClick(), rectangle, force);
+            basePoint = Rs2Random.randomPointEx(new Point(mousePos.x, mousePos.y), rectangle, force);
+        } else {
+            basePoint = Rs2Random.randomPointEx(Microbot.getMouse().getLastClick(), rectangle, force);
+        }
+
+        // Weather-based click imprecision — wind gusts add extra jitter
+        if (Rs2AntibanSettings.weatherEnabled) {
+            double gust = WeatherModulation.windGustFactor();
+            int jitter = (int) ((1.0 - gust) * 6); // 0–2px extra in wind
+            if (jitter > 0) {
+                basePoint = new Point(
+                        basePoint.getX() + Rs2Random.between(-jitter, jitter),
+                        basePoint.getY() + Rs2Random.between(-jitter, jitter)
+                );
+            }
+        }
+
+        return basePoint;
     }
 
     //check if mouse is already within the rectangle

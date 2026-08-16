@@ -15,6 +15,15 @@ Used during merges to verify nothing is lost.
   - `NaturalMouse.java` — `SpeedManager` wrapper applies weather factor to mouse movement
   - `MasterPanel.java` + `NavigationPanel.java` — ⛅ Weather tab in antiban UI
 
+### Weather Modulation for Mouse Interactions
+- **Files:** `Rs2UiHelper.java`, `VirtualMouse.java`, `FactoryTemplates.java`, `Rs2Random.java`
+- **What:** Extends weather modulation to all mouse interactions beyond just speed:
+  - **Click position jitter** (`Rs2UiHelper.getClickingPoint()`) — wind gusts add 0–2px extra imprecision via `windGustFactor()`
+  - **Click error chance** (`VirtualMouse.click()`) — rain + wind add 0–9% chance of clicking 1–3px off-target via `mistakeProbabilityOffset()`
+  - **Overshoot count** (`FactoryTemplates`) — rain + wind add +0 to +2 overshoots via `mistakeProbabilityOffset()`
+  - **Rs2Random overload** — `logNormalBounded(min, max, multiplier)` for weather-scaled timing
+- **Safety:** All guarded by `Rs2AntibanSettings.weatherEnabled`. When disabled: `combinedSpeedFactor()` returns 1.0, `mistakeProbabilityOffset()` returns 0.0, `windGustFactor()` returns 1.0 — no API calls, no side effects.
+
 ## Anti-Detection
 
 ### Auto-Run Toggle Removal
@@ -84,6 +93,21 @@ Used during merges to verify nothing is lost.
 
 ## Build
 
+### aScript — AIO Multi-Script Orchestrator
+- **Files:** `ascript/` package (AScript.java, AScriptConfig.java, AScriptPlugin.java, AScriptOverlay.java, ScriptType.java, crafting/)
+- **What:** State-machine-based AIO script hosting multiple automation scripts under one plugin. Orchestrator manages DISABLED → IDLE → BANKING ↔ CRAFTING → ERROR states. Sub-scripts are stateless helpers (no Guice, no Script inheritance).
+- **Current modules:**
+  - **Crafting** (`ascript/crafting/`) — Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry
+- **Anti-detection:**
+  - All timing uses `Rs2Random.logNormalBounded()` with log-normal distributions (not uniform)
+  - AFK timing: `Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier)`
+  - Animation waits: `Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier)`
+  - Widget interactions use `sleepUntilTrue()` for production widget detection (no fixed sleeps)
+  - Missing materials → immediate stop with status message (no silent failures)
+- **Weather integration:** `WeatherModulation.ensureFresh()` called once per craft cycle; `combinedSpeedFactor()` scales all waits
+- **Config:** Automation section (enabled + dropdown), per-module sections (closedByDefault), QOL section (placeholder)
+- **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation
+
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
@@ -125,4 +149,11 @@ grep "InputSelector.disableClick\|InputSelector.enableClick" runelite-client/src
 grep "cursorTracker" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
 grep "getCurrentTarget" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
 grep "getAndIncrementBuildNumber" runelite-client/build.gradle.kts | head -1
+# aScript + weather mouse modulation
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AGENTS.md
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java
+grep "weatherAdjustedOvershoots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/naturalmouse/util/FactoryTemplates.java | head -1
+grep "mistakeProbabilityOffset" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/VirtualMouse.java | head -1
+grep "windGustFactor" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/misc/Rs2UiHelper.java | head -1
+grep "logNormalBounded.*multiplier" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/math/Rs2Random.java | head -1
 ```

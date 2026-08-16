@@ -1,0 +1,148 @@
+# aScript — AIO Multi-Script Orchestrator
+
+AIO (All-In-One) state-machine script that hosts multiple automation scripts and QOL features under a single plugin. Each feature lives in its own sub-package under `ascript/`.
+
+## Structure
+
+```
+ascript/
+├── AScript.java              # Orchestrator — StateMachineScript<State>
+├── AScriptConfig.java        # Config with Automation / <Module> / QOL sections
+├── AScriptPlugin.java        # Plugin descriptor, Guice wiring, start/stop
+├── AScriptOverlay.java       # HUD overlay — shows state, transition, status
+├── ScriptType.java           # Dropdown enum — which module to run
+└── <module>/                 # Each module is a sub-package
+    ├── <Module>Script.java   # Stateless helper: phase resolution, bank, craft/action
+    └── <enums>.java          # Module-specific enums (activities, items, locations)
+```
+
+## How it works
+
+1. **AScript** is a `StateMachineScript<State>` with states: `DISABLED → IDLE → BANKING ↔ CRAFTING → ERROR`.
+2. When `config.enabled()` is true and a `ScriptType` is selected, the machine transitions to `IDLE`.
+3. `IDLE` resolves the active module's phase, checks if banking is needed, and transitions accordingly.
+4. Each module is a plain class (not a Script subclass) with stateless methods — no Guice, no lifecycle.
+5. The orchestrator delegates to the module: `module.resolvePhase()`, `module.needsBank()`, `module.doBank()`, `module.doCraft()`.
+
+## Adding a new module
+
+1. Create `ascript/<module>/` package.
+2. Create `<Module>Script.java` with these methods:
+   - `Phase resolvePhase(AScriptConfig config)` — maps config activity to internal phase enum
+   - `boolean needsBank(AScriptConfig config, Phase phase)` — true when materials are missing
+   - `boolean doBank(AScriptConfig config, Phase phase)` — banking logic; return true when done
+   - `void doCraft(AScriptConfig config, Phase phase)` — the main action
+3. Add module-specific enums in the same package (activities, items, etc.).
+4. Add a new `ScriptType` entry in `ScriptType.java`.
+5. Add config items in `AScriptConfig.java` under a new `@ConfigSection`.
+6. In `AScript.java`:
+   - Add a field for the new sub-script instance
+   - Add states if needed (or reuse `IDLE/BANKING/CRAFTING`)
+   - Add transitions and delegation logic
+7. **Update this AGENTS.md** with the new module's name, package, and methods.
+
+## Config layout
+
+```java
+@ConfigGroup("aScript")
+public interface AScriptConfig {
+    // Automation section
+    boolean enabled();           // Master on/off
+    ScriptType scriptSelection(); // Dropdown — which module to run
+
+    // <Module> section (one per module, closedByDefault = true)
+    // ... module-specific settings ...
+
+    // QOL section (placeholder)
+}
+```
+
+When a module's section is `closedByDefault = true`, the user expands it manually in the config panel. The orchestrator reads the config and dispatches to the correct module.
+
+## Rules
+
+- **Modules must be stateless.** All mutable state lives in AScript or on the executor thread. Modules are helpers, not lifecycle participants.
+- **Modules must not extend Script.** They are plain classes called by the orchestrator.
+- **Modules must not use Guice.** No `@Inject` — they receive config as a method parameter.
+- **Transitions are evaluated top-to-bottom.** High-priority exits (error, bank needed) go first.
+- **Guards must be pure.** No side effects in transition conditions — only read state.
+- **Use `Microbot.status`** for user-visible status updates inside module actions.
+- **Use `sleepUntil(condition, timeoutMs)`** — never fixed `sleep()` to wait on game state.
+- **Use `Rs2Random` for all timing.** Never use `Random.nextInt()` or fixed `sleep()` for delays.
+
+## Anti-detection with Rs2Random
+
+All timing must use `Rs2Random` to produce human-like distributions. Anti-cheat systems flag uniform or fixed patterns.
+
+### Required patterns
+
+| What | Wrong | Right |
+|------|-------|-------|
+| AFK delay | `RANDOM.nextInt(57000)` | `Rs2Random.logNormalBounded(3000, 60000)` |
+| Wait for animation | `sleep(3000); sleepUntil(...)` | `sleepUntil(..., Rs2Random.logNormalBounded(15000, 45000))` |
+| Action cooldown | `sleep(800)` | `Rs2Random.waitEx(800, 200)` |
+| Click imprecision | exact widget coords | `Rs2Random.randomPoint(center, 5, 2.0)` |
+| Random decision | `Math.random() < 0.1` | `Rs2Random.diceFractional(0.1)` |
+
+### Key methods
+
+- **`Rs2Random.logNormalBounded(min, max)`** — right-skewed: mostly short delays, occasional long. Use for AFK and animation waits.
+- **`Rs2Random.waitEx(mean, dev)`** — Gaussian-distributed wait. Use for action cooldowns.
+- **`Rs2Random.truncatedGauss(min, max, cutoff)`** — bounded normal. Use for general randomness within range.
+- **`Rs2Random.reactionTime()`** — log-normal human reaction time (120ms–2200ms). Use for input delays.
+- **`Rs2Random.diceFractional(chance)`** — random boolean with probability. Use for AFK triggers, break decisions.
+
+### Why log-normal for AFK?
+
+Uniform `RANDOM.nextInt(60000)` produces a flat histogram — every duration equally likely. Humans cluster around short AFKs with a long tail of longer ones. `logNormalBounded(3000, 60000)` matches this shape and is harder to fingerprint.
+
+### Weather modulation (Rs2Random + WeatherModulation)
+
+All timing and mouse behavior is modulated by real-world weather data via `WeatherModulation` (Open-Meteo API, 30-min cache).
+
+**What's weather-modulated:**
+- **Timing** — AFK delays, animation waits via `logNormalBounded(min, max, multiplier)`
+- **Mouse speed** — `NaturalMouse.getFactory()` applies `combinedSpeedFactor()` to movement time
+- **Click position** — `Rs2UiHelper.getClickingPoint()` adds wind-based jitter via `windGustFactor()`
+- **Click errors** — `VirtualMouse.click()` adds off-target offset via `mistakeProbabilityOffset()`
+- **Overshoots** — `FactoryTemplates` adjusts overshoot count via `mistakeProbabilityOffset()`
+
+**How it works:**
+1. `WeatherModulation.ensureFresh()` — refreshes cache if stale (safe to call every tick)
+2. `WeatherModulation.combinedSpeedFactor()` — returns ≤ 1.0 (slower in bad weather)
+3. Invert to get a multiplier: `1.0 / combinedSpeedFactor()` = 1.0+ (longer waits)
+4. Pass to `Rs2Random.logNormalBounded(min, max, multiplier)`
+
+**Example:**
+```java
+WeatherModulation.ensureFresh();
+double weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
+int afkMs = Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier);
+// Clear: ~3000–60000, Storm: ~3000–81000 (25% longer)
+```
+
+**API safety:** `ensureFresh()` has a 30-minute TTL cache. Calling it every tick is safe — it only hits the API when the cache expires.
+
+**Factors available:**
+- `combinedSpeedFactor()` — temp × wind × weather mood (use for wait times AND mouse speed)
+- `breakLengthFactor()` — cold + rain → longer breaks
+- `microBreakChanceOffset()` — heat + rain + gust → more micro-breaks
+- `mistakeProbabilityOffset()` — rain + wind → more click errors AND overshoots
+- `windGustFactor()` — wind → click position jitter
+
+## Existing modules
+
+| Module | Package | Activities |
+|--------|---------|------------|
+| Crafting | `ascript/crafting/` | Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry |
+
+## Adding QOL features
+
+QOL features don't run as automation scripts. Add config items under the QOL `@ConfigSection` in `AScriptConfig.java`. Implement them as event listeners or overlays registered in `AScriptPlugin.startUp()`.
+
+## Checklist when modifying this module
+
+- [ ] Code compiles: `./gradlew :client:compileJava`
+- [ ] New enums/config items have `toString()` for RuneLite config UI
+- [ ] New transitions have `because()` and readable condition strings
+- [ ] This AGENTS.md is updated with new modules, states, or config items

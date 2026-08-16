@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.util.mouse.naturalmouse.util;
 
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.MouseMotionFactory;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.SpeedManager;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.support.*;
@@ -12,6 +13,19 @@ import java.util.Arrays;
 import java.util.List;
 
 public class FactoryTemplates {
+
+    /**
+     * Returns weather-adjusted overshoot count. When weather is disabled or
+     * simulateMistakes is off, returns the base count unchanged.
+     * Weather adds +0 to +2 overshoots based on rain + wind gusts.
+     */
+    private static int weatherAdjustedOvershoots(int base) {
+        if (!Rs2AntibanSettings.simulateMistakes) return 0;
+        if (!Rs2AntibanSettings.weatherEnabled) return base;
+        double offset = WeatherModulation.mistakeProbabilityOffset();
+        return base + (int) Math.round(offset * 20); // +0 to +2
+    }
+
     /**
      * <h1>Stereotypical granny using a computer with non-optical mouse from the 90s.</h1>
      * Low speed, variating flow, lots of noise in movement.
@@ -45,10 +59,7 @@ public class FactoryTemplates {
         factory.getNature().setReactionTimeBaseMs(100);
 
         DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(3);
-        else
-            overshootManager.setOvershoots(0);
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(3));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(400);
         overshootManager.setOvershootRandomModifierDivider(DefaultOvershootManager.OVERSHOOT_RANDOM_MODIFIER_DIVIDER / 2);
@@ -134,10 +145,7 @@ public class FactoryTemplates {
         manager.setMouseMovementBaseTimeMs(currentBaseTime);
 
         DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(4);
-        else
-            overshootManager.setOvershoots(0);
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(4));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(250);
 
@@ -183,10 +191,7 @@ public class FactoryTemplates {
         manager.setMouseMovementBaseTimeMs(currentBaseTime);
 
         DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(3);
-        else
-            overshootManager.setOvershoots(0);
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(3));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(130);
 
@@ -221,10 +226,7 @@ public class FactoryTemplates {
         manager.setMouseMovementBaseTimeMs(currentBaseTime);
 
         DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(2);
-        else
-            overshootManager.setOvershoots(0);
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(2));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(100);
 
@@ -268,10 +270,7 @@ public class FactoryTemplates {
         manager.setMouseMovementBaseTimeMs(400);
 
         DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(4);
-        else
-            overshootManager.setOvershoots(0);
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(4));
 
         factory.setSpeedManager(manager);
         return factory;
