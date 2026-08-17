@@ -10,7 +10,7 @@ public enum JewelryType {
     GOLD(ItemID.GOLD_BAR, "Gold bar"),
     SILVER(ItemID.SILVER_BAR, "Silver bar");
 
-    private final int itemID;
+    private final int metalBarId;
     private final String label;
 
     @Override

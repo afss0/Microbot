@@ -70,6 +70,41 @@ When a module's section is `closedByDefault = true`, the user expands it manuall
 - **Use `sleepUntil(condition, timeoutMs)`** — never fixed `sleep()` to wait on game state.
 - **Use `Rs2Random` for all timing.** Never use `Random.nextInt()` or fixed `sleep()` for delays.
 
+## Banking pitfalls
+
+### Checking bank materials: inventory + bank, not just bank
+
+**WRONG — checks only bank, ignores inventory:**
+```java
+boolean bankHasBar = Rs2Bank.hasItem(barId);
+boolean bankHasMould = Rs2Bank.hasItem(mouldId);
+if (!bankHasBar || !bankHasMould) return true; // BUG: mould in inventory but not bank -> false positive
+```
+
+**RIGHT — check inventory first, only fail if missing from BOTH:**
+```java
+// Only report "bank missing" if item is needed AND absent from both sources
+if (!Rs2Inventory.hasItem(barId) && !Rs2Bank.hasItem(barId)) return true;
+if (!Rs2Inventory.hasItem(mouldId) && !Rs2Bank.hasItem(mouldId)) return true;
+```
+
+**Why:** A tool (mould, chisel, needle) is often kept in inventory permanently. Checking only the bank reports "missing" when the tool is safe in inventory — causing false stops or infinite bank loops.
+
+### Bank state management
+
+- **IDLE** opens the bank to check stock. If materials exist, bank stays open for BANKING.
+- **BANKING** uses the already-open bank. Does NOT re-open. Does NOT close on success.
+- **IDLE** closes the bank only when transitioning to CRAFTING (inventory full) or stopping (no materials).
+- **Never close the bank between IDLE <-> BANKING** — this causes open/close loops.
+
+### doBank() return value
+
+`doBank()` must return `false` if banking failed (bank didn't open, materials missing, withdraw failed). If it returns `true`, the state machine transitions to IDLE -> CRAFTING. Returning `true` when inventory is empty creates an infinite loop.
+
+### Stopping the script
+
+Use `Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE)` to stop. Add a `stopRequested` flag to prevent repeated exit attempts while the config change propagates.
+
 ## Anti-detection with Rs2Random
 
 All timing must use `Rs2Random` to produce human-like distributions. Anti-cheat systems flag uniform or fixed patterns.

@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.ascript;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
+import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.statemachine.StateMachineScript;
 import net.runelite.client.plugins.microbot.statemachine.Transition;
 
@@ -32,6 +33,7 @@ public class AScript extends StateMachineScript<AScript.State> {
 
     private AScriptConfig config;
     private boolean actionDone;
+    private boolean stopRequested; // prevent repeated exit attempts
 
     // ── Sub-scripts ─────────────────────────────────────────────
     private final CraftingScript craftingScript = new CraftingScript();
@@ -77,6 +79,23 @@ public class AScript extends StateMachineScript<AScript.State> {
                         .because("Crafting action complete")
                         .goTo(State.IDLE),
 
+                // Any active state → DISABLED when script set to NONE
+                Transition.<State>from(State.IDLE)
+                        .when(() -> config != null && config.scriptSelection() == ScriptType.NONE,
+                                "script == NONE")
+                        .because("Script disabled")
+                        .goTo(State.DISABLED),
+                Transition.<State>from(State.BANKING)
+                        .when(() -> config != null && config.scriptSelection() == ScriptType.NONE,
+                                "script == NONE")
+                        .because("Script disabled")
+                        .goTo(State.DISABLED),
+                Transition.<State>from(State.CRAFTING)
+                        .when(() -> config != null && config.scriptSelection() == ScriptType.NONE,
+                                "script == NONE")
+                        .because("Script disabled")
+                        .goTo(State.DISABLED),
+
                 // Any non-error state → ERROR on config null
                 Transition.<State>from(State.IDLE)
                         .when(() -> config == null, "config == null")
@@ -102,15 +121,40 @@ public class AScript extends StateMachineScript<AScript.State> {
                 break;
 
             case IDLE:
+                if (stopRequested) return; // already stopping, don't loop
+
                 craftingPhase = craftingScript.resolvePhase(config);
 
-                // If materials/tools are missing from BOTH bank and inventory, quit
+                // If materials/tools are missing from inventory, check if bank has stock
                 if (craftingPhase != CraftingScript.Phase.NONE
-                        && craftingScript.isBankMissingMaterials(config, craftingPhase)) {
-                    String missing = craftingScript.describeMissing(config, craftingPhase);
-                    Microbot.status = "STOPPED — " + missing;
-                    log.warn("[AScript] No materials in bank or inventory, stopping: {}", missing);
-                    craftingPhase = CraftingScript.Phase.NONE;
+                        && craftingScript.needsBank(config, craftingPhase)) {
+
+                    // Open bank to check stock (and keep it open for BANKING state)
+                    if (!Rs2Bank.isOpen()) {
+                        Rs2Bank.openBank();
+                    }
+
+                    // Bank is open — check if it has materials
+                    if (craftingScript.isBankMissingMaterials(config, craftingPhase)) {
+                        // Bank has NO materials — stop the script (once)
+                        stopRequested = true;
+                        String missing = craftingScript.describeMissing(config, craftingPhase);
+                        Microbot.status = "STOPPED — " + missing;
+                        log.warn("[AScript] No materials in bank or inventory, stopping: {}", missing);
+                        Rs2Bank.closeBank();
+                        sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
+                        craftingPhase = CraftingScript.Phase.NONE;
+                        craftingScript.resetExitFlag();
+                        Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+                    }
+                    // If bank HAS materials, fall through to actionDone = true
+                    // Bank stays open for BANKING state to use
+                } else {
+                    // Inventory has all materials — close bank if open (heading to CRAFTING)
+                    if (Rs2Bank.isOpen()) {
+                        Rs2Bank.closeBank();
+                        sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
+                    }
                 }
 
                 actionDone = true;
@@ -137,6 +181,11 @@ public class AScript extends StateMachineScript<AScript.State> {
     protected void onTransition(State from, State to, String reason) {
         super.onTransition(from, to, reason);
         actionDone = false;
+        // Reset flags when script is re-enabled
+        if (from == State.DISABLED && to == State.IDLE) {
+            stopRequested = false;
+            craftingScript.resetExitFlag();
+        }
     }
 
     @Override
