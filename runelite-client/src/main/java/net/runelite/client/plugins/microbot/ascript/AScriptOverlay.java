@@ -1,7 +1,6 @@
 package net.runelite.client.plugins.microbot.ascript;
 
 import net.runelite.client.plugins.microbot.Microbot;
-import net.runelite.client.plugins.microbot.statemachine.StateMachineScript;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.components.LineComponent;
@@ -50,24 +49,11 @@ public class AScriptOverlay extends OverlayPanel {
                     .right(config.scriptSelection().getName())
                     .build());
 
-            // State machine state
-            if (script instanceof StateMachineScript) {
-                @SuppressWarnings("unchecked")
-                StateMachineScript<AScript.State> sm = (StateMachineScript<AScript.State>) script;
-                var snapshot = sm.getSnapshot();
-                if (snapshot != null) {
-                    panelComponent.getChildren().add(LineComponent.builder()
-                            .left("State:")
-                            .right(String.valueOf(snapshot.currentState()))
-                            .build());
-                    panelComponent.getChildren().add(LineComponent.builder()
-                            .left("Last transition:")
-                            .right(snapshot.lastTransitionReason() != null
-                                    ? snapshot.lastTransitionReason()
-                                    : "—")
-                            .build());
-                }
-            }
+            // Phase
+            panelComponent.getChildren().add(LineComponent.builder()
+                    .left("Phase:")
+                    .right(String.valueOf(script.getCurrentPhase()))
+                    .build());
 
             // Microbot status
             panelComponent.getChildren().add(LineComponent.builder()

@@ -1,15 +1,15 @@
 # aScript — AIO Multi-Script Orchestrator
 
-AIO (All-In-One) state-machine script that hosts multiple automation scripts and QOL features under a single plugin. Each feature lives in its own sub-package under `ascript/`.
+AIO (All-In-One) script that hosts multiple automation scripts and QOL features under a single plugin. Each feature lives in its own sub-package under `ascript/`.
 
 ## Structure
 
 ```
 ascript/
-├── AScript.java              # Orchestrator — StateMachineScript<State>
+├── AScript.java              # Orchestrator — extends Script, phase-based loop
 ├── AScriptConfig.java        # Config with Automation / <Module> / QOL sections
 ├── AScriptPlugin.java        # Plugin descriptor, Guice wiring, start/stop
-├── AScriptOverlay.java       # HUD overlay — shows state, transition, status
+├── AScriptOverlay.java       # HUD overlay — shows phase, status
 ├── ScriptType.java           # Dropdown enum — which module to run
 └── <module>/                 # Each module is a sub-package
     ├── <Module>Script.java   # Stateless helper: phase resolution, bank, craft/action
@@ -18,11 +18,10 @@ ascript/
 
 ## How it works
 
-1. **AScript** is a `StateMachineScript<State>` with states: `DISABLED → IDLE → BANKING ↔ CRAFTING → ERROR`.
-2. When `config.enabled()` is true and a `ScriptType` is selected, the machine transitions to `IDLE`.
-3. `IDLE` resolves the active module's phase, checks if banking is needed, and transitions accordingly.
-4. Each module is a plain class (not a Script subclass) with stateless methods — no Guice, no lifecycle.
-5. The orchestrator delegates to the module: `module.resolvePhase()`, `module.needsBank()`, `module.doBank()`, `module.doCraft()`.
+1. **AScript** extends `Script` with a `Phase` enum: `DISABLED, IDLE, BANKING, CRAFTING, ERROR`.
+2. Each tick: check config → resolve module phase → check bank → dispatch to module.
+3. Each module is a plain class (not a Script subclass) with stateless methods — no Guice, no lifecycle.
+4. The orchestrator delegates to the module: `module.resolvePhase()`, `module.needsBank()`, `module.doBank()`, `module.doCraft()`.
 
 ## Adding a new module
 
@@ -37,8 +36,8 @@ ascript/
 5. Add config items in `AScriptConfig.java` under a new `@ConfigSection`.
 6. In `AScript.java`:
    - Add a field for the new sub-script instance
-   - Add states if needed (or reuse `IDLE/BANKING/CRAFTING`)
-   - Add transitions and delegation logic
+   - Add phase handling in `tick()` (reuse `IDLE/BANKING/CRAFTING`)
+   - Add dispatch logic
 7. **Update this AGENTS.md** with the new module's name, package, and methods.
 
 ## Config layout
@@ -64,8 +63,7 @@ When a module's section is `closedByDefault = true`, the user expands it manuall
 - **Modules must be stateless.** All mutable state lives in AScript or on the executor thread. Modules are helpers, not lifecycle participants.
 - **Modules must not extend Script.** They are plain classes called by the orchestrator.
 - **Modules must not use Guice.** No `@Inject` — they receive config as a method parameter.
-- **Transitions are evaluated top-to-bottom.** High-priority exits (error, bank needed) go first.
-- **Guards must be pure.** No side effects in transition conditions — only read state.
+**Tick order matters.** High-priority checks (config null, missing materials) go first in `tick()`.
 - **Use `Microbot.status`** for user-visible status updates inside module actions.
 - **Use `sleepUntil(condition, timeoutMs)`** — never fixed `sleep()` to wait on game state.
 - **Use `Rs2Random` for all timing.** Never use `Random.nextInt()` or fixed `sleep()` for delays.
@@ -99,7 +97,7 @@ if (!Rs2Inventory.hasItem(mouldId) && !Rs2Bank.hasItem(mouldId)) return true;
 
 ### doBank() return value
 
-`doBank()` must return `false` if banking failed (bank didn't open, materials missing, withdraw failed). If it returns `true`, the state machine transitions to IDLE -> CRAFTING. Returning `true` when inventory is empty creates an infinite loop.
+`doBank()` must return `false` if banking failed (bank didn't open, materials missing, withdraw failed). If it returns `true`, the tick proceeds to CRAFTING. Returning `true` when inventory is empty creates an infinite loop.
 
 ### Stopping the script
 
@@ -179,5 +177,5 @@ QOL features don't run as automation scripts. Add config items under the QOL `@C
 
 - [ ] Code compiles: `./gradlew :client:compileJava`
 - [ ] New enums/config items have `toString()` for RuneLite config UI
-- [ ] New transitions have `because()` and readable condition strings
+- [ ] Tick logic is clear: config check → phase resolve → bank check → dispatch
 - [ ] This AGENTS.md is updated with new modules, states, or config items
