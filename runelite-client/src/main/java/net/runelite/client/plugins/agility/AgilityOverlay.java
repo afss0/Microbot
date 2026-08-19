@@ -38,6 +38,7 @@ import net.runelite.api.Client;
 import net.runelite.api.NPC;
 import net.runelite.api.Point;
 import net.runelite.api.Tile;
+import net.runelite.client.plugins.microbot.util.models.RS2Item;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.game.AgilityShortcut;
 import net.runelite.client.ui.overlay.Overlay;
@@ -77,7 +78,7 @@ class AgilityOverlay extends Overlay
 
 		LocalPoint playerLocation = cameraFocus.getCameraFocus();
 		Point mousePosition = client.getMouseCanvasPosition();
-		final List<Tile> marksOfGrace = plugin.getMarksOfGrace();
+		final List<RS2Item> marksOfGrace = plugin.getMarksOfGrace();
 		final Tile stickTile = plugin.getStickTile();
 
 		plugin.getObstacles().forEach((object, obstacle) ->
@@ -145,9 +146,9 @@ class AgilityOverlay extends Overlay
 
 		if (config.highlightMarks() && !marksOfGrace.isEmpty())
 		{
-			for (Tile markOfGraceTile : marksOfGrace)
+			for (RS2Item markOfGrace : marksOfGrace)
 			{
-				highlightTile(graphics, playerLocation, markOfGraceTile, config.getMarkColor());
+				highlightTile(graphics, playerLocation, markOfGrace.getTile(), config.getMarkColor());
 			}
 		}
 
