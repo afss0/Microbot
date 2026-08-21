@@ -1657,9 +1657,10 @@ public class Rs2WalkerUnitTest {
 
     @Test
     public void shouldClearInterimTarget_preclickDistanceStillKeepsCheckpoint() {
+        // 7 tiles — just beyond INTERIM_CLOSE_TILES (6), so the checkpoint is preserved
         assertFalse(Rs2Walker.shouldClearInterimTarget(
                 new WorldPoint(2890, 3396, 0),
-                new WorldPoint(2884, 3396, 0),
+                new WorldPoint(2883, 3396, 0),
                 1_000L,
                 1_500L,
                 2_000L));
@@ -1746,7 +1747,7 @@ public class Rs2WalkerUnitTest {
     public void shouldYieldForActiveRecoveryInterim_recentProgress_returnsTrue() {
         assertTrue(Rs2Walker.shouldYieldForActiveRecoveryInterim(
                 new WorldPoint(2890, 3396, 0),
-                new WorldPoint(2884, 3396, 0),
+                new WorldPoint(2883, 3396, 0),
                 1_000L,
                 2_500L,
                 3_000L,
