@@ -95,7 +95,7 @@ Used during merges to verify nothing is lost.
 
 ### aScript — AIO Multi-Script Orchestrator
 - **Files:** `ascript/` package (AScript.java, AScriptConfig.java, AScriptPlugin.java, AScriptOverlay.java, ScriptType.java, crafting/)
-- **What:** State-machine-based AIO script hosting multiple automation scripts under one plugin. Orchestrator manages DISABLED → IDLE → BANKING ↔ CRAFTING → ERROR states. Sub-scripts are stateless helpers (no Guice, no Script inheritance).
+- **What:** AIO script hosting multiple automation scripts under one plugin, built on standard `Script` (Phase enum: DISABLED/IDLE/BANKING/CRAFTING/ERROR — migrated from StateMachineScript). Modules are plain helper classes (no Guice, no Script inheritance).
 - **Current modules:**
   - **Crafting** (`ascript/crafting/`) — Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry
 - **Anti-detection:**
@@ -106,7 +106,14 @@ Used during merges to verify nothing is lost.
   - Missing materials → immediate stop with status message (no silent failures)
 - **Weather integration:** `WeatherModulation.ensureFresh()` called once per craft cycle; `combinedSpeedFactor()` scales all waits
 - **Config:** Automation section (enabled + dropdown), per-module sections (closedByDefault), QOL section (placeholder)
-- **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation
+- **Review fixes (Aug 2026):**
+  - Flax Spinning now walks to the configured spinning wheel (`flaxSpinLocation`), turns camera, interacts with "Spin"; stops once + Discord notify when wheel/location missing (was: no navigation at all)
+  - `tick()` honors `Rs2Bank.openBank()` return value — failed open retries next tick instead of checking stock against an empty bank snapshot (false "missing materials" stop)
+  - Added `CraftingScript.validateSelection()` — invalid sub-selections (activity set, sub-type NONE) stop early with clear status instead of timeout loops
+  - Removed dead/misleading config: `jewelryCompletionAction` (never implemented), `PROGRESSIVE` entries in CraftingGlass/CraftingStaff (behaved like NONE)
+  - Amethyst branch gates on the amount dialog before clicking (same as other gem branches)
+  - Local sleep/sleepUntil helpers replaced by `Global.sleep`/`Global.sleepUntil` (client-thread guard + interrupt handling)
+- **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`

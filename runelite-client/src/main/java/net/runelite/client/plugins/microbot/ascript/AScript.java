@@ -65,13 +65,34 @@ public class AScript extends Script {
         // 2. Resolve crafting activity
         craftingActivity = craftingScript.resolvePhase(config);
 
+        // 2b. Invalid sub-selection (e.g. GEM_CUTTING with no gem) → stop once, clear message
+        String selectionError = craftingScript.validateSelection(config, craftingActivity);
+        if (selectionError != null) {
+            if (!stopRequested) {
+                stopRequested = true;
+                Microbot.status = "STOPPED — " + selectionError;
+                log.warn("[AScript] Invalid configuration, stopping: {}", selectionError);
+                if (Rs2Bank.isOpen()) {
+                    Rs2Bank.closeBank();
+                    sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
+                }
+                craftingScript.resetExitFlag();
+                Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+            }
+            currentPhase = Phase.ERROR;
+            return;
+        }
+
         // 3. Missing materials from both bank+inventory → stop once
         if (craftingActivity != CraftingScript.Phase.NONE
                 && craftingScript.needsBank(config, craftingActivity)) {
 
-            // Open bank to check stock
-            if (!Rs2Bank.isOpen()) {
-                Rs2Bank.openBank();
+            // Open bank to check stock; if opening fails, wait for the next tick.
+            // Checking materials against a stale/empty bank snapshot (bank never opened)
+            // causes false "no materials" stops.
+            if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
+                currentPhase = Phase.BANKING;
+                return;
             }
 
             if (craftingScript.isBankMissingMaterials(config, craftingActivity)) {

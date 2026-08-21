@@ -7,7 +7,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum CraftingGlass {
     NONE(" ", "", '0', 0),
-    PROGRESSIVE("Progressive Mode", "None", '0', 1),
     BEER_GLASS("Beer Glass", "Beer Glass", '1', 1),
     CANDLE_LANTERN("Empty Candle Lantern", "Empty Candle Lantern", '2', 4),
     OIL_LAMP("Empty Oil Lamp", "Empty Oil Lamp", '3', 12),

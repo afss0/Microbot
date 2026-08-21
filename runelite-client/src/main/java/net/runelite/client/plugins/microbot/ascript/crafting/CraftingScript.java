@@ -5,6 +5,8 @@ import net.runelite.api.TileObject;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
+import static net.runelite.client.plugins.microbot.util.Global.sleep;
+import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntilTrue;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -61,6 +63,35 @@ public class CraftingScript {
         }
     }
 
+    // ── Selection validation ────────────────────────────────────
+
+    /**
+     * Returns an error description when the configured activity has an invalid
+     * sub-selection (e.g. GEM_CUTTING without a gem type), or null when valid.
+     * Checked by AScript.tick() before any bank interaction.
+     */
+    public String validateSelection(AScriptConfig config, Phase phase) {
+        switch (phase) {
+            case GEMS:
+                if (config.gemType() == CraftingGem.NONE) return "no gem selected";
+                return null;
+            case GLASS:
+                if (config.glassType() == CraftingGlass.NONE) return "no glass item selected";
+                return null;
+            case STAFFS:
+                if (config.staffType() == CraftingStaff.NONE) return "no staff type selected";
+                return null;
+            case FLAX:
+                if (config.flaxSpinLocation() == CraftingFlaxLocation.NONE) return "no flax location selected";
+                return null;
+            case DRAGON_LEATHER:
+                if (config.dragonLeatherType() == CraftingDragonLeather.NONE) return "no dragon leather armour selected";
+                return null;
+            default:
+                return null;
+        }
+    }
+
     // ── Bank check ──────────────────────────────────────────────
 
     public boolean needsBank(AScriptConfig config, Phase phase) {
@@ -91,7 +122,7 @@ public class CraftingScript {
 
     private boolean needsBankStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
-        if (staff == CraftingStaff.NONE || staff == CraftingStaff.PROGRESSIVE) return false;
+        if (staff == CraftingStaff.NONE) return false;
         return !Rs2Inventory.hasItem(staff.getItemName()) || !Rs2Inventory.hasItem(staff.getOrb());
     }
 
@@ -158,7 +189,7 @@ public class CraftingScript {
 
     private boolean bankMissingStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
-        if (staff == CraftingStaff.NONE || staff == CraftingStaff.PROGRESSIVE) return false;
+        if (staff == CraftingStaff.NONE) return false;
         if (!Rs2Inventory.hasItem(staff.getItemName()) && !Rs2Bank.hasItem(staff.getItemName())) return true;
         return !Rs2Inventory.hasItem(staff.getOrb()) && !Rs2Bank.hasItem(staff.getOrb());
     }
@@ -237,7 +268,7 @@ public class CraftingScript {
 
     private String describeMissingStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
-        if (staff == CraftingStaff.NONE || staff == CraftingStaff.PROGRESSIVE) return "";
+        if (staff == CraftingStaff.NONE) return "";
         StringBuilder sb = new StringBuilder();
         if (!Rs2Inventory.hasItem(staff.getItemName())) sb.append(staff.getItemName()).append(", ");
         if (!Rs2Inventory.hasItem(staff.getOrb())) sb.append(staff.getOrb()).append(", ");
@@ -469,7 +500,7 @@ public class CraftingScript {
             case GEMS:            craftGems(config); break;
             case GLASS:           craftGlass(config); break;
             case STAFFS:          craftStaffs(config); break;
-            case FLAX:            craftFlax(); break;
+            case FLAX:            craftFlax(config); break;
             case DRAGON_LEATHER:  craftDragonLeather(config); break;
             case JEWELRY:         craftJewelry(config); break;
             default: break;
@@ -494,7 +525,11 @@ public class CraftingScript {
         if (amethyst) {
             Rs2Inventory.use("chisel");
             Rs2Inventory.use(21347);
-            Rs2Widget.sleepUntilHasWidgetText("How many do you wish to make?", 270, 5, false, 5000);
+            // Gate on the amount dialog like the other branches — clicking blind
+            // when the dialog never opened just burns the craft-wait timeout.
+            boolean amountDialogOpen = Rs2Widget.sleepUntilHasWidgetText(
+                    "How many do you wish to make?", 270, 5, false, 5000);
+            if (!amountDialogOpen) return;
             Rs2Widget.clickWidget(gem.getName(), true);
             Rs2Widget.sleepUntilHasNotWidgetText("How many do you wish to make?", 270, 5, false, 5000);
             sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(21347),
@@ -561,10 +596,56 @@ public class CraftingScript {
         Microbot.status = "IDLE";
     }
 
-    private void craftFlax() {
+    private void craftFlax(AScriptConfig config) {
+        if (exitRequested) return; // already tried to exit, don't spam
+
+        CraftingFlaxLocation location = config.flaxSpinLocation();
+
+        // A wheel cannot be located without a configured location
+        if (location == null || location == CraftingFlaxLocation.NONE) {
+            exitRequested = true;
+            Microbot.status = "NO FLAX LOCATION — STOPPING";
+            notifyDiscord("Flax Script Stopped",
+                    "No spinning wheel location selected. Set Flax Location in the config.");
+            Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+            return;
+        }
+
         Microbot.status = "SPINNING FLAX";
 
-        Rs2Inventory.use("flax");
+        // Find the spinning wheel by ID from the selected location
+        TileObject wheelObject = Rs2GameObject.findObjectById(location.getObjectID());
+
+        // If not found, walk to the wheel location
+        if (wheelObject == null && location.getWorldPoint() != null) {
+            Microbot.status = "WALKING TO " + location.getLabel().toUpperCase();
+            Rs2Walker.walkTo(location.getWorldPoint());
+            sleep(Rs2Random.logNormalBounded(2000, 4000)); // randomized wait for walker
+
+            // Try finding the wheel again after walking
+            wheelObject = Rs2GameObject.findObjectById(location.getObjectID());
+        }
+
+        // If still not found, deactivate script + notify Discord (once)
+        if (wheelObject == null) {
+            exitRequested = true;
+            Microbot.status = "NO WHEEL — STOPPING";
+            notifyDiscord("Flax Script Stopped",
+                    "Spinning wheel (ID " + location.getObjectID() + ") not found at "
+                            + location.getLabel() + ". Deactivating script.");
+            Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+            return;
+        }
+
+        // Turn camera if wheel not on screen
+        if (!Rs2Camera.isTileOnScreen(wheelObject.getLocalLocation())) {
+            Rs2Camera.turnTo(wheelObject.getLocalLocation());
+            return;
+        }
+
+        // Click the wheel with Spin action
+        Rs2GameObject.interact(wheelObject, "Spin");
+
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
         if (!craftingInterfaceOpen) return;
@@ -666,20 +747,5 @@ public class CraftingScript {
                 Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
 
         Microbot.status = "IDLE";
-    }
-
-    // ── Helpers (delegate to Script base) ───────────────────────
-    // These are called from Script context; CraftingScript doesn't
-    // extend Script itself, so we use static utility methods.
-
-    private static void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-    }
-
-    private static void sleepUntil(java.util.function.BooleanSupplier condition, long timeoutMs) {
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        while (!condition.getAsBoolean() && System.currentTimeMillis() < deadline) {
-            sleep(100);
-        }
     }
 }

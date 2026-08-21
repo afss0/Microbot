@@ -7,7 +7,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum CraftingStaff {
     NONE(" ", "", 0, ""),
-    PROGRESSIVE("Progressive Mode", "None", 1, ""),
     WATER_BATTLESTAFF("Water Battlestaff", "Water Battlestaff", 54, "Water Orb"),
     EARTH_BATTLESTAFF("Earth Battlestaff", "Earth Battlestaff", 58, "Earth Orb"),
     FIRE_BATTLESTAFF("Fire Battlestaff", "Fire Battlestaff", 62, "Fire Orb"),

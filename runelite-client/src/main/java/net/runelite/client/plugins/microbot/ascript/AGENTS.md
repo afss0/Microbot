@@ -19,15 +19,16 @@ ascript/
 ## How it works
 
 1. **AScript** extends `Script` with a `Phase` enum: `DISABLED, IDLE, BANKING, CRAFTING, ERROR`.
-2. Each tick: check config → resolve module phase → check bank → dispatch to module.
-3. Each module is a plain class (not a Script subclass) with stateless methods — no Guice, no lifecycle.
-4. The orchestrator delegates to the module: `module.resolvePhase()`, `module.needsBank()`, `module.doBank()`, `module.doCraft()`.
+2. Each tick: check config → resolve module phase → validate selection → check bank → dispatch to module.
+3. Each module is a plain class (not a Script subclass) — no Guice, no lifecycle. Prefer stateless methods; if per-run mutable state is unavoidable (e.g. AFK timers, exit-once flags), keep it in the module instance and document it here.
+4. The orchestrator delegates to the module: `module.resolvePhase()`, `module.validateSelection()`, `module.needsBank()`, `module.doBank()`, `module.doCraft()`.
 
 ## Adding a new module
 
 1. Create `ascript/<module>/` package.
 2. Create `<Module>Script.java` with these methods:
    - `Phase resolvePhase(AScriptConfig config)` — maps config activity to internal phase enum
+   - `String validateSelection(AScriptConfig config, Phase phase)` — error description for invalid sub-selections (e.g. activity set but sub-type NONE), or null when valid; checked by `tick()` before any bank interaction
    - `boolean needsBank(AScriptConfig config, Phase phase)` — true when materials are missing
    - `boolean doBank(AScriptConfig config, Phase phase)` — banking logic; return true when done
    - `void doCraft(AScriptConfig config, Phase phase)` — the main action
@@ -94,6 +95,17 @@ if (!Rs2Inventory.hasItem(mouldId) && !Rs2Bank.hasItem(mouldId)) return true;
 - **BANKING** uses the already-open bank. Does NOT re-open. Does NOT close on success.
 - **IDLE** closes the bank only when transitioning to CRAFTING (inventory full) or stopping (no materials).
 - **Never close the bank between IDLE <-> BANKING** — this causes open/close loops.
+
+### openBank() return value
+
+`Rs2Bank.openBank()` returns `false` when it fails (no bank in range, lag, blocked). **Never ignore the return value before checking stock** — `Rs2Bank.hasItem()` reads a cached snapshot (`rs2BankData`) that may be empty/stale when the bank never opened, causing false "missing materials" stops. Pattern:
+
+```java
+if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
+    // retry next tick — do NOT run material checks against an unopened bank
+    return;
+}
+```
 
 ### doBank() return value
 

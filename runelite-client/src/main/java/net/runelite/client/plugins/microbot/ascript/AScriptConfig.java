@@ -183,17 +183,6 @@ public interface AScriptConfig extends Config {
         return JewelryLocation.EDGEVILLE;
     }
 
-    @ConfigItem(
-            keyName = "jewelryCompletionAction",
-            name = "Completion Action",
-            description = "Action after all jewelry is crafted",
-            position = 2,
-            section = jewelrySection
-    )
-    default JewelryCompletionAction jewelryCompletionAction() {
-        return JewelryCompletionAction.NONE;
-    }
-
     // ── QOL ─────────────────────────────────────────────────────
 
     @ConfigSection(
