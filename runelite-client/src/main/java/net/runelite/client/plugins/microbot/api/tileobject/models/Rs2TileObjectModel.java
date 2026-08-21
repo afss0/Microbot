@@ -167,6 +167,9 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     public ObjectComposition getObjectComposition() {
         return Microbot.getClientThread().invoke(() -> {
             ObjectComposition composition = Microbot.getClient().getObjectDefinition(tileObject.getId());
+            if (composition == null) {
+                return null;
+            }
             if (composition.getImpostorIds() != null) {
                 composition = composition.getImpostor();
             }
@@ -243,6 +246,10 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
             if (action != null) {
                 //performance improvement to only get compoisiton if action has been specified
                 var objComp = getObjectComposition();
+                if (objComp == null) {
+                    log.warn("Failed to get object composition for object {}", getId());
+                    return false;
+                }
                 String[] actions;
                 if (objComp.getImpostorIds() != null && objComp.getImpostor() != null) {
                     actions = objComp.getImpostor().getActions();
@@ -303,7 +310,7 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
                             .itemId(-1)
                             .option(action)
                             .target(objName)
-                            .setWorldViewId(getWorldView().getId())
+                            .setWorldViewId(getWorldView() != null ? getWorldView().getId() : -1)
                             .gameObject(tileObject)
                     ,
                     Rs2UiHelper.getObjectClickbox(tileObject));

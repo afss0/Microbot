@@ -996,7 +996,8 @@ public class Rs2Player {
 	 * @return The {@link WorldPoint} representing the player's current location.
 	 */
 	public static WorldPoint getWorldLocation() {
-		return Microbot.getRs2PlayerStateCache().getLocalPlayerPosition();
+		var cache = Microbot.getRs2PlayerStateCache();
+		return cache != null ? cache.getLocalPlayerPosition() : null;
 	}
 
 	/**
