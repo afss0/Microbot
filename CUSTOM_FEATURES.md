@@ -113,6 +113,11 @@ Used during merges to verify nothing is lost.
   - Removed dead/misleading config: `jewelryCompletionAction` (never implemented), `PROGRESSIVE` entries in CraftingGlass/CraftingStaff (behaved like NONE)
   - Amethyst branch gates on the amount dialog before clicking (same as other gem branches)
   - Local sleep/sleepUntil helpers replaced by `Global.sleep`/`Global.sleepUntil` (client-thread guard + interrupt handling)
+- **Jewelry banking fix (Aug 2026):**
+  - Item-grid interactions in the bank die silently on some machines — injected CC_OP entries (`depositAll`/`depositX`) AND raw physical slot clicks all fail there (verified live via Agent Server across three approaches); withdraw-side injected entries and toolbar BUTTON clicks work fine.
+  - `bankJewelry()` now deposits via `Rs2Bank.depositAll()` (no args) — a raw click on the "Deposit inventory" toolbar button with `waitForInventoryChanges` verification. Deposits crafted jewelry + leftover gems together. Before depositing, the tool slot (mould) is locked via `Rs2Bank.toggleItemLock()` when unlocked (locks persist account-wide; requires bank slot locking enabled in settings). If the injected lock op dies on grid-silent machines the script proceeds anyway — the withdraw-mould step restores an unprotected tool automatically.
+  - All bank-step `sleepUntil(...)` results checked; timeout returns `false` → tick retries BANKING instead of looping blind (was: silent BANKING↔CRAFTING loop stuck forever with full inventory).
+  - Merge check: `grep "Depositing inventory" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename

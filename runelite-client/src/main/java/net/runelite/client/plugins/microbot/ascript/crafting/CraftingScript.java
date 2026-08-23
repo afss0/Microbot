@@ -14,6 +14,7 @@ import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.discord.Rs2Discord;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
@@ -445,19 +446,33 @@ public class CraftingScript {
     private boolean bankJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
 
-        // Deposit any finished jewelry
-        Rs2Bank.depositAll(item.getItemID());
-        // Deposit cut gems if any leftover
-        if (item.hasGem()) {
-            Rs2Bank.depositAll(item.getGem().getCutItemID());
+        // Deposit everything via the bank's "Deposit inventory" toolbar button
+        // (Rs2Bank.depositAll() -> raw click on the BUTTON widget).
+        // Item-GRID interactions die silently on some machines — injected CC_OP
+        // entries AND raw slot clicks both fail there (verified live via Agent
+        // Server); the toolbar button click works. Crafted jewelry and leftover
+        // gems go together.
+        // Protect the tool (mould/chisel/pipe) from the blanket deposit by locking
+        // its bank inventory slot first. Locks persist account-wide, so this is a
+        // one-time setup per tool; if the injected lock op dies on grid-silent
+        // machines, we proceed anyway — the withdraw-mould step below restores it.
+        Rs2ItemModel tool = Rs2Inventory.get(item.getToolItemID());
+        if (tool != null && !Rs2Bank.isLockedSlot(tool.getSlot())) {
+            Microbot.status = "Locking " + item.getName() + " tool slot";
+            Rs2Bank.toggleItemLock(tool.getName(), true);
         }
-        sleepUntil(() -> !Rs2Inventory.hasItem(item.getItemID()), 3000);
+        Microbot.status = "Depositing inventory";
+        if (!Rs2Bank.depositAll()) {
+            return false; // waitForInventoryChanges timed out — retry next tick
+        }
 
         // Withdraw mould if needed
         if (!Rs2Inventory.hasItem(item.getToolItemID())) {
             if (Rs2Bank.hasItem(item.getToolItemID())) {
                 Rs2Bank.withdrawOne(item.getToolItemID());
-                sleepUntil(() -> Rs2Inventory.hasItem(item.getToolItemID()), 3000);
+                if (!sleepUntil(() -> Rs2Inventory.hasItem(item.getToolItemID()), 3000)) {
+                    return false;
+                }
             } else {
                 notifyDiscord("Banking Failed", "Missing mould in bank for " + item.getName());
                 return false;
@@ -467,7 +482,9 @@ public class CraftingScript {
         // Withdraw bar
         if (Rs2Bank.hasItem(item.getJewelryType().getMetalBarId())) {
             Rs2Bank.withdrawAll(item.getJewelryType().getMetalBarId());
-            sleepUntil(() -> Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()), 3000);
+            if (!sleepUntil(() -> Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()), 3000)) {
+                return false;
+            }
         } else {
             notifyDiscord("Banking Failed", "No " + item.getJewelryType().getLabel() + " in bank");
             return false;
@@ -477,7 +494,9 @@ public class CraftingScript {
         if (item.hasGem()) {
             if (Rs2Bank.hasItem(item.getGem().getCutItemID())) {
                 Rs2Bank.withdrawAll(item.getGem().getCutItemID());
-                sleepUntil(() -> Rs2Inventory.hasItem(item.getGem().getCutItemID()), 3000);
+                if (!sleepUntil(() -> Rs2Inventory.hasItem(item.getGem().getCutItemID()), 3000)) {
+                    return false;
+                }
             } else {
                 notifyDiscord("Banking Failed", "No " + item.getGem().getCutItemName() + " in bank");
                 return false;
@@ -506,9 +525,11 @@ public class CraftingScript {
             default: break;
         }
 
+        sleep(1200);
+
         // Random AFK — log-normal distribution, weather-modulated
-        if (config.craftingAfk() && System.currentTimeMillis() - lastAfkTime > 120_000) {
-            int afkMs = Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier);
+        if (config.craftingAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
+            int afkMs = Rs2Random.logNormalBounded(3000, 120000, weatherMultiplier);
             Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
             sleep(afkMs);
             lastAfkTime = System.currentTimeMillis();
@@ -538,9 +559,7 @@ public class CraftingScript {
             Rs2Inventory.use("chisel");
             Rs2Inventory.use(uncutGemName);
             boolean craftingInterfaceOpen = sleepUntilTrue(() ->
-                    Rs2Widget.isProductionWidgetOpen()
-                            || Rs2Widget.isGoldCraftingWidgetOpen()
-                            || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 20000);
+                    Rs2Widget.isProductionWidgetOpen(), 300, 20000);
             if (!craftingInterfaceOpen) return;
             Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
             sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(uncutGemName),
@@ -607,7 +626,7 @@ public class CraftingScript {
             Microbot.status = "NO FLAX LOCATION — STOPPING";
             notifyDiscord("Flax Script Stopped",
                     "No spinning wheel location selected. Set Flax Location in the config.");
-            Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             return;
         }
 
@@ -633,7 +652,7 @@ public class CraftingScript {
             notifyDiscord("Flax Script Stopped",
                     "Spinning wheel (ID " + location.getObjectID() + ") not found at "
                             + location.getLabel() + ". Deactivating script.");
-            Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             return;
         }
 
@@ -719,7 +738,7 @@ public class CraftingScript {
             notifyDiscord("Jewelry Script Stopped",
                     "Furnace (ID 16469) not found at " + (location != null ? location.getLabel() : "unknown")
                             + ". Deactivating script.");
-            Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             return;
         }
 
@@ -741,6 +760,8 @@ public class CraftingScript {
 
         // Click the correct widget by (group, child) from the JewelryItem enum
         Rs2Widget.clickWidget(item.getName(), java.util.Optional.of(item.getWidgetGroup()), item.getWidgetChild(), false);
+
+        sleepUntil(() -> Microbot.isGainingExp, Rs2Random.logNormalBounded(3000, 12000, weatherMultiplier));
 
         sleepUntil(() -> !Microbot.isGainingExp
                 || !Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()),

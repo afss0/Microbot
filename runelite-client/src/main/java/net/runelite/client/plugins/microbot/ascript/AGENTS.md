@@ -111,6 +111,14 @@ if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
 
 `doBank()` must return `false` if banking failed (bank didn't open, materials missing, withdraw failed). If it returns `true`, the tick proceeds to CRAFTING. Returning `true` when inventory is empty creates an infinite loop.
 
+### Bank item-GRID interactions can die silently — deposit via the toolbar button
+
+On some machines, **any** interaction targeting the bank's item grids fails silently: injected CC_OP entries (`Rs2Bank.depositAll(id)` op 8, `depositX` ops 2/6/7) AND raw physical clicks on the slot widget all do nothing — mouse fires, no deposit, no exception, no `MenuOptionClicked`. Verified live via Agent Server (menu entry logging on): withdraw-side grid entries work fine, toolbar BUTTON clicks work fine, only grid targets die. Suspected coordinate/scaling issue with dynamic item widgets on that display setup.
+
+Symptom when it hits a full inventory (crafted jewelry + mould): every withdraw also fails, unchecked `sleepUntil`s time out invisibly, module returns `true` → infinite BANKING↔CRAFTING loop with zero messages.
+
+**Rule:** in aScript modules, deposit with `Rs2Bank.depositAll()` (no args) — it raw-clicks the "Deposit inventory" toolbar button (a static button widget, proven to work) and waits for inventory changes. Protect tool slots (mould/chisel/pipe) from the blanket deposit by locking them first: `Rs2ItemModel tool = Rs2Inventory.get(toolId); if (tool != null && !Rs2Bank.isLockedSlot(tool.getSlot())) Rs2Bank.toggleItemLock(tool.getName(), true);` — locks persist account-wide and the check makes it a no-op after the first cycle. Locking needs "bank slot locking" enabled in the player's bank settings; if the injected lock op dies on grid-silent machines, keep going — re-withdraw the tool next cycle. Check every bank-step `sleepUntil(...)` result and return `false` on timeout so the tick retries instead of looping blind.
+
 ### Stopping the script
 
 Use `Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE)` to stop. Add a `stopRequested` flag to prevent repeated exit attempts while the config change propagates.
