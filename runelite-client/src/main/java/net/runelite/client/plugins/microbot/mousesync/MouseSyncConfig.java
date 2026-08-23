@@ -41,4 +41,14 @@ public interface MouseSyncConfig extends Config {
     default Keybind emergencyHotkey() {
         return new Keybind(java.awt.event.KeyEvent.VK_X, java.awt.event.InputEvent.CTRL_DOWN_MASK);
     }
+
+    @ConfigItem(
+            keyName = "skipWhenUnfocused",
+            name = "Skip when unfocused",
+            description = "Prevents mouse sync when the client window is not focused. If the window loses focus during a bot interaction, input is released immediately.",
+            position = 3
+    )
+    default boolean skipWhenUnfocused() {
+        return true;
+    }
 }

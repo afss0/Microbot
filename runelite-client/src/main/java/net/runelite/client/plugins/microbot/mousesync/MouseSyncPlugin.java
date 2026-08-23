@@ -17,6 +17,8 @@ import net.runelite.client.util.HotkeyListener;
 
 import javax.inject.Inject;
 import java.awt.*;
+import java.awt.event.WindowEvent;
+import java.awt.event.WindowFocusListener;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -66,6 +68,21 @@ public class MouseSyncPlugin extends Plugin {
      */
     private volatile boolean inputWasAlreadyDisabled = false;
 
+    /** Listens for window focus loss to release input immediately. */
+    private final WindowFocusListener focusListener = new WindowFocusListener() {
+        @Override
+        public void windowGainedFocus(WindowEvent e) { }
+
+        @Override
+        public void windowLostFocus(WindowEvent e) {
+            if (!config.skipWhenUnfocused()) return;
+            if (state == State.BOT_ACTIVE || state == State.GRACE_PERIOD || state == State.RETURNING) {
+                log.info("MouseSync: window lost focus during {} — releasing input", state);
+                emergencyRelease();
+            }
+        }
+    };
+
     // ── Injected dependencies ──────────────────────────────────────────
     @Inject private Client client;
     @Inject private MouseSyncConfig config;
@@ -97,6 +114,11 @@ public class MouseSyncPlugin extends Plugin {
         });
         keyManager.registerKeyListener(emergencyKeyListener);
         startCursorTracker();
+        // Listen for window focus changes — release input if the user alt-tabs away
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(Microbot.getClient().getCanvas());
+            if (window != null) window.addWindowFocusListener(focusListener);
+        });
         log.info("Mouse Sync started (grace={}ms, hotkey=CTRL+X)", config.gracePeriodMs());
     }
 
@@ -105,6 +127,11 @@ public class MouseSyncPlugin extends Plugin {
         keyManager.unregisterKeyListener(emergencyKeyListener);
         cancelGraceTimer();
         stopCursorTracker();
+        // Unregister focus listener
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(Microbot.getClient().getCanvas());
+            if (window != null) window.removeWindowFocusListener(focusListener);
+        });
         // Always restore input on shutdown so the user is never stuck
         enableUserInput();
         state = State.IDLE;
@@ -131,11 +158,20 @@ public class MouseSyncPlugin extends Plugin {
     // ── Public API — called by VirtualMouse / NaturalMouse ─────────────
 
     /**
+     * Returns true if the client window currently has focus.
+     */
+    private boolean isClientFocused() {
+        return ClientUI.getFrame().isFocused();
+    }
+
+    /**
      * Call this when the bot is about to start an interaction (click, move, drag).
      * Disables user input and transitions to {@link State#BOT_ACTIVE}.
+     * Skips if the client window is unfocused (configurable).
      */
     public void onBotInteractionStart() {
         if (!config.enabled() || state == State.BOT_ACTIVE || state == State.RETURNING) return;
+        if (config.skipWhenUnfocused() && !isClientFocused()) return;
         cancelGraceTimer();
         // Track if user input was already disabled before we touched it
         inputWasAlreadyDisabled = !ClientUI.getClient().isEnabled();
@@ -322,6 +358,8 @@ public class MouseSyncPlugin extends Plugin {
         cursorTracker = executor.scheduleAtFixedRate(() -> {
             // Only track when user has input control
             if (!ClientUI.getClient().isEnabled()) return;
+            // Skip when window is unfocused — no point tracking cursor position
+            if (config.skipWhenUnfocused() && !ClientUI.getFrame().isFocused()) return;
             // Skip during walker activity — walker manages cursor via minimap clicks
             if (Rs2Walker.getCurrentTarget() != null) return;
             try {
