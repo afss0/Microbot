@@ -378,6 +378,37 @@ public class Rs2Camera {
     }
 
     /**
+     * Fully zooms out when not already at (or near) the outer limit.
+     * <p>
+     * Zoom scale is inverted: smaller values = farther out. The vanilla outer
+     * limit is 0; the Camera plugin's "Expand outer zoom limit" option extends
+     * it down to {@code -outerLimit}, so the target is read from that config.
+     * <p>
+     * The zoom is always set to the exact minimum value. Callers should
+     * rate-limit the call — a player doesn't re-zoom every tick.
+     *
+     * @return the applied zoom value, or -1 if no change was needed
+     */
+    public static int zoomOutFully() {
+        int minZoom;
+        if (Microbot.isPluginEnabled(CameraPlugin.class)) {
+            Integer outerLimit = Microbot.getInjector().getInstance(ConfigManager.class)
+                    .getConfiguration("zoom", "outerLimit", Integer.class);
+            minZoom = (outerLimit == null || outerLimit > 0) ? 0 : Math.max(-400, -outerLimit);
+        } else {
+            minZoom = 0; // vanilla outer limit — values below 0 have no effect without the plugin
+        }
+
+        int current = getZoom();
+        if (current <= minZoom + 5) {
+            return -1; // already fully zoomed out (small tolerance for slider drift)
+        }
+        int target = minZoom;
+        setZoom(target);
+        return target;
+    }
+
+    /**
      * Determines whether the specified tile is centered on the screen within a given tolerance.
      * <p>
      * Projects the tile to screen space, computes its bounding rectangle, and then checks

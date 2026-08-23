@@ -192,5 +192,14 @@ public interface AScriptConfig extends Config {
     )
     String qolSection = "qol";
 
-    // Future QOL options go here
+    @ConfigItem(
+            keyName = "autoZoomOut",
+            name = "Auto zoom out",
+            description = "Periodically zooms the camera fully out (respects the Camera plugin's expanded outer limit)",
+            position = 0,
+            section = qolSection
+    )
+    default boolean autoZoomOut() {
+        return false;
+    }
 }

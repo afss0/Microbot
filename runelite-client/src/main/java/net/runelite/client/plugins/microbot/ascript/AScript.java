@@ -6,7 +6,12 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
+import net.runelite.client.plugins.microbot.util.antiban.enums.ActivityIntensity;
+import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
+import net.runelite.client.plugins.microbot.util.discord.Rs2Discord;
 
+import java.awt.*;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -30,6 +35,12 @@ public class AScript extends Script {
     private Phase currentPhase = Phase.DISABLED;
 
     private boolean stopRequested;
+    /** Last time the auto zoom-out ran (rate-limited — players don't re-zoom every tick). */
+    private long lastZoomOutTime;
+    /** Antiban intensity to restore when the Crafting module deactivates (null = nothing captured). */
+    private ActivityIntensity previousMouseIntensity;
+    /** True while we've forced VERY_LOW for the Crafting module. */
+    private boolean craftingMouseSpeedApplied;
 
     // ── Sub-scripts ─────────────────────────────────────────────
     private final CraftingScript craftingScript = new CraftingScript();
@@ -55,11 +66,23 @@ public class AScript extends Script {
     }
 
     private void tick() {
+        // 0. Antiban: Very Low mouse speed while the Crafting module is active,
+        // restore the previous intensity when it stops / switches module
+        manageCraftingMouseSpeed();
+
         // 1. Config check
         if (config == null || !config.enabled() || config.scriptSelection() == ScriptType.NONE) {
             currentPhase = Phase.DISABLED;
             stopRequested = false;
             return;
+        }
+
+        // 1b. QOL: keep the camera zoomed out (rate-limited —
+        // players don't re-zoom every tick)
+        if (config.autoZoomOut()
+                && System.currentTimeMillis() - lastZoomOutTime > 60_000) {
+            lastZoomOutTime = System.currentTimeMillis();
+            Rs2Camera.zoomOutFully();
         }
 
         // 2. Resolve crafting activity
@@ -72,12 +95,13 @@ public class AScript extends Script {
                 stopRequested = true;
                 Microbot.status = "STOPPED — " + selectionError;
                 log.warn("[AScript] Invalid configuration, stopping: {}", selectionError);
+                notifyDiscord("aScript Stopped", selectionError);
                 if (Rs2Bank.isOpen()) {
                     Rs2Bank.closeBank();
                     sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
                 }
                 craftingScript.resetExitFlag();
-                Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+                Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             }
             currentPhase = Phase.ERROR;
             return;
@@ -101,10 +125,11 @@ public class AScript extends Script {
                     String missing = craftingScript.describeMissing(config, craftingActivity);
                     Microbot.status = "STOPPED — " + missing;
                     log.warn("[AScript] No materials in bank or inventory, stopping: {}", missing);
+                    notifyDiscord("aScript Stopped — No Materials", missing);
                     Rs2Bank.closeBank();
                     sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
                     craftingScript.resetExitFlag();
-                    Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE);
+                    Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
                 }
                 currentPhase = Phase.ERROR;
                 return;
@@ -134,6 +159,53 @@ public class AScript extends Script {
     }
 
     // ── Lifecycle ───────────────────────────────────────────────
+
+    /**
+     * Forces {@link ActivityIntensity#VERY_LOW} mouse speed while the Crafting
+     * module is active and restores the previous intensity when it stops or the
+     * user switches to another module.
+     * <p>
+     * Note: {@code Rs2Antiban.setActivityIntensity} is global (it also disables
+     * dynamic intensity), so the previous value must be captured and restored —
+     * otherwise other scripts would inherit Very Low after this one stops.
+     */
+    private void manageCraftingMouseSpeed() {
+        boolean craftingActive = config != null && config.enabled()
+                && config.scriptSelection() == ScriptType.CRAFTING;
+
+        if (craftingActive && !craftingMouseSpeedApplied) {
+            previousMouseIntensity = Rs2Antiban.getActivityIntensity();
+            Rs2Antiban.setActivityIntensity(ActivityIntensity.VERY_LOW);
+            craftingMouseSpeedApplied = true;
+            log.debug("[AScript] Mouse speed -> VERY_LOW (Crafting active), previous: {}",
+                    previousMouseIntensity);
+        } else if (!craftingActive && craftingMouseSpeedApplied) {
+            if (previousMouseIntensity != null) {
+                Rs2Antiban.setActivityIntensity(previousMouseIntensity);
+            }
+            craftingMouseSpeedApplied = false;
+            log.debug("[AScript] Mouse speed restored to {}", previousMouseIntensity);
+        }
+    }
+
+    /**
+     * Send Discord notification if webhook is configured.
+     */
+    private void notifyDiscord(String title, String message) {
+        try {
+            String playerName = Microbot.getClient().getLocalPlayer() != null
+                    ? Microbot.getClient().getLocalPlayer().getName() : "Unknown";
+            Rs2Discord.sendCustomNotification(
+                    title,
+                    message,
+                    Rs2Discord.convertColorToInt(Color.ORANGE),
+                    playerName,
+                    "aScript"
+            );
+        } catch (Exception e) {
+            log.warn("Failed to send Discord notification: {}", e.getMessage());
+        }
+    }
 
     @Override
     public void shutdown() {
