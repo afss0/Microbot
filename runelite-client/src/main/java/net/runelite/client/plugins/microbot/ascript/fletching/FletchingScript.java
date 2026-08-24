@@ -249,7 +249,6 @@ public class FletchingScript {
 
         // Deposit via toolbar button (safe on grid-silent machines)
         if (!depositAll()) return false;
-        sleepUntil(() -> Rs2Inventory.isEmpty(), 3000);
 
         // Ensure ONE knife locked in inventory (shared tool across fletching activities)
         if (!AScriptBank.ensureToolLocked("knife")) {
@@ -289,7 +288,6 @@ public class FletchingScript {
 
         // Deposit via toolbar button
         if (!depositAll()) return false;
-        sleepUntil(() -> Rs2Inventory.isEmpty(), 3000);
 
         // Ensure ONE knife locked in inventory (shared tool across fletching activities)
         if (!AScriptBank.ensureToolLocked("knife")) {
@@ -329,7 +327,6 @@ public class FletchingScript {
 
         // Deposit via toolbar button
         if (!depositAll()) return false;
-        sleepUntil(() -> Rs2Inventory.isEmpty(), 3000);
 
         // Ensure ONE knife locked in inventory (shared tool across fletching activities)
         if (!AScriptBank.ensureToolLocked("knife")) {
@@ -370,7 +367,6 @@ public class FletchingScript {
 
         // Deposit via toolbar button
         if (!depositAll()) return false;
-        sleepUntil(() -> Rs2Inventory.isEmpty(), 3000);
 
         // Ensure ONE knife locked in inventory (shared tool across fletching activities)
         if (!AScriptBank.ensureToolLocked("knife")) {

@@ -54,7 +54,7 @@ Follow the Crafting/Fletching packages as the reference template. Steps:
 
 Do **not** re-implement deposit/withdraw/Discord logic. Use:
 
-- `AScriptBank.depositAll()` or `AScriptBank.depositAndWaitEmpty()` for deposits (toolbar button — grid dies silently on some machines).
+- `AScriptBank.depositAll()` or `AScriptBank.depositAndWaitEmpty()` for deposits (toolbar button — grid dies silently on some machines). `depositAndWaitEmpty()` waits until the inventory is empty **except for locked (tool) slots** — a held tool is never removed by the toolbar deposit, so "empty" means "no items in non-locked slots".
 - `AScriptBank.withdrawVerified(name)` for every withdraw (verifies it landed in inventory, returns `false` on miss/timeout). `name` may be an item name **or** a numeric id as a string.
 - `AScriptBank.withdrawOneVerified(name)` for tools where exactly one is needed (chisel, knife, mould, needle, ...) — `withdrawOne` + verify.
 - `AScriptBank.ensureToolLocked(toolName)` — the tool-lock pattern (see below).

@@ -133,13 +133,26 @@ public final class AScriptBank {
     }
 
     /**
-     * Deposit all, then wait for the inventory to actually empty.
+     * Deposit all, then wait for the inventory to actually empty — ignoring any
+     * LOCKED slots (held tools like chisel/knife/mould stay across deposits).
+     * If a tool is locked in the inventory the toolbar deposit button will not
+     * remove it, so "empty" here means "no items in non-locked slots".
      *
-     * @return false if deposit failed or inventory didn't empty in time
+     * @return false if deposit failed
      */
     public static boolean depositAndWaitEmpty() {
         if (!depositAll()) return false;
-        sleepUntil(() -> Rs2Inventory.isEmpty(), WITHDRAW_VERIFY_TIMEOUT_MS);
+        sleepUntil(AScriptBank::isInventoryEmptyExceptLocks, WITHDRAW_VERIFY_TIMEOUT_MS);
         return true;
+    }
+
+    /**
+     * True when the inventory holds no item in a NON-locked slot. Locked slots
+     * (held tools) are ignored, so a deposit that leaves a locked tool behind
+     * still counts as empty for banking purposes.
+     */
+    private static boolean isInventoryEmptyExceptLocks() {
+        return !Rs2Inventory.items()
+                .anyMatch(item -> !Rs2Bank.isLockedSlot(item.getSlot()));
     }
 }

@@ -438,7 +438,7 @@ public class CraftingScript {
         // Server); the toolbar button click works. Crafted jewelry and leftover
         // gems go together.
         Microbot.status = "Depositing inventory";
-        if (!AScriptBank.depositAll()) {
+        if (!AScriptBank.depositAndWaitEmpty()) {
             return false; // waitForInventoryChanges timed out — retry next tick
         }
 
