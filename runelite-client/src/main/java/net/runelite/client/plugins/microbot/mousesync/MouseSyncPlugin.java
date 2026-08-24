@@ -27,12 +27,14 @@ import java.util.concurrent.TimeUnit;
  * Synchronises the bot's virtual mouse with the user's physical cursor.
  *
  * <p>When the bot starts an interaction it disables user mouse input via
- * {@link ClientUI#getClient()}.setEnabled(false)} and
- * {@code canvas.setFocusable(false)}. After the interaction completes,
- * a configurable grace period keeps input disabled so the user cannot
- * accidentally interfere with the return movement. Once the grace period
- * expires the bot naturally moves the cursor (via {@code NaturalMouse})
- * to the user's last known OS mouse position and re-enables input.
+ * {@link net.runelite.client.plugins.microbot.InputSelector#disableClick()}
+ * (falling back to {@code ClientUI.getClient().setEnabled(false)} and
+ * {@code canvas.setFocusable(false)} if InputSelector is unavailable). After
+ * the interaction completes, a configurable grace period keeps input disabled
+ * so the user cannot accidentally interfere with the return movement. Once the
+ * grace period expires the bot naturally moves the cursor (via
+ * {@code NaturalMouse}) to the user's last known OS mouse position and
+ * re-enables input.
  *
  * <p>An emergency hotkey (default CTRL+X) immediately stops the bot
  * and restores mouse control regardless of the current state.
@@ -106,6 +108,16 @@ public class MouseSyncPlugin extends Plugin {
     // ── Lifecycle ──────────────────────────────────────────────────────
     @Override
     protected void startUp() {
+        // Guard against hot-reload leaving a stale instance (leaked executor +
+        // window focus listener). The framework normally calls shutDown() on the
+        // old instance first, but if it didn't, clean it up before replacing it.
+        if (Microbot.mouseSyncPlugin != null && Microbot.mouseSyncPlugin != this) {
+            try {
+                Microbot.mouseSyncPlugin.shutDown();
+            } catch (Exception e) {
+                log.warn("MouseSync: failed to shut down previous instance", e);
+            }
+        }
         Microbot.mouseSyncPlugin = this;
         executor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "MouseSync");
