@@ -350,7 +350,7 @@ public class CraftingScript {
         if (!AScriptBank.depositAndWaitEmpty()) return false;
 
         if (amethyst) {
-            if (!AScriptBank.withdrawVerified("chisel")) return false;
+            if (!AScriptBank.ensureToolLocked("chisel")) return false;
             if (!AScriptBank.withdrawVerified(Integer.toString(21347))) {
                 AScriptNotify.notify("Banking Failed", "No amethyst blocks in bank");
                 return false;

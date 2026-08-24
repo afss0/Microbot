@@ -20,6 +20,13 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *       withdraw never advances to CRAFTING with an empty inventory.</li>
  * </ul>
  * New modules should call these instead of re-implementing the pattern.
+ * <p>
+ * All public methods accept either a display name (e.g. "chisel") or a
+ * numeric id as a string (e.g. "5525" for ring mould).  When the argument is
+ * purely numeric the helpers route to the {@code int}-based overloads of
+ * {@link Rs2Bank} / {@link Rs2Inventory} that match by item ID, avoiding the
+ * silent failure that occurs when a numeric string is used as a display-name
+ * substring.
  */
 @Slf4j
 public final class AScriptBank {
@@ -39,11 +46,11 @@ public final class AScriptBank {
      *         lacks it or the withdraw didn't land (caller should return false)
      */
     public static boolean withdrawVerified(String name) {
-        if (!Rs2Bank.hasItem(name)) {
+        if (!hasBankItem(name)) {
             return false;
         }
-        Rs2Bank.withdrawAll(true, name);
-        if (!sleepUntil(() -> Rs2Inventory.hasItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
+        withdrawBankItem(name, true);
+        if (!sleepUntil(() -> hasInventoryItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
             log.warn("[AScriptBank] Failed to withdraw {}", name);
             return false;
         }
@@ -59,11 +66,11 @@ public final class AScriptBank {
      * @return true if one was withdrawn and is now in the inventory
      */
     public static boolean withdrawOneVerified(String name) {
-        if (!Rs2Bank.hasItem(name)) {
+        if (!hasBankItem(name)) {
             return false;
         }
-        Rs2Bank.withdrawOne(name);
-        if (!sleepUntil(() -> Rs2Inventory.hasItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
+        withdrawBankItemOne(name);
+        if (!sleepUntil(() -> hasInventoryItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
             log.warn("[AScriptBank] Failed to withdraw one {}", name);
             return false;
         }
@@ -88,10 +95,10 @@ public final class AScriptBank {
      */
     public static boolean ensureToolLocked(String toolName) {
         // Already holding the tool — make sure its slot is locked.
-        Rs2ItemModel held = Rs2Inventory.get(toolName, false);
+        Rs2ItemModel held = getInventoryItem(toolName);
         if (held != null) {
             if (!Rs2Bank.isLockedSlot(held.getSlot())) {
-                Rs2Bank.toggleItemLock(toolName, false);
+                toggleLockByItem(held);
             }
             return true;
         }
@@ -104,7 +111,7 @@ public final class AScriptBank {
         for (int slot : Rs2Bank.findLockedSlots()) {
             Rs2ItemModel stray = Rs2Inventory.getItemInSlot(slot);
             if (stray == null) continue;
-            if (stray.getName() != null && stray.getName().toLowerCase().contains(toolNameLc)) continue; // already the tool (race) — leave it
+            if (isToolMatch(stray, toolName, toolNameLc)) continue; // already the tool (race) — leave it
             Rs2Bank.toggleItemLock(stray.getName(), false); // unlock so the toolbar deposit removes it
         }
         if (!depositAll()) return false; // depositAll() button ignores locked slots; stray is now gone
@@ -112,11 +119,11 @@ public final class AScriptBank {
         if (!withdrawOneVerified(toolName)) {
             return false;
         }
-        Rs2ItemModel tool = Rs2Inventory.get(toolName, false);
+        Rs2ItemModel tool = getInventoryItem(toolName);
         if (tool != null && !Rs2Bank.isLockedSlot(tool.getSlot())) {
-            Rs2Bank.toggleItemLock(toolName, false);
+            toggleLockByItem(tool);
         }
-        return Rs2Inventory.hasItem(toolName);
+        return hasInventoryItem(toolName);
     }
 
     /**
@@ -154,5 +161,83 @@ public final class AScriptBank {
     private static boolean isInventoryEmptyExceptLocks() {
         return !Rs2Inventory.items()
                 .anyMatch(item -> !Rs2Bank.isLockedSlot(item.getSlot()));
+    }
+
+    // ── Numeric-id dispatch helpers ───────────────────────────
+    // Rs2Bank/Rs2Inventory name-based overloads do substring match on display
+    // names.  When the caller passes a numeric id-as-string (e.g. "5525" for a
+    // ring mould), the name search silently fails because no item has "5525" in
+    // its display name.  The helpers below detect the numeric case and route to
+    // the int-based overloads instead.
+
+    /** Returns true if {@code name} is a purely numeric string (e.g. "5525"). */
+    private static boolean isNumeric(String name) {
+        if (name == null || name.isEmpty()) return false;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    private static boolean hasBankItem(String nameOrId) {
+        if (isNumeric(nameOrId)) {
+            return Rs2Bank.hasItem(Integer.parseInt(nameOrId));
+        }
+        return Rs2Bank.hasItem(nameOrId);
+    }
+
+    private static void withdrawBankItem(String nameOrId, boolean checkInv) {
+        if (isNumeric(nameOrId)) {
+            if (checkInv && Rs2Inventory.isFull()) return;
+            Rs2Bank.withdrawAll(Integer.parseInt(nameOrId));
+        } else {
+            Rs2Bank.withdrawAll(checkInv, nameOrId);
+        }
+    }
+
+    private static void withdrawBankItemOne(String nameOrId) {
+        if (isNumeric(nameOrId)) {
+            Rs2Bank.withdrawOne(Integer.parseInt(nameOrId));
+        } else {
+            Rs2Bank.withdrawOne(nameOrId);
+        }
+    }
+
+    private static boolean hasInventoryItem(String nameOrId) {
+        if (isNumeric(nameOrId)) {
+            return Rs2Inventory.hasItem(Integer.parseInt(nameOrId));
+        }
+        return Rs2Inventory.hasItem(nameOrId);
+    }
+
+    private static Rs2ItemModel getInventoryItem(String nameOrId) {
+        if (isNumeric(nameOrId)) {
+            return Rs2Inventory.get(Integer.parseInt(nameOrId));
+        }
+        return Rs2Inventory.get(nameOrId, false);
+    }
+
+    /**
+     * Check if {@code stray} matches the target tool.  For numeric IDs, compare
+     * the item's ID; for names, use the existing substring-on-display-name check.
+     */
+    private static boolean isToolMatch(Rs2ItemModel stray, String toolName, String toolNameLc) {
+        if (isNumeric(toolName)) {
+            return stray.getId() == Integer.parseInt(toolName);
+        }
+        return stray.getName() != null && stray.getName().toLowerCase().contains(toolNameLc);
+    }
+
+    /**
+     * Toggle the bank-slot lock for an inventory item using its display name.
+     * {@code Rs2Bank.toggleItemLock(String, boolean)} resolves by name, so
+     * passing a numeric id-as-string (e.g. "5525") would fail silently.  This
+     * helper uses the item model's actual display name to avoid that.
+     */
+    private static void toggleLockByItem(Rs2ItemModel item) {
+        if (item != null && item.getName() != null) {
+            Rs2Bank.toggleItemLock(item.getName(), false);
+        }
     }
 }
