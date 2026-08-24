@@ -16,12 +16,12 @@ import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
-import net.runelite.client.plugins.microbot.util.discord.Rs2Discord;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 
 
-import java.awt.*;
 import java.awt.event.KeyEvent;
 
 /**
@@ -346,25 +346,19 @@ public class CraftingScript {
         boolean amethyst = gem.getName().contains("Amethyst");
         String uncutGemName = "uncut " + gem.getName();
 
-        Rs2Bank.depositAll(gem.getName());
-        Rs2Bank.depositAll("crushed gem");
-        sleepUntil(() -> !Rs2Inventory.hasItem(gem.getName())
-                && !Rs2Inventory.hasItem("crushed gem"), 3000);
+        // Deposit via toolbar button (safe on grid-silent machines)
+        if (!AScriptBank.depositAndWaitEmpty()) return false;
 
         if (amethyst) {
-            if (Rs2Bank.hasItem(21347)) {
-                Rs2Bank.withdrawItem(true, "chisel");
-                Rs2Bank.withdrawAll(21347);
-            } else {
-                notifyDiscord("Banking Failed", "No amethyst blocks in bank");
+            if (!AScriptBank.withdrawVerified("chisel")) return false;
+            if (!AScriptBank.withdrawVerified(Integer.toString(21347))) {
+                AScriptNotify.notify("Banking Failed", "No amethyst blocks in bank");
                 return false;
             }
         } else {
-            if (Rs2Bank.hasItem(uncutGemName)) {
-                Rs2Bank.withdrawItem(true, "chisel");
-                Rs2Bank.withdrawAll(true, uncutGemName);
-            } else {
-                notifyDiscord("Banking Failed", "No " + uncutGemName + " in bank");
+            if (!AScriptBank.ensureToolLocked("chisel")) return false;
+            if (!AScriptBank.withdrawVerified(uncutGemName)) {
+                AScriptNotify.notify("Banking Failed", "No " + uncutGemName + " in bank");
                 return false;
             }
         }
@@ -372,14 +366,12 @@ public class CraftingScript {
     }
 
     private boolean bankGlass() {
-        Rs2Bank.depositAll("molten glass");
-        sleepUntil(() -> !Rs2Inventory.hasItem("molten glass"), 3000);
+        // Deposit via toolbar button
+        if (!AScriptBank.depositAndWaitEmpty()) return false;
 
-        if (Rs2Bank.hasItem("molten glass")) {
-            Rs2Bank.withdrawItem(true, "glassblowing pipe");
-            Rs2Bank.withdrawAll(true, "molten glass");
-        } else {
-            notifyDiscord("Banking Failed", "No molten glass in bank");
+        if (!AScriptBank.ensureToolLocked("glassblowing pipe")) return false;
+        if (!AScriptBank.withdrawVerified("molten glass")) {
+            AScriptNotify.notify("Banking Failed", "No molten glass in bank");
             return false;
         }
         return true;
@@ -387,31 +379,27 @@ public class CraftingScript {
 
     private boolean bankStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
-        Rs2Bank.depositAll(staff.getItemName());
-        Rs2Bank.depositAll(staff.getOrb());
-        sleepUntil(() -> !Rs2Inventory.hasItem(staff.getItemName())
-                && !Rs2Inventory.hasItem(staff.getOrb()), 3000);
 
-        if (Rs2Bank.hasItem(staff.getItemName()) && Rs2Bank.hasItem(staff.getOrb())) {
-            Rs2Bank.withdrawAll(true, staff.getItemName());
-            Rs2Bank.withdrawAll(true, staff.getOrb());
-        } else {
-            notifyDiscord("Banking Failed", "No staff or orb in bank");
+        // Deposit via toolbar button
+        if (!AScriptBank.depositAndWaitEmpty()) return false;
+
+        if (!AScriptBank.withdrawVerified(staff.getItemName())) {
+            AScriptNotify.notify("Banking Failed", "No " + staff.getItemName() + " in bank");
+            return false;
+        }
+        if (!AScriptBank.withdrawVerified(staff.getOrb())) {
+            AScriptNotify.notify("Banking Failed", "No " + staff.getOrb() + " in bank");
             return false;
         }
         return true;
     }
 
     private boolean bankFlax() {
-        Rs2Bank.depositAll("bow string");
-        Rs2Bank.depositAll("flax");
-        sleepUntil(() -> !Rs2Inventory.hasItem("bow string")
-                && !Rs2Inventory.hasItem("flax"), 3000);
+        // Deposit via toolbar button
+        if (!AScriptBank.depositAndWaitEmpty()) return false;
 
-        if (Rs2Bank.hasItem("flax")) {
-            Rs2Bank.withdrawAll(true, "flax");
-        } else {
-            notifyDiscord("Banking Failed", "No flax in bank");
+        if (!AScriptBank.withdrawVerified("flax")) {
+            AScriptNotify.notify("Banking Failed", "No flax in bank");
             return false;
         }
         return true;
@@ -419,25 +407,22 @@ public class CraftingScript {
 
     private boolean bankDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
-        Rs2Bank.depositAll(armour.getItemId());
-        sleepUntil(() -> !Rs2Inventory.hasItem(armour.getItemId()), 3000);
+
+        // Deposit via toolbar button
+        if (!AScriptBank.depositAndWaitEmpty()) return false;
 
         boolean hasNeedle = config.useCostumeNeedle()
                 ? Rs2Inventory.hasItem("costume needle")
                 : Rs2Inventory.hasItem("needle");
         boolean hasThread = config.useCostumeNeedle() || Rs2Inventory.hasItem("thread");
 
-        if (!hasNeedle) {
-            Rs2Bank.withdrawItem(true, config.useCostumeNeedle() ? "costume needle" : "needle");
-        }
-        if (!hasThread && !config.useCostumeNeedle()) {
-            Rs2Bank.withdrawItem(true, "thread");
-        }
+        if (!hasNeedle && !AScriptBank.ensureToolLocked(config.useCostumeNeedle() ? "costume needle" : "needle"))
+            return false;
+        if (!hasThread && !config.useCostumeNeedle() && !AScriptBank.withdrawVerified("thread"))
+            return false;
 
-        if (Rs2Bank.hasItem(armour.getLeatherId())) {
-            Rs2Bank.withdrawAll(armour.getLeatherId());
-        } else {
-            notifyDiscord("Banking Failed", "No dragon leather in bank");
+        if (!AScriptBank.withdrawVerified(Integer.toString(armour.getLeatherId()))) {
+            AScriptNotify.notify("Banking Failed", "No dragon leather in bank");
             return false;
         }
         return true;
@@ -452,53 +437,28 @@ public class CraftingScript {
         // entries AND raw slot clicks both fail there (verified live via Agent
         // Server); the toolbar button click works. Crafted jewelry and leftover
         // gems go together.
-        // Protect the tool (mould/chisel/pipe) from the blanket deposit by locking
-        // its bank inventory slot first. Locks persist account-wide, so this is a
-        // one-time setup per tool; if the injected lock op dies on grid-silent
-        // machines, we proceed anyway — the withdraw-mould step below restores it.
-        Rs2ItemModel tool = Rs2Inventory.get(item.getToolItemID());
-        if (tool != null && !Rs2Bank.isLockedSlot(tool.getSlot())) {
-            Microbot.status = "Locking " + item.getName() + " tool slot";
-            Rs2Bank.toggleItemLock(tool.getName(), true);
-        }
         Microbot.status = "Depositing inventory";
-        if (!Rs2Bank.depositAll()) {
+        if (!AScriptBank.depositAll()) {
             return false; // waitForInventoryChanges timed out — retry next tick
         }
 
-        // Withdraw mould if needed
-        if (!Rs2Inventory.hasItem(item.getToolItemID())) {
-            if (Rs2Bank.hasItem(item.getToolItemID())) {
-                Rs2Bank.withdrawOne(item.getToolItemID());
-                if (!sleepUntil(() -> Rs2Inventory.hasItem(item.getToolItemID()), 3000)) {
-                    return false;
-                }
-            } else {
-                notifyDiscord("Banking Failed", "Missing mould in bank for " + item.getName());
-                return false;
-            }
+        // Withdraw ONE mould and lock its inventory slot (tool stays across deposits;
+        // any previously locked slot holding a DIFFERENT tool is released + deposited).
+        if (!AScriptBank.ensureToolLocked(Integer.toString(item.getToolItemID()))) {
+            AScriptNotify.notify("Banking Failed", "Missing mould in bank for " + item.getName());
+            return false;
         }
 
         // Withdraw bar
-        if (Rs2Bank.hasItem(item.getJewelryType().getMetalBarId())) {
-            Rs2Bank.withdrawAll(item.getJewelryType().getMetalBarId());
-            if (!sleepUntil(() -> Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()), 3000)) {
-                return false;
-            }
-        } else {
-            notifyDiscord("Banking Failed", "No " + item.getJewelryType().getLabel() + " in bank");
+        if (!AScriptBank.withdrawVerified(Integer.toString(item.getJewelryType().getMetalBarId()))) {
+            AScriptNotify.notify("Banking Failed", "No " + item.getJewelryType().getLabel() + " in bank");
             return false;
         }
 
         // If gem jewelry, withdraw cut gems
         if (item.hasGem()) {
-            if (Rs2Bank.hasItem(item.getGem().getCutItemID())) {
-                Rs2Bank.withdrawAll(item.getGem().getCutItemID());
-                if (!sleepUntil(() -> Rs2Inventory.hasItem(item.getGem().getCutItemID()), 3000)) {
-                    return false;
-                }
-            } else {
-                notifyDiscord("Banking Failed", "No " + item.getGem().getCutItemName() + " in bank");
+            if (!AScriptBank.withdrawVerified(Integer.toString(item.getGem().getCutItemID()))) {
+                AScriptNotify.notify("Banking Failed", "No " + item.getGem().getCutItemName() + " in bank");
                 return false;
             }
         }
@@ -624,7 +584,7 @@ public class CraftingScript {
         if (location == null || location == CraftingFlaxLocation.NONE) {
             exitRequested = true;
             Microbot.status = "NO FLAX LOCATION — STOPPING";
-            notifyDiscord("Flax Script Stopped",
+            AScriptNotify.notify("Flax Script Stopped",
                     "No spinning wheel location selected. Set Flax Location in the config.");
             Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             return;
@@ -649,7 +609,7 @@ public class CraftingScript {
         if (wheelObject == null) {
             exitRequested = true;
             Microbot.status = "NO WHEEL — STOPPING";
-            notifyDiscord("Flax Script Stopped",
+            AScriptNotify.notify("Flax Script Stopped",
                     "Spinning wheel (ID " + location.getObjectID() + ") not found at "
                             + location.getLabel() + ". Deactivating script.");
             Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
@@ -692,25 +652,6 @@ public class CraftingScript {
         Microbot.status = "IDLE";
     }
 
-    /**
-     * Send Discord notification if webhook is configured.
-     */
-    private void notifyDiscord(String title, String message) {
-        try {
-            String playerName = Microbot.getClient().getLocalPlayer() != null
-                    ? Microbot.getClient().getLocalPlayer().getName() : "Unknown";
-            Rs2Discord.sendCustomNotification(
-                    title,
-                    message,
-                    Rs2Discord.convertColorToInt(Color.ORANGE),
-                    playerName,
-                    "aScript"
-            );
-        } catch (Exception e) {
-            log.warn("Failed to send Discord notification: {}", e.getMessage());
-        }
-    }
-
     private void craftJewelry(AScriptConfig config) {
         if (exitRequested) return; // already tried to exit, don't spam
 
@@ -735,7 +676,7 @@ public class CraftingScript {
         if (furnaceObject == null) {
             exitRequested = true;
             Microbot.status = "NO FURNACE — STOPPING";
-            notifyDiscord("Jewelry Script Stopped",
+            AScriptNotify.notify("Jewelry Script Stopped",
                     "Furnace (ID 16469) not found at " + (location != null ? location.getLabel() : "unknown")
                             + ". Deactivating script.");
             Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);

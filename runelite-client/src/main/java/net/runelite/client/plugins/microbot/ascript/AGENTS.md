@@ -25,21 +25,139 @@ ascript/
 
 ## Adding a new module
 
+Follow the Crafting/Fletching packages as the reference template. Steps:
+
 1. Create `ascript/<module>/` package.
-2. Create `<Module>Script.java` with these methods:
-   - `Phase resolvePhase(AScriptConfig config)` — maps config activity to internal phase enum
-   - `String validateSelection(AScriptConfig config, Phase phase)` — error description for invalid sub-selections (e.g. activity set but sub-type NONE), or null when valid; checked by `tick()` before any bank interaction
-   - `boolean needsBank(AScriptConfig config, Phase phase)` — true when materials are missing
-   - `boolean doBank(AScriptConfig config, Phase phase)` — banking logic; return true when done
-   - `void doCraft(AScriptConfig config, Phase phase)` — the main action
-3. Add module-specific enums in the same package (activities, items, etc.).
-4. Add a new `ScriptType` entry in `ScriptType.java`.
-5. Add config items in `AScriptConfig.java` under a new `@ConfigSection`.
+2. Create `<Module>Script.java` — a **plain stateless helper** (no `Script` subclass, no Guice). It must expose:
+   - `enum Phase { NONE, ... }` — internal phases for the module's activities.
+   - `Phase resolvePhase(AScriptConfig config)` — map `config.<module>Activity()` to a `Phase`; return `NONE` when the module isn't selected or activity is unset.
+   - `String validateSelection(AScriptConfig config, Phase phase)` — return an error string for invalid sub-selections (e.g. activity set but sub-type `NONE`), or `null` when valid. Also return `"no <module> activity selected"` when `phase == NONE && config.scriptSelection() == ScriptType.<MODULE>` (so a module picked with no activity surfaces a visible error instead of going silently IDLE — see `FletchingScript`).
+   - `boolean needsBank(AScriptConfig config, Phase phase)` — true when inventory is missing a material/tool.
+   - `boolean isBankMissingMaterials(AScriptConfig config, Phase phase)` — true only when the item is missing from **both** inventory and bank (see "Checking bank materials" below). `tick()` uses this to decide stop-vs-bank.
+   - `String describeMissing(AScriptConfig config, Phase phase)` — human-readable list of what's missing (for the Discord stop message).
+   - `boolean doBank(AScriptConfig config, Phase phase)` — banking; return `false` on any failure (bank didn't open, withdraw didn't land). If it returns `true`, `tick()` proceeds to `doCraft()`, so returning `true` with an empty inventory creates an infinite loop.
+   - `void doCraft(AScriptConfig config, Phase phase)` — the action. Guard with an `exitRequested` flag so stop/notify fires once.
+   - `void resetExitFlag()` — clear `exitRequested`/counters when the module is re-enabled.
+3. Add module-specific enums in the same package (activities, items, locations). Every enum value shown in a RuneLite config dropdown needs a `toString()`.
+4. Add a `ScriptType` entry in `ScriptType.java` (e.g. `MYMODULE("My Module")`).
+5. Add config items in `AScriptConfig.java` under a new `@ConfigSection(closedByDefault = true)`:
+   - `ScriptType <module>Activity()` (default can be the `NONE` enum value)
+   - sub-type configs (`<module>FooType()`, `<module>Afk()`, locations, etc.)
 6. In `AScript.java`:
-   - Add a field for the new sub-script instance
-   - Add phase handling in `tick()` (reuse `IDLE/BANKING/CRAFTING`)
-   - Add dispatch logic
-7. **Update this AGENTS.md** with the new module's name, package, and methods.
+   - Add a field `private final <Module>Script <module>Script = new <Module>Script();` and a `private <Module>Script.Phase <module>Activity = <Module>Script.Phase.NONE;`
+   - In `tick()`: resolve the phase, fold its `validateSelection` into `selectionError`, compute `needsBank`/`isBankMissingMaterials`, and add dispatch branches in the existing `if/else if` chain (reuse `IDLE/BANKING/CRAFTING`).
+   - On stop paths, call `if (<module>Activity != <Module>Script.Phase.NONE) <module>Script.resetExitFlag();`
+7. If the module does precise widget/combine clicks (like Crafting jewelry and Fletching), extend the `precisionModuleActive` condition in `AScript.manageCraftingMouseSpeed()` to include `ScriptType.<MODULE>` so it gets `VERY_LOW` mouse speed.
+8. **Update this AGENTS.md** — add the module to the "Existing modules" table and note any module-specific invariants.
+
+### Banking / notify must use the shared utils
+
+Do **not** re-implement deposit/withdraw/Discord logic. Use:
+
+- `AScriptBank.depositAll()` or `AScriptBank.depositAndWaitEmpty()` for deposits (toolbar button — grid dies silently on some machines).
+- `AScriptBank.withdrawVerified(name)` for every withdraw (verifies it landed in inventory, returns `false` on miss/timeout). `name` may be an item name **or** a numeric id as a string.
+- `AScriptBank.withdrawOneVerified(name)` for tools where exactly one is needed (chisel, knife, mould, needle, ...) — `withdrawOne` + verify.
+- `AScriptBank.ensureToolLocked(toolName)` — the tool-lock pattern (see below).
+- `AScriptNotify.notify(title, message)` for any Discord notification.
+
+### Tool locking (shared tools persist across modules)
+
+Tools (chisel, glassblowing pipe, knife, mould, needle, costume needle, ...) must be held as a **single locked slot** in the inventory so blanket deposits never remove them. Use `AScriptBank.ensureToolLocked(toolName)`:
+
+1. If the tool is already in the inventory, (re)lock its slot and return. **No extra withdraw, no deposit.**
+2. Otherwise, for every currently locked slot that does **not** contain this tool, unlock it (the old tool from a previous module — e.g. switching Crafting mould → Fletching knife), then `depositAll()` (toolbar button, which ignores still-locked slots) to return the stray, `withdrawOneVerified(toolName)`, and lock the new tool's slot.
+
+This guarantees **at most one tool** is ever withdrawn, and a tool switch (crafting→fletching) cleanly releases the old tool back to the bank before the new one is taken. Materials (unstrung bows, dart tips, molten glass, bars, gems, leather, thread, feathers, bow string, …) are NOT tools — withdraw them with `withdrawVerified` (all).
+
+**Do not** call `Rs2Bank.depositAll(name)` (grid-targeted) to remove a stray tool — grid interactions die silently on some machines. Unlock the slot and let the toolbar `depositAll()` button handle it.
+
+### Reference skeleton
+
+```java
+package net.runelite.client.plugins.microbot.ascript.mymodule;
+
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
+import net.runelite.client.plugins.microbot.ascript.ScriptType;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import static net.runelite.client.plugins.microbot.util.Global.sleep;
+import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
+
+@Slf4j
+public class MyModuleScript {
+
+    private boolean exitRequested = false;
+
+    public enum Phase { NONE, FOO, BAR }
+
+    public void resetExitFlag() { exitRequested = false; }
+
+    public Phase resolvePhase(AScriptConfig config) {
+        if (config == null || config.scriptSelection() != ScriptType.MYMODULE
+                || config.myModuleActivity() == null) return Phase.NONE;
+        return switch (config.myModuleActivity()) {
+            case FOO -> Phase.FOO;
+            case BAR -> Phase.BAR;
+            default  -> Phase.NONE;
+        };
+    }
+
+    public String validateSelection(AScriptConfig config, Phase phase) {
+        if (phase == Phase.NONE && config.scriptSelection() == ScriptType.MYMODULE)
+            return "no mymodule activity selected";
+        // add sub-type NONE checks here
+        return null;
+    }
+
+    public boolean needsBank(AScriptConfig config, Phase phase) {
+        if (phase == Phase.NONE || !Microbot.isLoggedIn()) return false;
+        // check inventory for materials; return true if missing
+        return false;
+    }
+
+    public boolean isBankMissingMaterials(AScriptConfig config, Phase phase) {
+        if (phase == Phase.NONE || !Microbot.isLoggedIn()) return false;
+        if (!needsBank(config, phase)) return false;
+        // check inventory AND bank; return true only if missing from both
+        return false;
+    }
+
+    public String describeMissing(AScriptConfig config, Phase phase) {
+        return ""; // list missing items for the stop message
+    }
+
+    public boolean doBank(AScriptConfig config, Phase phase) {
+        if (!Microbot.isLoggedIn()) return false;
+        Microbot.status = "BANKING";
+        if (!Rs2Bank.isOpen()) {
+            Rs2Bank.openBank();
+            if (!Rs2Bank.isOpen()) return false;
+        }
+        // deposit via toolbar button, then withdrawVerified each item
+        if (!AScriptBank.depositAndWaitEmpty()) return false;
+        if (!AScriptBank.withdrawVerified("some item")) {
+            AScriptNotify.notify("Banking Failed", "No some item in bank");
+            return false;
+        }
+        return true;
+    }
+
+    public void doCraft(AScriptConfig config, Phase phase) {
+        if (!Microbot.isLoggedIn() || exitRequested) return;
+        WeatherModulation.ensureFresh();
+        double weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
+        // ... perform the action using AScriptBank / Rs2* helpers ...
+        sleep(Rs2Random.logNormalBounded(800, 1600));
+    }
+}
+```
+
+(Minish the skeleton — it omits `Rs2Bank` import and per-phase switch bodies; copy a real method from `CraftingScript`/`FletchingScript` as the starting point.)
 
 ## Config layout
 
@@ -119,9 +237,15 @@ Symptom when it hits a full inventory (crafted jewelry + mould): every withdraw 
 
 **Rule:** in aScript modules, deposit with `Rs2Bank.depositAll()` (no args) — it raw-clicks the "Deposit inventory" toolbar button (a static button widget, proven to work) and waits for inventory changes. Protect tool slots (mould/chisel/pipe) from the blanket deposit by locking them first: `Rs2ItemModel tool = Rs2Inventory.get(toolId); if (tool != null && !Rs2Bank.isLockedSlot(tool.getSlot())) Rs2Bank.toggleItemLock(tool.getName(), true);` — locks persist account-wide and the check makes it a no-op after the first cycle. Locking needs "bank slot locking" enabled in the player's bank settings; if the injected lock op dies on grid-silent machines, keep going — re-withdraw the tool next cycle. Check every bank-step `sleepUntil(...)` result and return `false` on timeout so the tick retries instead of looping blind.
 
+### Furnace lookup — hardcoded ID 16469
+
+`craftJewelry()` finds the furnace via `Rs2GameObject.findObjectById(16469)` — a hardcoded ID covering the supported jewelry locations, not a name search. Consequences:
+- A game update that changes the furnace object ID breaks jewelry silently: `findObjectById` returns null → walk-to-location retry → still null → script deactivates itself once with a Discord notification ("Furnace (ID 16469) not found"). Check Discord/status before assuming a code bug.
+- New jewelry locations must either share this furnace ID or the lookup needs extending (ID set or per-location IDs in `JewelryLocation`).
+
 ### Stopping the script
 
-Use `Microbot.getConfigManager().setConfiguration("ascript", "scriptSelection", ScriptType.NONE)` to stop. Add a `stopRequested` flag to prevent repeated exit attempts while the config change propagates.
+Use `Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE)` to stop. The group key is `"aScript"` (capital S) — use the `AScriptConfig.GROUP` constant, never a string literal: a wrong-case group writes to a nonexistent config and fails silently. Add a `stopRequested` flag to prevent repeated exit attempts while the config change propagates.
 
 ## Anti-detection with Rs2Random
 
@@ -188,6 +312,21 @@ int afkMs = Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier);
 | Module | Package | Activities |
 |--------|---------|------------|
 | Crafting | `ascript/crafting/` | Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry |
+| Fletching | `ascript/fletching/` | Darts, Bolts, Arrows, Bows (string) |
+
+### Module conventions (enforced for all modules)
+
+Shared banking/notify logic lives in `ascript/util/`:
+- `AScriptBank.depositAll()` / `depositAndWaitEmpty()` — toolbar button deposit (+ wait empty).
+- `AScriptBank.withdrawVerified(name)` — withdraw-all + verify in inventory, `false` on miss/timeout.
+- `AScriptNotify.notify(title, message)` — ORANGE Discord embed tagged "aScript".
+
+Modules must call these instead of re-implementing them.
+
+- **Banking must use the toolbar "Deposit inventory" button** (`AScriptBank.depositAll()`, no args) — never grid-targeted `depositAll(String/id)`. Grid interactions die silently on some machines (see "Bank item-GRID interactions" below).
+- **Every withdraw must be verified** with `AScriptBank.withdrawVerified(name)` so a failed withdraw never advances to CRAFTING with an empty inventory.
+- **Precision modules get `VERY_LOW` mouse speed.** `AScript.manageCraftingMouseSpeed()` applies `ActivityIntensity.VERY_LOW` while `scriptSelection` is `CRAFTING` or `FLETCHING` (both do widget/combine interactions) and restores the previous intensity on switch/stop. Extend the `precisionModuleActive` condition when adding a module that also needs precise clicks.
+- **Missing-materials / invalid-selection stops** must call `Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE)` with a `stopRequested`/`exitRequested` guard and a one-shot Discord notify (see "Stopping the script"). Fletching also self-escalates after 3 consecutive craft failures.
 
 ## Adding QOL features
 

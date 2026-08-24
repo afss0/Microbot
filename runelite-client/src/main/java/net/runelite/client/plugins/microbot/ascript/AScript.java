@@ -5,13 +5,13 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
+import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.enums.ActivityIntensity;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
-import net.runelite.client.plugins.microbot.util.discord.Rs2Discord;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 
-import java.awt.*;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -45,6 +45,9 @@ public class AScript extends Script {
     // ── Sub-scripts ─────────────────────────────────────────────
     private final CraftingScript craftingScript = new CraftingScript();
     private CraftingScript.Phase craftingActivity = CraftingScript.Phase.NONE;
+
+    private final FletchingScript fletchingScript = new FletchingScript();
+    private FletchingScript.Phase fletchingActivity = FletchingScript.Phase.NONE;
 
     // ── Main loop ───────────────────────────────────────────────
 
@@ -88,19 +91,29 @@ public class AScript extends Script {
         // 2. Resolve crafting activity
         craftingActivity = craftingScript.resolvePhase(config);
 
+        // 2a. Resolve fletching activity
+        fletchingActivity = fletchingScript.resolvePhase(config);
+
         // 2b. Invalid sub-selection (e.g. GEM_CUTTING with no gem) → stop once, clear message
         String selectionError = craftingScript.validateSelection(config, craftingActivity);
+
+        // Also check fletching selection error
+        if (selectionError == null) {
+            selectionError = fletchingScript.validateSelection(config, fletchingActivity);
+        }
+
         if (selectionError != null) {
             if (!stopRequested) {
                 stopRequested = true;
                 Microbot.status = "STOPPED — " + selectionError;
                 log.warn("[AScript] Invalid configuration, stopping: {}", selectionError);
-                notifyDiscord("aScript Stopped", selectionError);
+                AScriptNotify.notify("aScript Stopped", selectionError);
                 if (Rs2Bank.isOpen()) {
                     Rs2Bank.closeBank();
                     sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
                 }
-                craftingScript.resetExitFlag();
+                if (craftingActivity != CraftingScript.Phase.NONE) craftingScript.resetExitFlag();
+                if (fletchingActivity != FletchingScript.Phase.NONE) fletchingScript.resetExitFlag();
                 Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             }
             currentPhase = Phase.ERROR;
@@ -108,8 +121,13 @@ public class AScript extends Script {
         }
 
         // 3. Missing materials from both bank+inventory → stop once
-        if (craftingActivity != CraftingScript.Phase.NONE
-                && craftingScript.needsBank(config, craftingActivity)) {
+
+        boolean craftNeedsBank = craftingActivity != CraftingScript.Phase.NONE
+                && craftingScript.needsBank(config, craftingActivity);
+        boolean fletchNeedsBank = fletchingActivity != FletchingScript.Phase.NONE
+                && fletchingScript.needsBank(config, fletchingActivity);
+
+        if (craftNeedsBank || fletchNeedsBank) {
 
             // Open bank to check stock; if opening fails, wait for the next tick.
             // Checking materials against a stale/empty bank snapshot (bank never opened)
@@ -119,16 +137,24 @@ public class AScript extends Script {
                 return;
             }
 
-            if (craftingScript.isBankMissingMaterials(config, craftingActivity)) {
+            boolean bankMissingCraft = craftNeedsBank
+                    && craftingScript.isBankMissingMaterials(config, craftingActivity);
+            boolean bankMissingFletch = fletchNeedsBank
+                    && fletchingScript.isBankMissingMaterials(config, fletchingActivity);
+
+            if (bankMissingCraft || bankMissingFletch) {
                 if (!stopRequested) {
                     stopRequested = true;
-                    String missing = craftingScript.describeMissing(config, craftingActivity);
+                    String missing = bankMissingCraft
+                            ? craftingScript.describeMissing(config, craftingActivity)
+                            : fletchingScript.describeMissing(config, fletchingActivity);
                     Microbot.status = "STOPPED — " + missing;
                     log.warn("[AScript] No materials in bank or inventory, stopping: {}", missing);
-                    notifyDiscord("aScript Stopped — No Materials", missing);
+                    AScriptNotify.notify("aScript Stopped — No Materials", missing);
                     Rs2Bank.closeBank();
                     sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
-                    craftingScript.resetExitFlag();
+                    if (craftingActivity != CraftingScript.Phase.NONE) craftingScript.resetExitFlag();
+                    if (fletchingActivity != FletchingScript.Phase.NONE) fletchingScript.resetExitFlag();
                     Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
                 }
                 currentPhase = Phase.ERROR;
@@ -144,42 +170,50 @@ public class AScript extends Script {
         }
 
         // 4. Dispatch
-        if (craftingActivity == CraftingScript.Phase.NONE) {
+        if (craftingActivity == CraftingScript.Phase.NONE && fletchingActivity == FletchingScript.Phase.NONE) {
             currentPhase = Phase.IDLE;
             return;
         }
 
-        if (craftingScript.needsBank(config, craftingActivity)) {
+        if (craftNeedsBank) {
             currentPhase = Phase.BANKING;
             craftingScript.doBank(config, craftingActivity);
-        } else {
+        } else if (fletchNeedsBank) {
+            currentPhase = Phase.BANKING;
+            fletchingScript.doBank(config, fletchingActivity);
+        } else if (craftingActivity != CraftingScript.Phase.NONE) {
             currentPhase = Phase.CRAFTING;
             craftingScript.doCraft(config, craftingActivity);
+        } else if (fletchingActivity != FletchingScript.Phase.NONE) {
+            currentPhase = Phase.CRAFTING;
+            fletchingScript.doCraft(config, fletchingActivity);
         }
     }
 
     // ── Lifecycle ───────────────────────────────────────────────
 
     /**
-     * Forces {@link ActivityIntensity#VERY_LOW} mouse speed while the Crafting
-     * module is active and restores the previous intensity when it stops or the
-     * user switches to another module.
+     * Forces {@link ActivityIntensity#VERY_LOW} mouse speed while a precision
+     * module is active (Crafting — jewelry widget; Fletching — combine widgets)
+     * and restores the previous intensity when it stops or the user switches to
+     * another module.
      * <p>
      * Note: {@code Rs2Antiban.setActivityIntensity} is global (it also disables
      * dynamic intensity), so the previous value must be captured and restored —
      * otherwise other scripts would inherit Very Low after this one stops.
      */
     private void manageCraftingMouseSpeed() {
-        boolean craftingActive = config != null && config.enabled()
-                && config.scriptSelection() == ScriptType.CRAFTING;
+        boolean precisionModuleActive = config != null && config.enabled()
+                && (config.scriptSelection() == ScriptType.CRAFTING
+                    || config.scriptSelection() == ScriptType.FLETCHING);
 
-        if (craftingActive && !craftingMouseSpeedApplied) {
+        if (precisionModuleActive && !craftingMouseSpeedApplied) {
             previousMouseIntensity = Rs2Antiban.getActivityIntensity();
             Rs2Antiban.setActivityIntensity(ActivityIntensity.VERY_LOW);
             craftingMouseSpeedApplied = true;
-            log.debug("[AScript] Mouse speed -> VERY_LOW (Crafting active), previous: {}",
+            log.debug("[AScript] Mouse speed -> VERY_LOW (precision module active), previous: {}",
                     previousMouseIntensity);
-        } else if (!craftingActive && craftingMouseSpeedApplied) {
+        } else if (!precisionModuleActive && craftingMouseSpeedApplied) {
             if (previousMouseIntensity != null) {
                 Rs2Antiban.setActivityIntensity(previousMouseIntensity);
             }
@@ -188,29 +222,11 @@ public class AScript extends Script {
         }
     }
 
-    /**
-     * Send Discord notification if webhook is configured.
-     */
-    private void notifyDiscord(String title, String message) {
-        try {
-            String playerName = Microbot.getClient().getLocalPlayer() != null
-                    ? Microbot.getClient().getLocalPlayer().getName() : "Unknown";
-            Rs2Discord.sendCustomNotification(
-                    title,
-                    message,
-                    Rs2Discord.convertColorToInt(Color.ORANGE),
-                    playerName,
-                    "aScript"
-            );
-        } catch (Exception e) {
-            log.warn("Failed to send Discord notification: {}", e.getMessage());
-        }
-    }
-
     @Override
     public void shutdown() {
         stopRequested = false;
         craftingScript.resetExitFlag();
+        fletchingScript.resetExitFlag();
         currentPhase = Phase.DISABLED;
         super.shutdown();
     }

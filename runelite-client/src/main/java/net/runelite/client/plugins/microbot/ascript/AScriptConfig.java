@@ -5,6 +5,10 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
+import net.runelite.client.plugins.microbot.ascript.fletching.*;
+import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingArrow;
+import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingBolt;
+import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingDart;
 
 @ConfigGroup(AScriptConfig.GROUP)
 public interface AScriptConfig extends Config {
@@ -183,12 +187,88 @@ public interface AScriptConfig extends Config {
         return JewelryLocation.EDGEVILLE;
     }
 
+    // ── Fletching ──────────────────────────────────────────────
+
+    @ConfigSection(
+            name = "AutoFletching",
+            description = "AutoFletching settings",
+            position = 3,
+            closedByDefault = true
+    )
+    String fletchingSection = "fletching";
+
+    @ConfigItem(
+            keyName = "fletchingActivity",
+            name = "Activity",
+            description = "Choose the type of fletching activity to perform",
+            position = 0,
+            section = fletchingSection
+    )
+    default FletchingActivity fletchingActivity() {
+        return FletchingActivity.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 60 seconds",
+            position = 1,
+            section = fletchingSection
+    )
+    default boolean fletchingAfk() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingDartType",
+            name = "Dart Type",
+            description = "Choose the type of dart to make",
+            position = 2,
+            section = fletchingSection
+    )
+    default FletchingDart fletchingDartType() {
+        return FletchingDart.BRONZE;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingBoltType",
+            name = "Bolt Type",
+            description = "Choose the type of bolt to make",
+            position = 3,
+            section = fletchingSection
+    )
+    default FletchingBolt fletchingBoltType() {
+        return FletchingBolt.BRONZE;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingArrowType",
+            name = "Arrow Type",
+            description = "Choose the type of arrow to make",
+            position = 4,
+            section = fletchingSection
+    )
+    default FletchingArrow fletchingArrowType() {
+        return FletchingArrow.BRONZE;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingBowType",
+            name = "Bow Type",
+            description = "Choose the type of bow to string",
+            position = 5,
+            section = fletchingSection
+    )
+    default FletchingBowType fletchingBowType() {
+        return FletchingBowType.NONE;
+    }
+
     // ── QOL ─────────────────────────────────────────────────────
 
     @ConfigSection(
             name = "QOL",
             description = "Quality of Life settings",
-            position = 3
+            position = 4
     )
     String qolSection = "qol";
 
