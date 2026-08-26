@@ -20,6 +20,7 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 
 
 import java.awt.event.KeyEvent;
@@ -312,7 +313,7 @@ public class CraftingScript {
     // ── Banking actions ─────────────────────────────────────────
 
     public boolean doBank(AScriptConfig config, Phase phase) {
-        if (!Microbot.isLoggedIn()) return true;
+        if (!Microbot.isLoggedIn()) return false;
 
         Microbot.status = "BANKING";
 
@@ -487,11 +488,13 @@ public class CraftingScript {
 
         sleep(1200);
 
-        // Random AFK — log-normal distribution, weather-modulated
+        // Random AFK — log-normal distribution, weather-modulated.
+        // Interruptible: returns early when a blocking event is pending so the
+        // orchestrator's next tick handles it instead of after the full delay.
         if (config.craftingAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
             int afkMs = Rs2Random.logNormalBounded(3000, 120000, weatherMultiplier);
             Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
-            sleep(afkMs);
+            AScriptSleep.sleepInterruptibly(afkMs);
             lastAfkTime = System.currentTimeMillis();
         }
     }
