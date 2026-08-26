@@ -37,7 +37,7 @@ Follow the Crafting/Fletching packages as the reference template. Steps:
    - `String describeMissing(AScriptConfig config, Phase phase)` — human-readable list of what's missing (for the Discord stop message).
    - `boolean doBank(AScriptConfig config, Phase phase)` — banking; return `false` on any failure (bank didn't open, withdraw didn't land). If it returns `true`, `tick()` proceeds to `doCraft()`, so returning `true` with an empty inventory creates an infinite loop.
    - `void doCraft(AScriptConfig config, Phase phase)` — the action. Guard with an `exitRequested` flag so stop/notify fires once.
-   - `void resetExitFlag()` — clear `exitRequested`/counters when the module is re-enabled.
+   - `void resetExitFlag()` — clear `exitRequested`/counters when the module is re-enabled. AScript calls this automatically when it observes the module's phase transition NONE → active, so a module that self-stopped (e.g. "furnace not found") un-sticks on re-select without extra wiring.
 3. Add module-specific enums in the same package (activities, items, locations). Every enum value shown in a RuneLite config dropdown needs a `toString()`.
 4. Add a `ScriptType` entry in `ScriptType.java` (e.g. `MYMODULE("My Module")`).
 5. Add config items in `AScriptConfig.java` under a new `@ConfigSection(closedByDefault = true)`:
@@ -46,7 +46,8 @@ Follow the Crafting/Fletching packages as the reference template. Steps:
 6. In `AScript.java`:
    - Add a field `private final <Module>Script <module>Script = new <Module>Script();` and a `private <Module>Script.Phase <module>Activity = <Module>Script.Phase.NONE;`
    - In `tick()`: resolve the phase, fold its `validateSelection` into `selectionError`, compute `needsBank`/`isBankMissingMaterials`, and add dispatch branches in the existing `if/else if` chain (reuse `IDLE/BANKING/CRAFTING`).
-   - On stop paths, call `if (<module>Activity != <Module>Script.Phase.NONE) <module>Script.resetExitFlag();`
+   - Track the previous tick's phase (`last<Module>Activity`) and call `<module>Script.resetExitFlag()` on the NONE → active transition (see the existing crafting/fletching block in `tick()`).
+   - Stop paths go through `AScript.stopWithMessage(title, message)` — it already handles the one-shot guard, Discord notify, bank close, exit-flag reset, and config reset.
 7. If the module does precise widget/combine clicks (like Crafting jewelry and Fletching), extend the `precisionModuleActive` condition in `AScript.manageCraftingMouseSpeed()` to include `ScriptType.<MODULE>` so it gets `VERY_LOW` mouse speed.
 8. **Update this AGENTS.md** — add the module to the "Existing modules" table and note any module-specific invariants.
 
@@ -59,6 +60,7 @@ Do **not** re-implement deposit/withdraw/Discord logic. Use:
 - `AScriptBank.withdrawOneVerified(name)` for tools where exactly one is needed (chisel, knife, mould, needle, ...) — `withdrawOne` + verify.
 - `AScriptBank.ensureToolLocked(toolName)` — the tool-lock pattern (see below).
 - `AScriptNotify.notify(title, message)` for any Discord notification.
+- `AScriptSleep.sleepInterruptibly(ms)` for AFK/long delays instead of plain `sleep(ms)`. Blocking events are normally only dispatched between ticks from `Script.run()`, so a plain 120s AFK sleep delays their handling by the full duration; `sleepInterruptibly` polls `shouldBlockAndProcess()` (public manager API — no shared-code changes needed) and returns as soon as an event is pending/executing, with total duration unchanged when nothing happens.
 
 ### Tool locking (shared tools persist across modules)
 

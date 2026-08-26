@@ -41,13 +41,19 @@ public class AScript extends Script {
     private ActivityIntensity previousMouseIntensity;
     /** True while we've forced VERY_LOW for the Crafting module. */
     private boolean craftingMouseSpeedApplied;
+    /** Consecutive doBank failures — stops script after threshold. */
+    private int consecutiveBankFailures = 0;
+    private static final int MAX_BANK_FAILURES = 3;
 
     // ── Sub-scripts ─────────────────────────────────────────────
     private final CraftingScript craftingScript = new CraftingScript();
     private CraftingScript.Phase craftingActivity = CraftingScript.Phase.NONE;
+    /** Previous tick's activity — used to detect NONE → active transitions. */
+    private CraftingScript.Phase lastCraftingActivity = CraftingScript.Phase.NONE;
 
     private final FletchingScript fletchingScript = new FletchingScript();
     private FletchingScript.Phase fletchingActivity = FletchingScript.Phase.NONE;
+    private FletchingScript.Phase lastFletchingActivity = FletchingScript.Phase.NONE;
 
     // ── Main loop ───────────────────────────────────────────────
 
@@ -77,6 +83,7 @@ public class AScript extends Script {
         if (config == null || !config.enabled() || config.scriptSelection() == ScriptType.NONE) {
             currentPhase = Phase.DISABLED;
             stopRequested = false;
+            consecutiveBankFailures = 0;
             return;
         }
 
@@ -94,7 +101,20 @@ public class AScript extends Script {
         // 2a. Resolve fletching activity
         fletchingActivity = fletchingScript.resolvePhase(config);
 
-        // 2b. Invalid sub-selection (e.g. GEM_CUTTING with no gem) → stop once, clear message
+        // 2b. NONE -> active transitions clear module exit flags so a module that
+        // self-stopped (furnace not found, persistent craft failures) un-sticks
+        // when the user re-selects it.
+        if (craftingActivity != CraftingScript.Phase.NONE && lastCraftingActivity == CraftingScript.Phase.NONE) {
+            craftingScript.resetExitFlag();
+        }
+        lastCraftingActivity = craftingActivity;
+
+        if (fletchingActivity != FletchingScript.Phase.NONE && lastFletchingActivity == FletchingScript.Phase.NONE) {
+            fletchingScript.resetExitFlag();
+        }
+        lastFletchingActivity = fletchingActivity;
+
+        // 2c. Invalid sub-selection (e.g. GEM_CUTTING with no gem) → stop once, clear message
         String selectionError = craftingScript.validateSelection(config, craftingActivity);
 
         // Also check fletching selection error
@@ -103,20 +123,7 @@ public class AScript extends Script {
         }
 
         if (selectionError != null) {
-            if (!stopRequested) {
-                stopRequested = true;
-                Microbot.status = "STOPPED — " + selectionError;
-                log.warn("[AScript] Invalid configuration, stopping: {}", selectionError);
-                AScriptNotify.notify("aScript Stopped", selectionError);
-                if (Rs2Bank.isOpen()) {
-                    Rs2Bank.closeBank();
-                    sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
-                }
-                if (craftingActivity != CraftingScript.Phase.NONE) craftingScript.resetExitFlag();
-                if (fletchingActivity != FletchingScript.Phase.NONE) fletchingScript.resetExitFlag();
-                Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
-            }
-            currentPhase = Phase.ERROR;
+            stopWithMessage("aScript Stopped", selectionError);
             return;
         }
 
@@ -143,21 +150,10 @@ public class AScript extends Script {
                     && fletchingScript.isBankMissingMaterials(config, fletchingActivity);
 
             if (bankMissingCraft || bankMissingFletch) {
-                if (!stopRequested) {
-                    stopRequested = true;
-                    String missing = bankMissingCraft
-                            ? craftingScript.describeMissing(config, craftingActivity)
-                            : fletchingScript.describeMissing(config, fletchingActivity);
-                    Microbot.status = "STOPPED — " + missing;
-                    log.warn("[AScript] No materials in bank or inventory, stopping: {}", missing);
-                    AScriptNotify.notify("aScript Stopped — No Materials", missing);
-                    Rs2Bank.closeBank();
-                    sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
-                    if (craftingActivity != CraftingScript.Phase.NONE) craftingScript.resetExitFlag();
-                    if (fletchingActivity != FletchingScript.Phase.NONE) fletchingScript.resetExitFlag();
-                    Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
-                }
-                currentPhase = Phase.ERROR;
+                String missing = bankMissingCraft
+                        ? craftingScript.describeMissing(config, craftingActivity)
+                        : fletchingScript.describeMissing(config, fletchingActivity);
+                stopWithMessage("aScript Stopped — No Materials", missing);
                 return;
             }
             // Bank HAS materials — fall through to BANKING
@@ -177,10 +173,28 @@ public class AScript extends Script {
 
         if (craftNeedsBank) {
             currentPhase = Phase.BANKING;
-            craftingScript.doBank(config, craftingActivity);
+            boolean banked = craftingScript.doBank(config, craftingActivity);
+            if (banked) {
+                consecutiveBankFailures = 0;
+            } else {
+                consecutiveBankFailures++;
+                if (consecutiveBankFailures >= MAX_BANK_FAILURES) {
+                    stopWithMessage("aScript Stopped — No Materials",
+                            "Bank failed " + consecutiveBankFailures + " times in a row");
+                }
+            }
         } else if (fletchNeedsBank) {
             currentPhase = Phase.BANKING;
-            fletchingScript.doBank(config, fletchingActivity);
+            boolean banked = fletchingScript.doBank(config, fletchingActivity);
+            if (banked) {
+                consecutiveBankFailures = 0;
+            } else {
+                consecutiveBankFailures++;
+                if (consecutiveBankFailures >= MAX_BANK_FAILURES) {
+                    stopWithMessage("aScript Stopped — No Materials",
+                            "Bank failed " + consecutiveBankFailures + " times in a row");
+                }
+            }
         } else if (craftingActivity != CraftingScript.Phase.NONE) {
             currentPhase = Phase.CRAFTING;
             craftingScript.doCraft(config, craftingActivity);
@@ -222,9 +236,39 @@ public class AScript extends Script {
         }
     }
 
+    /** Stop script, notify Discord, and reset config. */
+    private void stopWithMessage(String title, String message) {
+        if (stopRequested) return; // already stopping
+        stopRequested = true;
+        consecutiveBankFailures = 0;
+        Microbot.status = "STOPPED — " + message;
+        log.warn("[AScript] {}: {}", title, message);
+        AScriptNotify.notify(title, message);
+        if (Rs2Bank.isOpen()) {
+            Rs2Bank.closeBank();
+            sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
+        }
+        if (craftingActivity != CraftingScript.Phase.NONE) craftingScript.resetExitFlag();
+        if (fletchingActivity != FletchingScript.Phase.NONE) fletchingScript.resetExitFlag();
+        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        currentPhase = Phase.ERROR;
+    }
+
     @Override
     public void shutdown() {
+        // Restore the global antiban intensity if the loop is cancelled while a
+        // precision module is active — tick() can no longer do it.
+        if (craftingMouseSpeedApplied) {
+            if (previousMouseIntensity != null) {
+                Rs2Antiban.setActivityIntensity(previousMouseIntensity);
+            }
+            craftingMouseSpeedApplied = false;
+            previousMouseIntensity = null;
+        }
         stopRequested = false;
+        consecutiveBankFailures = 0;
+        lastCraftingActivity = CraftingScript.Phase.NONE;
+        lastFletchingActivity = FletchingScript.Phase.NONE;
         craftingScript.resetExitFlag();
         fletchingScript.resetExitFlag();
         currentPhase = Phase.DISABLED;

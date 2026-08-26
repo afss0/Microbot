@@ -58,7 +58,7 @@ public class AScriptOverlay extends OverlayPanel {
             // Microbot status
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Status:")
-                    .right(Microbot.status)
+                    .right(Microbot.status == null ? "—" : Microbot.status)
                     .build());
 
         } catch (Exception ex) {
