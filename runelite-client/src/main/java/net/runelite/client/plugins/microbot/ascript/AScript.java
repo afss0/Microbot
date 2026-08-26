@@ -8,8 +8,11 @@ import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
 import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.antiban.enums.ActivityIntensity;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
+import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 
 import java.util.concurrent.TimeUnit;
@@ -37,6 +40,8 @@ public class AScript extends Script {
     private boolean stopRequested;
     /** Last time the auto zoom-out ran (rate-limited — players don't re-zoom every tick). */
     private long lastZoomOutTime;
+    /** Current auto-eat HP% threshold (0 = needs a roll; re-rolled after every successful bite). */
+    private int eatThreshold;
     /** Antiban intensity to restore when the Crafting module deactivates (null = nothing captured). */
     private ActivityIntensity previousMouseIntensity;
     /** True while we've forced VERY_LOW for the Crafting module. */
@@ -84,6 +89,7 @@ public class AScript extends Script {
             currentPhase = Phase.DISABLED;
             stopRequested = false;
             consecutiveBankFailures = 0;
+            eatThreshold = 0;
             return;
         }
 
@@ -93,6 +99,17 @@ public class AScript extends Script {
                 && System.currentTimeMillis() - lastZoomOutTime > 60_000) {
             lastZoomOutTime = System.currentTimeMillis();
             Rs2Camera.zoomOutFully();
+        }
+
+        // 1c. QOL: auto-eat when hitpoints fall below the rolled threshold.
+        // eatAt is non-blocking (one item per call); the threshold is held
+        // across ticks and only re-rolled after an actual bite.
+        if (config.autoEat()) {
+            if (eatThreshold <= 0) rollEatThreshold();
+            if (Rs2Player.eatAt(eatThreshold)) {
+                Rs2Player.waitForAnimation();
+                rollEatThreshold();
+            }
         }
 
         // 2. Resolve crafting activity
@@ -202,6 +219,26 @@ public class AScript extends Script {
             currentPhase = Phase.CRAFTING;
             fletchingScript.doCraft(config, fletchingActivity);
         }
+    }
+
+    // ── QOL: auto-eat ───────────────────────────────────────────
+
+    /**
+     * Rolls a new auto-eat threshold: normal-distributed between the config
+     * bounds, shifted down when real-world weather is bad (slower, more
+     * hesitant reactions → the player eats later).
+     */
+    private void rollEatThreshold() {
+        int min = Math.min(config.autoEatMinHpPercent(), config.autoEatMaxHpPercent());
+        int max = Math.max(config.autoEatMinHpPercent(), config.autoEatMaxHpPercent());
+        int roll = Rs2Random.fancyNormalSample(min, max);
+
+        WeatherModulation.ensureFresh();
+        // combinedSpeedFactor() ≤ 1.0 (~0.75 cold/storm … 1.0 mild/clear) —
+        // map it to a small downward offset so bad weather eats later,
+        // without drifting far below the configured range.
+        int weatherOffset = (int) Math.round((WeatherModulation.combinedSpeedFactor() - 1.0) * 15);
+        eatThreshold = Math.max(Math.max(1, min - 5), Math.min(max, roll + weatherOffset));
     }
 
     // ── Lifecycle ───────────────────────────────────────────────

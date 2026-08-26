@@ -334,6 +334,20 @@ Modules must call these instead of re-implementing them.
 
 QOL features don't run as automation scripts. Add config items under the QOL `@ConfigSection` in `AScriptConfig.java`. Implement them as event listeners or overlays registered in `AScriptPlugin.startUp()`.
 
+### Implemented QOL features
+
+| Feature | Config keys | Where |
+|---------|-------------|-------|
+| Auto zoom out | `autoZoomOut` | `tick()` step 1b — rate-limited to 60 s |
+| Auto eat | `autoEat`, `autoEatMinHpPercent`, `autoEatMaxHpPercent` | `tick()` step 1c + `rollEatThreshold()` |
+
+**Auto-eat invariants:**
+- The threshold is rolled once (`rollEatThreshold()`), held across ticks, and **only re-rolled after a successful bite** — never per tick.
+- Roll is normal-distributed between the min/max sliders (`Rs2Random.fancyNormalSample`), then shifted down by `(WeatherModulation.combinedSpeedFactor() − 1) × 15` HP% points (bad real-world weather → slower reactions → eats later; no-op when weather modulation is disabled globally).
+- Result clamps to `[max(1, min−5), max]` — the floor must stay ≥ 1 or the threshold can silently disable eating.
+- Uses non-blocking `Rs2Player.eatAt(pct)` + `Rs2Player.waitForAnimation()`, safe on the 600 ms loop; no food in inventory is a cheap no-op.
+- `eatThreshold` resets to 0 in the DISABLED branch so re-enabling rolls fresh from current slider values.
+
 ## Checklist when modifying this module
 
 - [ ] Code compiles: `./gradlew :client:compileJava`

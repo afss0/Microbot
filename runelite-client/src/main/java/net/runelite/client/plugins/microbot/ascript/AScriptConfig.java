@@ -4,6 +4,7 @@ import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
+import net.runelite.client.config.Range;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
 import net.runelite.client.plugins.microbot.ascript.fletching.*;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingArrow;
@@ -281,5 +282,40 @@ public interface AScriptConfig extends Config {
     )
     default boolean autoZoomOut() {
         return false;
+    }
+
+    @ConfigItem(
+            keyName = "autoEat",
+            name = "Auto eat",
+            description = "Automatically eats food from the inventory when hitpoints fall below a randomly rolled threshold (re-rolled after every bite)",
+            position = 1,
+            section = qolSection
+    )
+    default boolean autoEat() {
+        return false;
+    }
+
+    @Range(min = 1, max = 99)
+    @ConfigItem(
+            keyName = "autoEatMinHpPercent",
+            name = "Min eat HP %",
+            description = "Lower bound of the random eat threshold roll",
+            position = 2,
+            section = qolSection
+    )
+    default int autoEatMinHpPercent() {
+        return 40;
+    }
+
+    @Range(min = 1, max = 99)
+    @ConfigItem(
+            keyName = "autoEatMaxHpPercent",
+            name = "Max eat HP %",
+            description = "Upper bound of the random eat threshold roll",
+            position = 3,
+            section = qolSection
+    )
+    default int autoEatMaxHpPercent() {
+        return 60;
     }
 }
