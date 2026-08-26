@@ -39,7 +39,8 @@ public final class AScriptBank {
 
     /**
      * Withdraw all of {@code name} from the bank and verify it landed in the
-     * inventory. Also handles in-bank existence check + Discord notify on miss.
+     * inventory. Handles the in-bank existence check; the caller decides whether
+     * to send a Discord notification when {@code false} is returned.
      *
      * @param name item name (or numeric id as a string) to withdraw
      * @return true if withdrawn and verified in inventory; false if the bank
@@ -145,12 +146,12 @@ public final class AScriptBank {
      * If a tool is locked in the inventory the toolbar deposit button will not
      * remove it, so "empty" here means "no items in non-locked slots".
      *
-     * @return false if deposit failed
+     * @return false if the deposit failed or the inventory did not empty in
+     *         time (e.g. silent partial deposit) — callers should retry next tick
      */
     public static boolean depositAndWaitEmpty() {
         if (!depositAll()) return false;
-        sleepUntil(AScriptBank::isInventoryEmptyExceptLocks, WITHDRAW_VERIFY_TIMEOUT_MS);
-        return true;
+        return sleepUntil(AScriptBank::isInventoryEmptyExceptLocks, WITHDRAW_VERIFY_TIMEOUT_MS);
     }
 
     /**

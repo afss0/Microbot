@@ -16,6 +16,8 @@ import net.runelite.client.plugins.microbot.util.skills.fletching.data.Fletching
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingDart;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
+import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
 /**
  * Fletching sub-script — stateless helper called by AScript's FLETCHING / BANKING states.
@@ -66,7 +68,7 @@ public class FletchingScript {
      * sub-selection (e.g. DARTS without a dart type), or null when valid.
      */
     public String validateSelection(AScriptConfig config, Phase phase) {
-        // Fletching selecionado mas nenhuma atividade escolhida -> erro visível
+        // Fletching selected but no activity chosen -> visible error
         if (phase == Phase.NONE && config.scriptSelection() == ScriptType.FLETCHING)
             return "no fletching activity selected";
         // FletchingDart, FletchingBolt, FletchingArrow have no NONE — any value is valid
@@ -256,26 +258,14 @@ public class FletchingScript {
             return false;
         }
 
-        // Withdraw dart tips — verify withdrawal
-        if (Rs2Bank.hasItem(dart.getDartTipName())) {
-            Rs2Bank.withdrawAll(true, dart.getDartTipName());
-            if (!sleepUntil(() -> Rs2Inventory.hasItem(dart.getDartTipName()), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw {}", dart.getDartTipName());
-                return false;
-            }
-        } else {
+        // Withdraw dart tips — verified
+        if (!AScriptBank.withdrawVerified(dart.getDartTipName())) {
             AScriptNotify.notify("Banking Failed", "No " + dart.getDartTipName() + " in bank");
             return false;
         }
 
-        // Withdraw feathers — verify withdrawal
-        if (Rs2Bank.hasItem("feather")) {
-            Rs2Bank.withdrawAll(true, "feather");
-            if (!sleepUntil(() -> Rs2Inventory.hasItem("feather"), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw feather");
-                return false;
-            }
-        } else {
+        // Withdraw feathers — verified
+        if (!AScriptBank.withdrawVerified("feather")) {
             AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
         }
@@ -295,26 +285,14 @@ public class FletchingScript {
             return false;
         }
 
-        // Withdraw unfinished bolts — verify withdrawal
-        if (Rs2Bank.hasItem(bolt.getUnfinishedBoltName())) {
-            Rs2Bank.withdrawAll(true, bolt.getUnfinishedBoltName());
-            if (!sleepUntil(() -> Rs2Inventory.hasItem(bolt.getUnfinishedBoltName()), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw {}", bolt.getUnfinishedBoltName());
-                return false;
-            }
-        } else {
+        // Withdraw unfinished bolts — verified
+        if (!AScriptBank.withdrawVerified(bolt.getUnfinishedBoltName())) {
             AScriptNotify.notify("Banking Failed", "No " + bolt.getUnfinishedBoltName() + " in bank");
             return false;
         }
 
-        // Withdraw feathers — verify withdrawal
-        if (Rs2Bank.hasItem("feather")) {
-            Rs2Bank.withdrawAll(true, "feather");
-            if (!sleepUntil(() -> Rs2Inventory.hasItem("feather"), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw feather");
-                return false;
-            }
-        } else {
+        // Withdraw feathers — verified
+        if (!AScriptBank.withdrawVerified("feather")) {
             AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
         }
@@ -334,26 +312,14 @@ public class FletchingScript {
             return false;
         }
 
-        // Withdraw headless arrows — verify withdrawal
-        if (Rs2Bank.hasItem(arrow.getHeadlessArrowName())) {
-            Rs2Bank.withdrawAll(true, arrow.getHeadlessArrowName());
-            if (!sleepUntil(() -> Rs2Inventory.hasItem(arrow.getHeadlessArrowName()), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw {}", arrow.getHeadlessArrowName());
-                return false;
-            }
-        } else {
+        // Withdraw headless arrows — verified
+        if (!AScriptBank.withdrawVerified(arrow.getHeadlessArrowName())) {
             AScriptNotify.notify("Banking Failed", "No " + arrow.getHeadlessArrowName() + " in bank");
             return false;
         }
 
-        // Withdraw arrow tips — verify withdrawal
-        if (Rs2Bank.hasItem(arrow.getArrowTipName())) {
-            Rs2Bank.withdrawAll(true, arrow.getArrowTipName());
-            if (!sleepUntil(() -> Rs2Inventory.hasItem(arrow.getArrowTipName()), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw {}", arrow.getArrowTipName());
-                return false;
-            }
-        } else {
+        // Withdraw arrow tips — verified
+        if (!AScriptBank.withdrawVerified(arrow.getArrowTipName())) {
             AScriptNotify.notify("Banking Failed", "No " + arrow.getArrowTipName() + " in bank");
             return false;
         }
@@ -368,15 +334,12 @@ public class FletchingScript {
         // Deposit via toolbar button
         if (!depositAll()) return false;
 
-        // Ensure ONE knife locked in inventory (shared tool across fletching activities)
-        if (!AScriptBank.ensureToolLocked("knife")) {
-            AScriptNotify.notify("Banking Failed", "No knife in bank");
-            return false;
-        }
+        // Stringing needs unstrung bow + bow string — no knife required
+        int half = 14; // 28 slots / 2
 
         // Withdraw unstrung bow — verify withdrawal
         if (Rs2Bank.hasItem(bow.getUnstrungName())) {
-            Rs2Bank.withdrawAll(true, bow.getUnstrungName());
+            Rs2Bank.withdrawX(bow.getUnstrungName(), half);
             if (!sleepUntil(() -> Rs2Inventory.hasItem(bow.getUnstrungName()), 3000)) {
                 log.warn("[FletchingScript] Failed to withdraw {}", bow.getUnstrungName());
                 return false;
@@ -388,7 +351,7 @@ public class FletchingScript {
 
         // Withdraw bow string — verify withdrawal
         if (Rs2Bank.hasItem("bow string")) {
-            Rs2Bank.withdrawAll(true, "bow string");
+            Rs2Bank.withdrawX("bow string", half);
             if (!sleepUntil(() -> Rs2Inventory.hasItem("bow string"), 3000)) {
                 log.warn("[FletchingScript] Failed to withdraw bow string");
                 return false;
@@ -439,11 +402,19 @@ public class FletchingScript {
         // Randomized delay between crafts (not fixed sleep)
         sleep(Rs2Random.logNormalBounded(800, 1600));
 
-        // Random AFK — log-normal distribution, weather-modulated
+        // Random AFK — log-normal distribution, weather-modulated.
+        // Interruptible: returns early when a blocking event is pending so the
+        // orchestrator's next tick handles it instead of after the full delay.
         if (config.fletchingAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
-            int afkMs = Rs2Random.logNormalBounded(3000, 120000, weatherMultiplier);
+            // 10% chance of long AFK (6-120s), 90% short AFK (3-20s)
+            int afkMs;
+            if (Rs2Random.diceFractional(0.10)) {
+                afkMs = Rs2Random.logNormalBounded(6000, 120000, weatherMultiplier);
+            } else {
+                afkMs = Rs2Random.logNormalBounded(3000, 20000, weatherMultiplier);
+            }
             Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
-            sleep(afkMs);
+            AScriptSleep.sleepInterruptibly(afkMs);
             lastAfkTime = System.currentTimeMillis();
         }
     }
@@ -491,13 +462,40 @@ public class FletchingScript {
         FletchingBowType bow = config.fletchingBowType();
         Microbot.status = "STRINGING " + bow.getLabel().toUpperCase();
 
-        // stringBows takes the bow name without (u), e.g. "oak shortbow"
-        String bowName = bow.getUnstrungName().replace(" (u)", "");
-        boolean success = Rs2Fletching.stringBows(bowName);
-        if (!success) {
-            log.warn("[FletchingScript] stringBows failed for {}", bowName);
+        String unstrungName = bow.getUnstrungName(); // e.g. "oak shortbow (u)"
+
+        if (!Rs2Inventory.hasItem(unstrungName) || !Rs2Inventory.hasItem("bow string")) {
+            log.warn("[FletchingScript] missing materials for stringing");
+            Microbot.status = "IDLE";
+            return false;
         }
 
+        // combine bow string + unstrung bow → opens production interface
+        if (!Rs2Inventory.combineClosest("bow string", unstrungName)) {
+            log.warn("[FletchingScript] combineClosest failed");
+            Microbot.status = "IDLE";
+            return false;
+        }
+
+        // wait for production interface (check widget directly, no "Make" text in stringing)
+        if (!sleepUntil(() -> Rs2Widget.isProductionWidgetOpen(), 5000)) {
+            log.warn("[FletchingScript] production interface did not open");
+            Microbot.status = "IDLE";
+            return false;
+        }
+
+        // enable quantity if available (returns false silently if not present)
+        Rs2Widget.enableQuantityOption("All");
+
+        // click "String" action via fletching helper (searches actions[], virtual mouse)
+        if (!FletchingProductionHelper.clickProductionAction("String")) {
+            log.warn("[FletchingScript] failed to click String action");
+            Microbot.status = "IDLE";
+            return false;
+        }
+
+        // wait for unstrung bow to disappear from inventory
+        boolean success = sleepUntil(() -> !Rs2Inventory.hasItem(unstrungName), 60000);
         Microbot.status = "IDLE";
         return success;
     }
