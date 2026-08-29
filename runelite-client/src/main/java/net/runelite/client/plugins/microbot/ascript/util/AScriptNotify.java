@@ -26,8 +26,10 @@ public final class AScriptNotify {
      */
     public static void notify(String title, String message) {
         try {
-            String playerName = Microbot.getClient().getLocalPlayer() != null
-                    ? Microbot.getClient().getLocalPlayer().getName() : "Unknown";
+            String playerName = "Unknown";
+            if (Microbot.getClient() != null && Microbot.getClient().getLocalPlayer() != null) {
+                playerName = Microbot.getClient().getLocalPlayer().getName();
+            }
             Rs2Discord.sendCustomNotification(
                     title,
                     message,
