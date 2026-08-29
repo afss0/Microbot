@@ -6,9 +6,12 @@ import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.client.ui.overlay.components.LineComponent;
 import net.runelite.client.ui.overlay.components.TitleComponent;
 
+import lombok.extern.slf4j.Slf4j;
+
 import javax.inject.Inject;
 import java.awt.*;
 
+@Slf4j
 public class AScriptOverlay extends OverlayPanel {
 
     private final AScriptPlugin plugin;
@@ -62,12 +65,13 @@ public class AScriptOverlay extends OverlayPanel {
                     .build());
 
         } catch (Exception ex) {
+            log.warn("[AScript] Overlay render error", ex);
             panelComponent.getChildren().add(TitleComponent.builder()
                     .text("aScript — error")
                     .color(Color.RED)
                     .build());
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left(ex.getMessage())
+                    .left("Internal error — check logs")
                     .build());
         }
         return super.render(graphics);

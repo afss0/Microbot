@@ -6,6 +6,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
 import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
+import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -42,8 +43,6 @@ public class AScript extends Script {
     private long lastZoomOutTime;
     /** Current auto-eat HP% threshold (0 = needs a roll; re-rolled after every successful bite). */
     private int eatThreshold;
-    /** Antiban intensity to restore when the Crafting module deactivates (null = nothing captured). */
-    private ActivityIntensity previousMouseIntensity;
     /** True while we've forced VERY_LOW for the Crafting module. */
     private boolean craftingMouseSpeedApplied;
     /** Consecutive doBank failures — stops script after threshold. */
@@ -59,6 +58,11 @@ public class AScript extends Script {
     private final FletchingScript fletchingScript = new FletchingScript();
     private FletchingScript.Phase fletchingActivity = FletchingScript.Phase.NONE;
     private FletchingScript.Phase lastFletchingActivity = FletchingScript.Phase.NONE;
+
+    private final MotherloadMineScript motherloadMineScript = new MotherloadMineScript();
+    private MotherloadMineScript.Phase motherloadActivity = MotherloadMineScript.Phase.NONE;
+    /** Previous tick's activity — used to detect NONE → active transitions. */
+    private MotherloadMineScript.Phase lastMotherloadActivity = MotherloadMineScript.Phase.NONE;
 
     // ── Main loop ───────────────────────────────────────────────
 
@@ -131,12 +135,26 @@ public class AScript extends Script {
         }
         lastFletchingActivity = fletchingActivity;
 
+        // 2d. Resolve motherload mine activity
+        motherloadActivity = motherloadMineScript.resolvePhase(config);
+
+        // 2e. NONE -> active transitions clear module exit flags
+        if (motherloadActivity != MotherloadMineScript.Phase.NONE && lastMotherloadActivity == MotherloadMineScript.Phase.NONE) {
+            motherloadMineScript.resetExitFlag();
+        }
+        lastMotherloadActivity = motherloadActivity;
+
         // 2c. Invalid sub-selection (e.g. GEM_CUTTING with no gem) → stop once, clear message
         String selectionError = craftingScript.validateSelection(config, craftingActivity);
 
         // Also check fletching selection error
         if (selectionError == null) {
             selectionError = fletchingScript.validateSelection(config, fletchingActivity);
+        }
+
+        // Also check motherload mine selection error
+        if (selectionError == null) {
+            selectionError = motherloadMineScript.validateSelection(config, motherloadActivity);
         }
 
         if (selectionError != null) {
@@ -151,7 +169,10 @@ public class AScript extends Script {
         boolean fletchNeedsBank = fletchingActivity != FletchingScript.Phase.NONE
                 && fletchingScript.needsBank(config, fletchingActivity);
 
-        if (craftNeedsBank || fletchNeedsBank) {
+        boolean mlmNeedsBank = motherloadActivity != MotherloadMineScript.Phase.NONE
+                && motherloadMineScript.needsBank(config, motherloadActivity);
+
+        if (craftNeedsBank || fletchNeedsBank || mlmNeedsBank) {
 
             // Open bank to check stock; if opening fails, wait for the next tick.
             // Checking materials against a stale/empty bank snapshot (bank never opened)
@@ -166,10 +187,15 @@ public class AScript extends Script {
             boolean bankMissingFletch = fletchNeedsBank
                     && fletchingScript.isBankMissingMaterials(config, fletchingActivity);
 
-            if (bankMissingCraft || bankMissingFletch) {
+            boolean bankMissingMlm = mlmNeedsBank
+                    && motherloadMineScript.isBankMissingMaterials(config, motherloadActivity);
+
+            if (bankMissingCraft || bankMissingFletch || bankMissingMlm) {
                 String missing = bankMissingCraft
                         ? craftingScript.describeMissing(config, craftingActivity)
-                        : fletchingScript.describeMissing(config, fletchingActivity);
+                        : bankMissingFletch
+                                ? fletchingScript.describeMissing(config, fletchingActivity)
+                                : motherloadMineScript.describeMissing(config, motherloadActivity);
                 stopWithMessage("aScript Stopped — No Materials", missing);
                 return;
             }
@@ -183,7 +209,8 @@ public class AScript extends Script {
         }
 
         // 4. Dispatch
-        if (craftingActivity == CraftingScript.Phase.NONE && fletchingActivity == FletchingScript.Phase.NONE) {
+        if (craftingActivity == CraftingScript.Phase.NONE && fletchingActivity == FletchingScript.Phase.NONE
+                && motherloadActivity == MotherloadMineScript.Phase.NONE) {
             currentPhase = Phase.IDLE;
             return;
         }
@@ -212,12 +239,27 @@ public class AScript extends Script {
                             "Bank failed " + consecutiveBankFailures + " times in a row");
                 }
             }
+        } else if (mlmNeedsBank) {
+            currentPhase = Phase.BANKING;
+            boolean banked = motherloadMineScript.doBank(config, motherloadActivity);
+            if (banked) {
+                consecutiveBankFailures = 0;
+            } else {
+                consecutiveBankFailures++;
+                if (consecutiveBankFailures >= MAX_BANK_FAILURES) {
+                    stopWithMessage("aScript Stopped — No Materials",
+                            "Bank failed " + consecutiveBankFailures + " times in a row");
+                }
+            }
         } else if (craftingActivity != CraftingScript.Phase.NONE) {
             currentPhase = Phase.CRAFTING;
             craftingScript.doCraft(config, craftingActivity);
         } else if (fletchingActivity != FletchingScript.Phase.NONE) {
             currentPhase = Phase.CRAFTING;
             fletchingScript.doCraft(config, fletchingActivity);
+        } else if (motherloadActivity != MotherloadMineScript.Phase.NONE) {
+            currentPhase = Phase.CRAFTING;
+            motherloadMineScript.doMine(config, motherloadActivity);
         }
     }
 
@@ -259,17 +301,25 @@ public class AScript extends Script {
                     || config.scriptSelection() == ScriptType.FLETCHING);
 
         if (precisionModuleActive && !craftingMouseSpeedApplied) {
-            previousMouseIntensity = Rs2Antiban.getActivityIntensity();
+            // Don't capture previousIntensity here — if another plugin changes
+            // intensity while we're active, we'd restore to a stale value.
             Rs2Antiban.setActivityIntensity(ActivityIntensity.VERY_LOW);
             craftingMouseSpeedApplied = true;
-            log.debug("[AScript] Mouse speed -> VERY_LOW (precision module active), previous: {}",
-                    previousMouseIntensity);
+            log.debug("[AScript] Mouse speed -> VERY_LOW (precision module active)");
         } else if (!precisionModuleActive && craftingMouseSpeedApplied) {
-            if (previousMouseIntensity != null) {
-                Rs2Antiban.setActivityIntensity(previousMouseIntensity);
+            // Recapture now — reads whatever intensity is current (possibly
+            // changed by another plugin while we were active).
+            ActivityIntensity current = Rs2Antiban.getActivityIntensity();
+            if (current != null && current != ActivityIntensity.VERY_LOW) {
+                Rs2Antiban.setActivityIntensity(current);
+                log.debug("[AScript] Mouse speed restored to {} (was VERY_LOW)", current);
+            } else {
+                // Intensity is still VERY_LOW or unknown — restore to MODERATE
+                // (the antiban default) so we don't leave it stuck at VERY_LOW.
+                Rs2Antiban.setActivityIntensity(ActivityIntensity.MODERATE);
+                log.debug("[AScript] Mouse speed restored to MODERATE (previous was VERY_LOW or null)");
             }
             craftingMouseSpeedApplied = false;
-            log.debug("[AScript] Mouse speed restored to {}", previousMouseIntensity);
         }
     }
 
@@ -287,6 +337,7 @@ public class AScript extends Script {
         }
         if (craftingActivity != CraftingScript.Phase.NONE) craftingScript.resetExitFlag();
         if (fletchingActivity != FletchingScript.Phase.NONE) fletchingScript.resetExitFlag();
+        if (motherloadActivity != MotherloadMineScript.Phase.NONE) motherloadMineScript.resetExitFlag();
         Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
         currentPhase = Phase.ERROR;
     }
@@ -296,11 +347,13 @@ public class AScript extends Script {
         // Restore the global antiban intensity if the loop is cancelled while a
         // precision module is active — tick() can no longer do it.
         if (craftingMouseSpeedApplied) {
-            if (previousMouseIntensity != null) {
-                Rs2Antiban.setActivityIntensity(previousMouseIntensity);
+            ActivityIntensity current = Rs2Antiban.getActivityIntensity();
+            if (current != null && current != ActivityIntensity.VERY_LOW) {
+                Rs2Antiban.setActivityIntensity(current);
+            } else {
+                Rs2Antiban.setActivityIntensity(ActivityIntensity.MODERATE);
             }
             craftingMouseSpeedApplied = false;
-            previousMouseIntensity = null;
         }
         stopRequested = false;
         consecutiveBankFailures = 0;
@@ -308,6 +361,8 @@ public class AScript extends Script {
         lastFletchingActivity = FletchingScript.Phase.NONE;
         craftingScript.resetExitFlag();
         fletchingScript.resetExitFlag();
+        lastMotherloadActivity = MotherloadMineScript.Phase.NONE;
+        motherloadMineScript.resetExitFlag();
         currentPhase = Phase.DISABLED;
         super.shutdown();
     }
