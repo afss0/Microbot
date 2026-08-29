@@ -38,14 +38,18 @@ public class CraftingScript {
     private double weatherMultiplier = 1.0;
     /** Prevent repeated exit attempts / Discord spam when furnace not found. */
     private boolean exitRequested = false;
+    /** Track consecutive craft failures to trigger exit after persistent failures. */
+    private int consecutiveCraftFailures = 0;
+    private static final int MAX_CONSECUTIVE_CRAFT_FAILURES = 3;
 
     public enum Phase {
         NONE, GEMS, GLASS, STAFFS, FLAX, DRAGON_LEATHER, JEWELRY
     }
 
-    /** Reset exit flag when script is re-enabled. Call from AScript on state enter. */
+    /** Reset exit flag and failure counter when script is re-enabled. Call from AScript on state enter. */
     public void resetExitFlag() {
         exitRequested = false;
+        consecutiveCraftFailures = 0;
     }
 
     // ── Phase resolution ────────────────────────────────────────
@@ -197,7 +201,7 @@ public class CraftingScript {
     }
 
     private boolean bankMissingFlax() {
-        return !Rs2Bank.hasItem("flax");
+        return !Rs2Inventory.hasItem("flax") && !Rs2Bank.hasItem("flax");
     }
 
     private boolean bankMissingDragonLeather(AScriptConfig config) {
@@ -250,11 +254,11 @@ public class CraftingScript {
         boolean amethyst = gem.getName().contains("Amethyst");
         StringBuilder sb = new StringBuilder();
         if (amethyst) {
-            if (!Rs2Inventory.hasItem(21347)) sb.append("Amethyst block, ");
-            if (!Rs2Inventory.hasItem("chisel")) sb.append("chisel, ");
+            if (!Rs2Inventory.hasItem(21347)) sb.append("Amethyst block (not in bank), ");
+            if (!Rs2Inventory.hasItem("chisel")) sb.append("chisel (not in bank), ");
         } else {
-            if (!Rs2Inventory.hasItem("uncut " + gem.getName())) sb.append("uncut ").append(gem.getName()).append(", ");
-            if (!Rs2Inventory.hasItem("chisel")) sb.append("chisel, ");
+            if (!Rs2Inventory.hasItem("uncut " + gem.getName())) sb.append("uncut ").append(gem.getName()).append(" (not in bank), ");
+            if (!Rs2Inventory.hasItem("chisel")) sb.append("chisel (not in bank), ");
         }
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
@@ -262,8 +266,8 @@ public class CraftingScript {
 
     private String describeMissingGlass() {
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem("molten glass")) sb.append("molten glass, ");
-        if (!Rs2Inventory.hasItem("glassblowing pipe")) sb.append("glassblowing pipe, ");
+        if (!Rs2Inventory.hasItem("molten glass")) sb.append("molten glass (not in bank), ");
+        if (!Rs2Inventory.hasItem("glassblowing pipe")) sb.append("glassblowing pipe (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -272,27 +276,27 @@ public class CraftingScript {
         CraftingStaff staff = config.staffType();
         if (staff == CraftingStaff.NONE) return "";
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(staff.getItemName())) sb.append(staff.getItemName()).append(", ");
-        if (!Rs2Inventory.hasItem(staff.getOrb())) sb.append(staff.getOrb()).append(", ");
+        if (!Rs2Inventory.hasItem(staff.getItemName())) sb.append(staff.getItemName()).append(" (not in bank), ");
+        if (!Rs2Inventory.hasItem(staff.getOrb())) sb.append(staff.getOrb()).append(" (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
 
     private String describeMissingFlax() {
-        return !Rs2Inventory.hasItem("flax") ? "flax" : "";
+        return !Rs2Inventory.hasItem("flax") ? "flax (not in bank)" : "";
     }
 
     private String describeMissingDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
         if (armour == CraftingDragonLeather.NONE) return "";
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(armour.getLeatherId())) sb.append(armour.getName()).append(", ");
+        if (!Rs2Inventory.hasItem(armour.getLeatherId())) sb.append(armour.getName()).append(" (not in bank), ");
         boolean hasNeedle = config.useCostumeNeedle()
                 ? Rs2Inventory.hasItem("costume needle")
                 : Rs2Inventory.hasItem("needle");
-        if (!hasNeedle) sb.append(config.useCostumeNeedle() ? "costume needle" : "needle").append(", ");
+        if (!hasNeedle) sb.append(config.useCostumeNeedle() ? "costume needle" : "needle").append(" (not in bank), ");
         boolean hasThread = config.useCostumeNeedle() || Rs2Inventory.hasItem("thread");
-        if (!hasThread) sb.append("thread").append(", ");
+        if (!hasThread) sb.append("thread (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -301,11 +305,11 @@ public class CraftingScript {
         JewelryItem item = config.jewelryItem();
         StringBuilder sb = new StringBuilder();
         if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()))
-            sb.append(item.getJewelryType().getLabel()).append(", ");
+            sb.append(item.getJewelryType().getLabel()).append(" (not in bank), ");
         if (!Rs2Inventory.hasItem(item.getToolItemID()))
-            sb.append("mould, ");
+            sb.append("mould (not in bank), ");
         if (item.hasGem() && !Rs2Inventory.hasItem(item.getGem().getCutItemID()))
-            sb.append(item.getGem().getCutItemName()).append(", ");
+            sb.append(item.getGem().getCutItemName()).append(" (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -432,22 +436,23 @@ public class CraftingScript {
     private boolean bankJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
 
-        // Deposit everything via the bank's "Deposit inventory" toolbar button
-        // (Rs2Bank.depositAll() -> raw click on the BUTTON widget).
-        // Item-GRID interactions die silently on some machines — injected CC_OP
-        // entries AND raw slot clicks both fail there (verified live via Agent
-        // Server); the toolbar button click works. Crafted jewelry and leftover
-        // gems go together.
-        Microbot.status = "Depositing inventory";
-        if (!AScriptBank.depositAndWaitEmpty()) {
-            return false; // waitForInventoryChanges timed out — retry next tick
-        }
-
-        // Withdraw ONE mould and lock its inventory slot (tool stays across deposits;
-        // any previously locked slot holding a DIFFERENT tool is released + deposited).
+        // Lock mould FIRST — if it's already in inventory, its slot gets locked
+        // before deposit, so the blanket deposit preserves it. If not in inventory,
+        // ensureToolLocked deposits strays + withdraws + locks (inventory ends up
+        // with just the locked mould).
         if (!AScriptBank.ensureToolLocked(Integer.toString(item.getToolItemID()))) {
             AScriptNotify.notify("Banking Failed", "Missing mould in bank for " + item.getName());
             return false;
+        }
+
+        // Deposit everything via the bank's "Deposit inventory" toolbar button.
+        // Item-GRID interactions die silently on some machines — injected CC_OP
+        // entries AND raw slot clicks both fail there (verified live via Agent
+        // Server); the toolbar button click works. Crafted jewelry and leftover
+        // gems go together. Locked slots (the mould) are preserved.
+        Microbot.status = "Depositing inventory";
+        if (!AScriptBank.depositAndWaitEmpty()) {
+            return false; // waitForInventoryChanges timed out — retry next tick
         }
 
         // Withdraw bar
@@ -469,24 +474,41 @@ public class CraftingScript {
 
     // ── Crafting actions ────────────────────────────────────────
 
-    public void doCraft(AScriptConfig config, Phase phase) {
-        if (!Microbot.isLoggedIn()) return;
+    public boolean doCraft(AScriptConfig config, Phase phase) {
+        if (!Microbot.isLoggedIn()) return false;
 
         // Ensure fresh weather data (cached for 30 min, safe to call every tick)
         WeatherModulation.ensureFresh();
         weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
 
+        boolean success = false;
         switch (phase) {
-            case GEMS:            craftGems(config); break;
-            case GLASS:           craftGlass(config); break;
-            case STAFFS:          craftStaffs(config); break;
-            case FLAX:            craftFlax(config); break;
-            case DRAGON_LEATHER:  craftDragonLeather(config); break;
-            case JEWELRY:         craftJewelry(config); break;
+            case GEMS:            success = craftGems(config); break;
+            case GLASS:           success = craftGlass(config); break;
+            case STAFFS:          success = craftStaffs(config); break;
+            case FLAX:            success = craftFlax(config); break;
+            case DRAGON_LEATHER:  success = craftDragonLeather(config); break;
+            case JEWELRY:         success = craftJewelry(config); break;
             default: break;
         }
 
-        sleep(1200);
+        // Track consecutive failures — exit after persistent failures
+        if (success) {
+            consecutiveCraftFailures = 0;
+        } else {
+            consecutiveCraftFailures++;
+            if (consecutiveCraftFailures >= MAX_CONSECUTIVE_CRAFT_FAILURES) {
+                exitRequested = true;
+                Microbot.status = "STOPPED — persistent craft failures";
+                log.warn("[CraftingScript] {} consecutive craft failures, stopping", consecutiveCraftFailures);
+                AScriptNotify.notify("aScript Stopped", "Crafting: " + consecutiveCraftFailures
+                        + " consecutive craft failures");
+                Microbot.getConfigManager().setConfiguration(
+                        AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+            }
+        }
+
+        sleep(Rs2Random.logNormalBounded(800, 1600));
 
         // Random AFK — log-normal distribution, weather-modulated.
         // Interruptible: returns early when a blocking event is pending so the
@@ -497,9 +519,11 @@ public class CraftingScript {
             AScriptSleep.sleepInterruptibly(afkMs);
             lastAfkTime = System.currentTimeMillis();
         }
+
+        return success;
     }
 
-    private void craftGems(AScriptConfig config) {
+    private boolean craftGems(AScriptConfig config) {
         CraftingGem gem = config.gemType();
         boolean amethyst = gem.getName().contains("Amethyst");
         String uncutGemName = "uncut " + gem.getName();
@@ -509,11 +533,9 @@ public class CraftingScript {
         if (amethyst) {
             Rs2Inventory.use("chisel");
             Rs2Inventory.use(21347);
-            // Gate on the amount dialog like the other branches — clicking blind
-            // when the dialog never opened just burns the craft-wait timeout.
             boolean amountDialogOpen = Rs2Widget.sleepUntilHasWidgetText(
                     "How many do you wish to make?", 270, 5, false, 5000);
-            if (!amountDialogOpen) return;
+            if (!amountDialogOpen) { Microbot.status = "IDLE"; return false; }
             Rs2Widget.clickWidget(gem.getName(), true);
             Rs2Widget.sleepUntilHasNotWidgetText("How many do you wish to make?", 270, 5, false, 5000);
             sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(21347),
@@ -523,7 +545,7 @@ public class CraftingScript {
             Rs2Inventory.use(uncutGemName);
             boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                     Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-            if (!craftingInterfaceOpen) return;
+            if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
             Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
             sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(uncutGemName),
                     Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
@@ -537,7 +559,7 @@ public class CraftingScript {
                         Rs2Widget.isProductionWidgetOpen()
                                 || Rs2Widget.isGoldCraftingWidgetOpen()
                                 || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 20000);
-                if (!boltTipInterfaceOpen) return;
+                if (!boltTipInterfaceOpen) { Microbot.status = "IDLE"; return false; }
                 Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
                 sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(gem.getName()),
                         Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
@@ -545,9 +567,10 @@ public class CraftingScript {
         }
 
         Microbot.status = "IDLE";
+        return true;
     }
 
-    private void craftGlass(AScriptConfig config) {
+    private boolean craftGlass(AScriptConfig config) {
         CraftingGlass glass = config.glassType();
         Microbot.status = "BLOWING " + glass.getLabel().toUpperCase();
 
@@ -555,31 +578,33 @@ public class CraftingScript {
         Rs2Inventory.use("molten glass");
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-        if (!craftingInterfaceOpen) return;
+        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
         Rs2Keyboard.keyPress(glass.getMenuEntry());
         sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem("molten glass"),
                 Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
         Microbot.status = "IDLE";
+        return true;
     }
 
-    private void craftStaffs(AScriptConfig config) {
+    private boolean craftStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
         Microbot.status = "MAKING " + staff.getLabel().toUpperCase();
         Rs2Inventory.use(staff.getOrb());
         Rs2Inventory.use(staff.getItemName());
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-        if (!craftingInterfaceOpen) return;
+        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
         Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
         sleepUntil(() -> !Microbot.isGainingExp
                 || !Rs2Inventory.hasItem(staff.getItemName()),
                 Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
 
         Microbot.status = "IDLE";
+        return true;
     }
 
-    private void craftFlax(AScriptConfig config) {
-        if (exitRequested) return; // already tried to exit, don't spam
+    private boolean craftFlax(AScriptConfig config) {
+        if (exitRequested) return false; // already tried to exit, don't spam
 
         CraftingFlaxLocation location = config.flaxSpinLocation();
 
@@ -590,7 +615,7 @@ public class CraftingScript {
             AScriptNotify.notify("Flax Script Stopped",
                     "No spinning wheel location selected. Set Flax Location in the config.");
             Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
-            return;
+            return false;
         }
 
         Microbot.status = "SPINNING FLAX";
@@ -616,13 +641,13 @@ public class CraftingScript {
                     "Spinning wheel (ID " + location.getObjectID() + ") not found at "
                             + location.getLabel() + ". Deactivating script.");
             Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
-            return;
+            return false;
         }
 
         // Turn camera if wheel not on screen
         if (!Rs2Camera.isTileOnScreen(wheelObject.getLocalLocation())) {
             Rs2Camera.turnTo(wheelObject.getLocalLocation());
-            return;
+            return false;
         }
 
         // Click the wheel with Spin action
@@ -630,15 +655,16 @@ public class CraftingScript {
 
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-        if (!craftingInterfaceOpen) return;
+        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
         Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
         sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem("flax"),
                 Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
 
         Microbot.status = "IDLE";
+        return true;
     }
 
-    private void craftDragonLeather(AScriptConfig config) {
+    private boolean craftDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
         Microbot.status = "CRAFTING " + armour.getName().toUpperCase();
 
@@ -646,17 +672,18 @@ public class CraftingScript {
         Rs2Inventory.use(config.useCostumeNeedle() ? "costume needle" : "needle");
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-        if (!craftingInterfaceOpen) return;
+        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
         Rs2Keyboard.keyPress(armour.getMenuEntry());
         sleepUntil(() -> !Microbot.isGainingExp
                 || !Rs2Inventory.hasItem(armour.getLeatherId()),
                 Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
 
         Microbot.status = "IDLE";
+        return true;
     }
 
-    private void craftJewelry(AScriptConfig config) {
-        if (exitRequested) return; // already tried to exit, don't spam
+    private boolean craftJewelry(AScriptConfig config) {
+        if (exitRequested) return false; // already tried to exit, don't spam
 
         JewelryItem item = config.jewelryItem();
         JewelryLocation location = config.jewelryLocation();
@@ -683,13 +710,13 @@ public class CraftingScript {
                     "Furnace (ID 16469) not found at " + (location != null ? location.getLabel() : "unknown")
                             + ". Deactivating script.");
             Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
-            return;
+            return false;
         }
 
         // Turn camera if furnace not on screen
         if (!Rs2Camera.isTileOnScreen(furnaceObject.getLocalLocation())) {
             Rs2Camera.turnTo(furnaceObject.getLocalLocation());
-            return;
+            return false;
         }
 
         // Click furnace with Smelt action
@@ -700,7 +727,7 @@ public class CraftingScript {
                 Rs2Widget.isProductionWidgetOpen()
                         || Rs2Widget.isGoldCraftingWidgetOpen()
                         || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 30000);
-        if (!craftingInterfaceOpen) return;
+        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
 
         // Click the correct widget by (group, child) from the JewelryItem enum
         Rs2Widget.clickWidget(item.getName(), java.util.Optional.of(item.getWidgetGroup()), item.getWidgetChild(), false);
@@ -712,5 +739,6 @@ public class CraftingScript {
                 Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
 
         Microbot.status = "IDLE";
+        return true;
     }
 }
