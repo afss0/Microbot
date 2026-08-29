@@ -8,7 +8,8 @@ import lombok.RequiredArgsConstructor;
 public enum ScriptType {
     NONE("None"),
     CRAFTING("Crafting"),
-    FLETCHING("Fletching");
+    FLETCHING("Fletching"),
+    MOTHERLOAD_MINE("Motherload Mine");
 
     private final String name;
 

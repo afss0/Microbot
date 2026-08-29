@@ -315,6 +315,7 @@ int afkMs = Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier);
 |--------|---------|------------|
 | Crafting | `ascript/crafting/` | Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry |
 | Fletching | `ascript/fletching/` | Darts, Bolts, Arrows, Bows (string) |
+| Motherload Mine | `ascript/motherloadmine/` | Mining veins, depositing hopper, emptying sack, fixing waterwheel |
 
 ### Module conventions (enforced for all modules)
 

@@ -7,6 +7,7 @@ import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
 import net.runelite.client.plugins.microbot.ascript.fletching.*;
+import net.runelite.client.plugins.microbot.ascript.motherloadmine.MLMMiningSpotList;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingArrow;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingBolt;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingDart;
@@ -262,6 +263,60 @@ public interface AScriptConfig extends Config {
     )
     default FletchingBowType fletchingBowType() {
         return FletchingBowType.NONE;
+    }
+
+    // ── Motherload Mine ────────────────────────────────────────
+
+    @ConfigSection(
+            name = "Motherload Mine",
+            description = "Motherload Mine settings",
+            position = 4,
+            closedByDefault = true
+    )
+    String motherloadMineSection = "motherloadmine";
+
+    @ConfigItem(
+            keyName = "mlmMiningArea",
+            name = "Mining Area",
+            description = "Choose mining area",
+            position = 0,
+            section = motherloadMineSection
+    )
+    default MLMMiningSpotList mlmMiningArea() {
+        return MLMMiningSpotList.ANY;
+    }
+
+    @ConfigItem(
+            keyName = "mlmDropGems",
+            name = "Drop Gems",
+            description = "Drop gems while mining",
+            position = 1,
+            section = motherloadMineSection
+    )
+    default boolean mlmDropGems() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "mlmUseUpstairsHopper",
+            name = "Use Upstairs Hopper",
+            description = "Use upstairs hopper if unlocked",
+            position = 2,
+            section = motherloadMineSection
+    )
+    default boolean mlmUseUpstairsHopper() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "mlmAntiCrash",
+            name = "Anti Crash",
+            description = "Avoid other players when mining",
+            position = 3,
+            section = motherloadMineSection
+    )
+    default boolean mlmAntiCrash() {
+        return false;
     }
 
     // ── QOL ─────────────────────────────────────────────────────
