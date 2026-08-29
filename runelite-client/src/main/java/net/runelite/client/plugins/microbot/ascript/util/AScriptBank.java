@@ -38,6 +38,27 @@ public final class AScriptBank {
     }
 
     /**
+     * Withdraw {@code quantity} of {@code name} from the bank and verify it landed
+     * in the inventory. Use for stackable items where a specific amount is needed
+     * (e.g. 14 unstrung bows + 14 bow strings for stringing).
+     *
+     * @param name item name (or numeric id as a string) to withdraw
+     * @param quantity exact number to withdraw
+     * @return true if withdrawn and verified in inventory; false on failure
+     */
+    public static boolean withdrawVerified(String name, int quantity) {
+        if (!hasBankItem(name)) {
+            return false;
+        }
+        withdrawBankItemX(name, quantity);
+        if (!sleepUntil(() -> hasInventoryItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
+            log.warn("[AScriptBank] Failed to withdraw {} x{}", name, quantity);
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Withdraw all of {@code name} from the bank and verify it landed in the
      * inventory. Handles the in-bank existence check; the caller decides whether
      * to send a Discord notification when {@code false} is returned.
@@ -202,6 +223,14 @@ public final class AScriptBank {
             Rs2Bank.withdrawOne(Integer.parseInt(nameOrId));
         } else {
             Rs2Bank.withdrawOne(nameOrId);
+        }
+    }
+
+    private static void withdrawBankItemX(String nameOrId, int quantity) {
+        if (isNumeric(nameOrId)) {
+            Rs2Bank.withdrawX(Integer.parseInt(nameOrId), quantity);
+        } else {
+            Rs2Bank.withdrawX(nameOrId, quantity);
         }
     }
 

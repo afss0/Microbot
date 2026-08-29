@@ -179,8 +179,8 @@ public class FletchingScript {
     private String describeMissingDarts(AScriptConfig config) {
         FletchingDart dart = config.fletchingDartType();
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(dart.getDartTipName())) sb.append(dart.getDartTipName()).append(", ");
-        if (!Rs2Inventory.hasItem("feather")) sb.append("feather, ");
+        if (!Rs2Inventory.hasItem(dart.getDartTipName())) sb.append(dart.getDartTipName()).append(" (not in bank), ");
+        if (!Rs2Inventory.hasItem("feather")) sb.append("feather (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -188,8 +188,8 @@ public class FletchingScript {
     private String describeMissingBolts(AScriptConfig config) {
         FletchingBolt bolt = config.fletchingBoltType();
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(bolt.getUnfinishedBoltName())) sb.append(bolt.getUnfinishedBoltName()).append(", ");
-        if (!Rs2Inventory.hasItem("feather")) sb.append("feather, ");
+        if (!Rs2Inventory.hasItem(bolt.getUnfinishedBoltName())) sb.append(bolt.getUnfinishedBoltName()).append(" (not in bank), ");
+        if (!Rs2Inventory.hasItem("feather")) sb.append("feather (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -197,8 +197,8 @@ public class FletchingScript {
     private String describeMissingArrows(AScriptConfig config) {
         FletchingArrow arrow = config.fletchingArrowType();
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(arrow.getHeadlessArrowName())) sb.append(arrow.getHeadlessArrowName()).append(", ");
-        if (!Rs2Inventory.hasItem(arrow.getArrowTipName())) sb.append(arrow.getArrowTipName()).append(", ");
+        if (!Rs2Inventory.hasItem(arrow.getHeadlessArrowName())) sb.append(arrow.getHeadlessArrowName()).append(" (not in bank), ");
+        if (!Rs2Inventory.hasItem(arrow.getArrowTipName())) sb.append(arrow.getArrowTipName()).append(" (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -207,8 +207,8 @@ public class FletchingScript {
         FletchingBowType bow = config.fletchingBowType();
         if (bow == FletchingBowType.NONE) return "";
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(bow.getUnstrungName())) sb.append(bow.getUnstrungName()).append(", ");
-        if (!Rs2Inventory.hasItem("bow string")) sb.append("bow string, ");
+        if (!Rs2Inventory.hasItem(bow.getUnstrungName())) sb.append(bow.getUnstrungName()).append(" (not in bank), ");
+        if (!Rs2Inventory.hasItem("bow string")) sb.append("bow string (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -337,26 +337,14 @@ public class FletchingScript {
         // Stringing needs unstrung bow + bow string — no knife required
         int half = 14; // 28 slots / 2
 
-        // Withdraw unstrung bow — verify withdrawal
-        if (Rs2Bank.hasItem(bow.getUnstrungName())) {
-            Rs2Bank.withdrawX(bow.getUnstrungName(), half);
-            if (!sleepUntil(() -> Rs2Inventory.hasItem(bow.getUnstrungName()), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw {}", bow.getUnstrungName());
-                return false;
-            }
-        } else {
+        // Withdraw unstrung bow — verified
+        if (!AScriptBank.withdrawVerified(bow.getUnstrungName(), half)) {
             AScriptNotify.notify("Banking Failed", "No " + bow.getUnstrungName() + " in bank");
             return false;
         }
 
-        // Withdraw bow string — verify withdrawal
-        if (Rs2Bank.hasItem("bow string")) {
-            Rs2Bank.withdrawX("bow string", half);
-            if (!sleepUntil(() -> Rs2Inventory.hasItem("bow string"), 3000)) {
-                log.warn("[FletchingScript] Failed to withdraw bow string");
-                return false;
-            }
-        } else {
+        // Withdraw bow string — verified
+        if (!AScriptBank.withdrawVerified("bow string", half)) {
             AScriptNotify.notify("Banking Failed", "No bow string in bank");
             return false;
         }
