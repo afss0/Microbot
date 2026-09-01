@@ -9,7 +9,8 @@ public enum ScriptType {
     NONE("None"),
     CRAFTING("Crafting"),
     FLETCHING("Fletching"),
-    MOTHERLOAD_MINE("Motherload Mine");
+    MOTHERLOAD_MINE("Motherload Mine"),
+    GEM_CRAB_KILLER("Gem Crab Killer");
 
     private final String name;
 

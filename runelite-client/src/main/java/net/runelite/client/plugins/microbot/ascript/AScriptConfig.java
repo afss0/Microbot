@@ -319,6 +319,49 @@ public interface AScriptConfig extends Config {
         return false;
     }
 
+    // ── Gem Crab Killer ──────────────────────────────────────
+
+    @ConfigSection(
+            name = "Gem Crab Killer",
+            description = "Gem Crab Killer settings",
+            position = 5,
+            closedByDefault = true
+    )
+    String gemCrabKillerSection = "gemcrabkiller";
+
+    @ConfigItem(
+            keyName = "gemCrabLootCrab",
+            name = "Loot Crab",
+            description = "Mine the dead crab for loot",
+            position = 0,
+            section = gemCrabKillerSection
+    )
+    default boolean gemCrabLootCrab() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "gemCrabDharokMode",
+            name = "Dharok Mode",
+            description = "Low HP for Dharok set effect — uses locator orb/rock cake, rapid heal prayer flick",
+            position = 1,
+            section = gemCrabKillerSection
+    )
+    default boolean gemCrabDharokMode() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "gemCrabUseOffensivePotions",
+            name = "Use Offensive Potions",
+            description = "Drink combat potions during fight (ranged, magic, strength, attack, defence)",
+            position = 2,
+            section = gemCrabKillerSection
+    )
+    default boolean gemCrabUseOffensivePotions() {
+        return false;
+    }
+
     // ── QOL ─────────────────────────────────────────────────────
 
     @ConfigSection(
