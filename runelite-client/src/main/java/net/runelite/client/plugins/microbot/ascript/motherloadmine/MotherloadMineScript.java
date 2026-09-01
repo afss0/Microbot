@@ -435,9 +435,11 @@ public class MotherloadMineScript {
         // Deposit all except tools (pickaxe + hammer)
         depositExceptTools();
 
-        sleepUntil(() -> !hasOreInInventory(), 5000);
-
-        if (Rs2DepositBox.isOpen()) {
+        // Only close the deposit box if we actually deposited something.
+        // If deposit failed (grid item silently no-op), keep the box open
+        // so the next tick retries without open/close/open overhead.
+        boolean deposited = sleepUntil(() -> !hasOreInInventory(), 5000);
+        if (deposited && Rs2DepositBox.isOpen()) {
             Rs2DepositBox.closeDepositBox();
         }
 
