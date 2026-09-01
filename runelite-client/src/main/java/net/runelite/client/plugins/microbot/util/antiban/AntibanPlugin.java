@@ -214,7 +214,14 @@ public class AntibanPlugin extends Plugin {
 
     @Subscribe
     public void onProfileChanged(ProfileChanged event) {
-        Rs2Antiban.resetAntibanSettings();
+        // Clear transient antiban state (recalculate for new profile)
+        Rs2Antiban.clearTransientState();
+
+        // Clear weather cache (will be re-fetched from new location)
+        WeatherModulation.reset();
+
+        // Load new profile — overwrites saved fields, keeps unsaved ones
+        // (no full reset: settings not saved in the new profile persist)
         Rs2AntibanSettings.loadFromProfile();
         validateAndSetBreakDurations();
         WeatherModulation.initFromSettings();

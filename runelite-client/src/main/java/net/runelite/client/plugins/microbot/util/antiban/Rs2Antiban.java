@@ -574,13 +574,22 @@ public class Rs2Antiban {
         resetAntibanSettings(false);
     }
 
-    public static void resetAntibanSettings(boolean forceReset) {
-        if (!forceReset && Rs2AntibanSettings.overwriteScriptSettings) return;
-        Rs2AntibanSettings.reset();
-        WeatherModulation.reset();
+    /**
+     * Clear transient antiban state (play style, activity, category) without
+     * touching persistent settings. Used during profile switches where
+     * {@link Rs2AntibanSettings#loadFromProfile()} handles settings restoration.
+     */
+    public static void clearTransientState() {
         Rs2Antiban.playStyle = null;
         Rs2Antiban.activity = null;
         Rs2Antiban.activityIntensity = ActivityIntensity.EXTREME;
         Rs2Antiban.category = null;
+    }
+
+    public static void resetAntibanSettings(boolean forceReset) {
+        if (!forceReset && Rs2AntibanSettings.overwriteScriptSettings) return;
+        Rs2AntibanSettings.reset();
+        WeatherModulation.reset();
+        clearTransientState();
     }
 }
