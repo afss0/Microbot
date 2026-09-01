@@ -15,6 +15,7 @@ RuneLite fork with a hidden always-on plugin hosting automation scripts. Composi
 - Keep `MicrobotPlugin` hidden/always-on; don't break its config panel wiring.
 - Respect existing Checkstyle/Lombok patterns; don't weaken security (telemetry tokens, HTTP clients).
 - Minimal logging; no PII or session identifiers.
+- **PRESERVE `gradle.properties` microbot.* properties on rebase/merge.** The `microbot.version`, `microbot.commit.sha`, `microbot.repo.url`, `microbot.repo.username`, and `microbot.repo.password` entries are used by `build.gradle.kts` for JAR naming, `runelite.properties` placeholders, and Maven publishing. Auto-merge and upstream merges frequently drop them during conflict resolution — always verify they survive. If missing, restore from the last known good commit (`git show <ref>:gradle.properties | grep microbot`).
 
 ## Review priority
 - **P0:** client crashes, client-thread blocking, login/world-hop breakage, cache invariant corruption, credential/token exposure.

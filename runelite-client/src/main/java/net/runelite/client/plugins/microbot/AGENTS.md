@@ -50,6 +50,9 @@ Check `docs/entity-guides/README.md` before modifying anything under `util/` —
 ## Commits / versioning
 Follow existing conventional style. Bump the plugin version in the relevant `@PluginDescriptor` when behavior changes.
 
+## Build properties
+- **PRESERVE `gradle.properties` microbot.* properties on rebase/merge.** `microbot.version`, `microbot.commit.sha`, `microbot.repo.url`, `microbot.repo.username`, `microbot.repo.password` are used by `build.gradle.kts` for JAR naming, `runelite.properties` placeholders, and Maven publishing. Upstream merges frequently drop them during conflict resolution — always verify they survive.
+
 ## See also
 - Repo-root `AGENTS.md` — non-negotiable rules, build/test, CLI.
 - `statemachine/AGENTS.md` — state machine framework.
