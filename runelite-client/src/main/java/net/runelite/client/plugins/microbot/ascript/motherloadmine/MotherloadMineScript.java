@@ -582,11 +582,11 @@ public class MotherloadMineScript {
     }
 
     private int getSackCount() {
-        return Microbot.getClient().getVarbitValue(VarbitID.MOTHERLODE_SACK_TRANSMIT);
+        return Microbot.getVarbitValue(VarbitID.MOTHERLODE_SACK_TRANSMIT);
     }
 
     private int getSackCapacity() {
-        boolean upgraded = Microbot.getClient().getVarbitValue(VarbitID.MOTHERLODE_BIGGERSACK) == 1;
+        boolean upgraded = Microbot.getVarbitValue(VarbitID.MOTHERLODE_BIGGERSACK) == 1;
         return upgraded ? SACK_UPGRADED_SIZE : SACK_NORMAL_SIZE;
     }
 }
