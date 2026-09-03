@@ -31,18 +31,26 @@ import lombok.Getter;
 
 @AllArgsConstructor
 @Getter(onMethod_ = @Override)
-public enum FishingBonus implements SkillBonus
+public enum SailingBonus implements SkillBonus
 {
-	ANGLERS_OUTFIT("Angler's Outfit", 1.025f),
-	DIABOLIC_WORMS("Diabolic Worms", 0.66f),
+	HORIZONS_LURE("Horizon's Lure", 1.025f),
+	CREW_DECKHANDINESS_3("Crew Deckhandiness 3", 0.3f),
+	CREW_DECKHANDINESS_4("Crew Deckhandiness 4", 0.4f),
 	;
 
 	private final String name;
 	private final float value;
 
 	@Override
-	public Set<FishingBonus> getCanBeStackedWith()
+	public Set<SailingBonus> getCanBeStackedWith()
 	{
-		return EnumSet.allOf(FishingBonus.class);
+		switch (this)
+		{
+			case CREW_DECKHANDINESS_3:
+			case CREW_DECKHANDINESS_4:
+				return EnumSet.complementOf(EnumSet.of(CREW_DECKHANDINESS_3, CREW_DECKHANDINESS_4));
+			default:
+				return EnumSet.complementOf(EnumSet.of(this));
+		}
 	}
 }
