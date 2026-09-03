@@ -10,8 +10,10 @@
   <img src="https://img.shields.io/badge/Microbot-Website-0A66C2?style=for-the-badge&logo=google-chrome&logoColor=white">
 </a>
 
-# Microbot
+# Microbot Custom Fork
 Microbot is a RuneLite fork with an always-on Microbot plugin for learning, building, and running automation scripts.
+
+This repository includes my own modifications to the plugin.
 
 This README is intentionally short. Durable details live in the docs below so high-level context does not rot when implementation details move.
 
@@ -34,8 +36,3 @@ This README is intentionally short. Durable details live in the docs below so hi
 - Reusable helpers: `runelite-client/src/main/java/net/runelite/client/plugins/microbot/util`
 - Queryable caches: `runelite-client/src/main/java/net/runelite/client/plugins/microbot/api`
 - Runtime agent tooling: `runelite-client/src/main/java/net/runelite/client/plugins/microbot/agentserver`
-
-## Discord
-[![Discord Banner 1](https://discord.com/api/guilds/1087718903985221642/widget.png?style=banner1)](https://discord.gg/zaGrfqFEWE)
-
-If you have any questions, please join our [Discord](https://discord.gg/zaGrfqFEWE) server. 
