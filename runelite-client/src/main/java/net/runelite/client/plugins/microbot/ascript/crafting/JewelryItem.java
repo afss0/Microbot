@@ -7,6 +7,8 @@ import net.runelite.api.ItemID;
 @Getter
 @RequiredArgsConstructor
 public enum JewelryItem {
+    NONE(" ", 0, JewelryGem.NONE, 0, JewelryType.GOLD, 0, 0, 0),
+
     // Gold (group 446)
     GOLD_RING("Gold ring", ItemID.GOLD_RING, JewelryGem.NONE, ItemID.RING_MOULD, JewelryType.GOLD, 5, 446, 8),
     GOLD_NECKLACE("Gold necklace", ItemID.GOLD_NECKLACE, JewelryGem.NONE, ItemID.NECKLACE_MOULD, JewelryType.GOLD, 6, 446, 23),

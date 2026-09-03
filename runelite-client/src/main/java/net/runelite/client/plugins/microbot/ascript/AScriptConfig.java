@@ -175,7 +175,7 @@ public interface AScriptConfig extends Config {
             section = jewelrySection
     )
     default JewelryItem jewelryItem() {
-        return JewelryItem.GOLD_RING;
+        return JewelryItem.NONE;
     }
 
     @ConfigItem(
@@ -186,7 +186,7 @@ public interface AScriptConfig extends Config {
             section = jewelrySection
     )
     default JewelryLocation jewelryLocation() {
-        return JewelryLocation.EDGEVILLE;
+        return JewelryLocation.NONE;
     }
 
     // ── Fletching ──────────────────────────────────────────────

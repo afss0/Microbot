@@ -18,6 +18,8 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
+import net.runelite.client.plugins.microbot.util.player.Rs2Player;
+import net.runelite.api.Skill;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -93,6 +95,10 @@ public class CraftingScript {
             case DRAGON_LEATHER:
                 if (config.dragonLeatherType() == CraftingDragonLeather.NONE) return "no dragon leather armour selected";
                 return null;
+            case JEWELRY:
+                if (config.jewelryItem() == JewelryItem.NONE) return "no jewelry item selected";
+                if (config.jewelryLocation() == JewelryLocation.NONE) return "no furnace location selected";
+                return null;
             default:
                 return null;
         }
@@ -148,6 +154,7 @@ public class CraftingScript {
 
     private boolean needsBankJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
+        if (item == JewelryItem.NONE) return false;
         // Need the bar
         if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId())) return true;
         // Need the mould (tool)
@@ -216,6 +223,7 @@ public class CraftingScript {
 
     private boolean bankMissingJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
+        if (item == JewelryItem.NONE) return false;
         // Check ONLY items that are missing from inventory
         // If mould is already in inventory, don't require it in bank
         if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId())
@@ -303,6 +311,7 @@ public class CraftingScript {
 
     private String describeMissingJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
+        if (item == JewelryItem.NONE) return "";
         StringBuilder sb = new StringBuilder();
         if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()))
             sb.append(item.getJewelryType().getLabel()).append(" (not in bank), ");
@@ -435,6 +444,7 @@ public class CraftingScript {
 
     private boolean bankJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
+        if (item == JewelryItem.NONE) return false;
 
         // Lock mould FIRST — if it's already in inventory, its slot gets locked
         // before deposit, so the blanket deposit preserves it. If not in inventory,
@@ -687,6 +697,20 @@ public class CraftingScript {
 
         JewelryItem item = config.jewelryItem();
         JewelryLocation location = config.jewelryLocation();
+        if (item == JewelryItem.NONE || location == JewelryLocation.NONE) return false;
+
+        // Level requirement check
+        int craftLevel = Rs2Player.getRealSkillLevel(Skill.CRAFTING);
+        if (craftLevel < item.getLevelRequired()) {
+            exitRequested = true;
+            Microbot.status = "STOPPED — level too low";
+            AScriptNotify.notify("Jewelry Script Stopped",
+                    "Crafting level " + craftLevel + " < required " + item.getLevelRequired()
+                            + " for " + item.getName());
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+            return false;
+        }
+
         Microbot.status = "SMELTING " + item.getName().toUpperCase();
 
         // Find the furnace game object by ID 16469
