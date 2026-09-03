@@ -27,7 +27,9 @@ public class Rs2Cannon {
             3, 3, 
             brokenCannon.getWorldLocation().getPlane()
         );
-        if (!cannonLocation.toWorldPoint().equals(CannonPlugin.getCannonPosition().toWorldPoint())) return false;
+        CannonPlugin cannonPlugin = Microbot.getPlugin(CannonPlugin.class);
+        if (cannonPlugin == null || cannonPlugin.getCannonPosition() == null) return false;
+        if (!cannonLocation.toWorldPoint().equals(cannonPlugin.getCannonPosition().toWorldPoint())) return false;
 
         Microbot.status = "Repairing Cannon";
 
@@ -61,7 +63,9 @@ public class Rs2Cannon {
             3, 3, 
             cannon.getWorldLocation().getPlane()
         );
-        if (!cannonLocation.toWorldPoint().equals(CannonPlugin.getCannonPosition().toWorldPoint())) return false;
+        CannonPlugin cannonPlugin = Microbot.getPlugin(CannonPlugin.class);
+        if (cannonPlugin == null || cannonPlugin.getCannonPosition() == null) return false;
+        if (!cannonLocation.toWorldPoint().equals(cannonPlugin.getCannonPosition().toWorldPoint())) return false;
 		Microbot.pauseAllScripts.compareAndSet(false, true);
         Rs2GameObject.interact(cannon, "Fire");
         Rs2Player.waitForWalking();
