@@ -26,6 +26,11 @@ package net.runelite.client.plugins;
 
 import java.awt.*;
 import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
@@ -154,4 +159,17 @@ public @interface PluginDescriptor
 	 * A flag to denote if a plugin is an external plugin (loaded from a JAR file) or a native plugin.
 	 */
 	boolean isExternal() default false;
+
+	/**
+	 * The internal-name of a Plugin Hub plugin as used in the PluginHub repository.
+	 * This value must be all lowercase and snake-cased
+	 */
+	String internalName() default "";
+
+	/**
+	 * The subpath of .runelite this plugin that should be migrated to the plugin's
+	 * {@link Plugin#getPluginDirectory() plugin directory}.
+	 */
+	String legacyDataDirectory() default "";
+
 }
