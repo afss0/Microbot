@@ -102,7 +102,5 @@ public final class InterfaceID
 	public static final int VOLCANIC_MINE = net.runelite.api.gameval.InterfaceID.FOSSIL_VOLCANIC_MINE;
 	public static final int WORLD_MAP = net.runelite.api.gameval.InterfaceID.WORLDMAP;
 	public static final int WORLD_SWITCHER = net.runelite.api.gameval.InterfaceID.WORLDSWITCHER;
-	// --- constantes mantidas pelo fork afss0 (nao geradas pelo runelite) ---
-	public static final int DIALOG_DOUBLE_SPRITE = 11;
 
 }

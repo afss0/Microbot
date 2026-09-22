@@ -187,12 +187,5 @@ public final class ComponentID
 	public static final int WORLD_MAP_SEARCH = InterfaceID.Worldmap.MAPLIST_DISPLAY;
 	public static final int WORLD_MAP_SURFACE_SELECTOR = InterfaceID.Worldmap.MAPLIST_BOX_GRAPHIC0;
 	public static final int WORLD_SWITCHER_WORLD_LIST = InterfaceID.Worldswitcher.BUTTONS;
-	// --- constantes mantidas pelo fork afss0 (nao geradas pelo runelite) ---
-	public static final int BANK_ITEM_COUNT_TOP = 786437;
-	public static final int FAIRY_RING_TELEPORT_BUTTON = 26083354;
-	public static final int SETTINGS_SIDE_MUSIC_SLIDER = 7602272;
-	public static final int SETTINGS_SIDE_SOUND_EFFECT_SLIDER = 7602286;
-	public static final int SETTINGS_SIDE_AREA_SOUND_SLIDER = 7602300;
-	public static final int GRAND_EXCHANGE_OFFER_DESCRIPTION = 30474267;
 
 }
