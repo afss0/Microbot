@@ -35,6 +35,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import net.runelite.client.RuneLite;
 import net.runelite.client.util.Filepath;
+import com.google.common.base.Strings;
+import com.google.gson.Gson;
 
 public abstract class Plugin implements Module
 {

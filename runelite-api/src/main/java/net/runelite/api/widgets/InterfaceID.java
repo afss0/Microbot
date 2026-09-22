@@ -37,6 +37,7 @@ public final class InterfaceID
 	public static final int COLLECTION_LOG = net.runelite.api.gameval.InterfaceID.COLLECTION;
 	public static final int DEPOSIT_BOX = net.runelite.api.gameval.InterfaceID.BANK_DEPOSITBOX;
 	public static final int DESTROY_ITEM = net.runelite.api.gameval.InterfaceID.CONFIRMDESTROY;
+	public static final int DIALOG_DOUBLE_SPRITE = net.runelite.api.gameval.InterfaceID.OBJECTBOX_DOUBLE;
 	public static final int DIALOG_NPC = net.runelite.api.gameval.InterfaceID.CHAT_LEFT;
 	public static final int DIALOG_OPTION = net.runelite.api.gameval.InterfaceID.CHATMENU;
 	public static final int DIALOG_PLAYER = net.runelite.api.gameval.InterfaceID.CHAT_RIGHT;

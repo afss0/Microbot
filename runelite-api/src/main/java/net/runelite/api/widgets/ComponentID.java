@@ -20,6 +20,7 @@ public final class ComponentID
 	public static final int BANK_INVENTORY_EQUIPMENT_ITEM_CONTAINER = InterfaceID.Bankside.WORNOPS;
 	public static final int BANK_INVENTORY_ITEM_CONTAINER = InterfaceID.Bankside.ITEMS;
 	public static final int BANK_ITEM_CONTAINER = InterfaceID.Bankmain.ITEMS;
+	public static final int BANK_ITEM_COUNT_TOP = InterfaceID.Bankmain.OCCUPIEDSLOTS;
 	public static final int BANK_PIN_CONTAINER = InterfaceID.BankpinKeypad.UNIVERSE;
 	public static final int BANK_POPUP = InterfaceID.Bankmain.POPUP;
 	public static final int BANK_POTIONSTORE_CONTENT = InterfaceID.Bankmain.POTIONSTORE_ITEMS;
@@ -83,6 +84,7 @@ public final class ComponentID
 	public static final int FAIRY_RING_PANEL_FAVORITES = InterfaceID.FairyringsLog.FAVES;
 	public static final int FAIRY_RING_PANEL_LIST = InterfaceID.FairyringsLog.CONTENTS;
 	public static final int FAIRY_RING_PANEL_SCROLLBAR = InterfaceID.FairyringsLog.SCROLLBAR;
+	public static final int FAIRY_RING_TELEPORT_BUTTON = InterfaceID.Fairyrings.CONFIRM;
 	public static final int FIXED_VIEWPORT_EQUIPMENT_TAB = InterfaceID.Toplevel.STONE4;
 	public static final int FIXED_VIEWPORT_FIXED_VIEWPORT = InterfaceID.Toplevel.OVERLAY_HUD;
 	public static final int FIXED_VIEWPORT_FRIENDS_CHAT_TAB = InterfaceID.Toplevel.STONE7;
@@ -102,6 +104,7 @@ public final class ComponentID
 	public static final int GENERIC_SCROLL_TEXT = InterfaceID.Longscroll.SCROLL_TEXT;
 	public static final int GRAND_EXCHANGE_INVENTORY_INVENTORY_ITEM_CONTAINER = InterfaceID.GeOffersSide.ITEMS;
 	public static final int GRAND_EXCHANGE_OFFER_CONTAINER = InterfaceID.GeOffers.SETUP;
+	public static final int GRAND_EXCHANGE_OFFER_DESCRIPTION = InterfaceID.GeOffers.SETUP_DESC;
 	public static final int GRAND_EXCHANGE_WINDOW_CONTAINER = InterfaceID.GeOffers.UNIVERSE;
 	public static final int GROUP_STORAGE_ITEM_CONTAINER = InterfaceID.SharedBank.ITEMS;
 	public static final int GROUP_STORAGE_UI = InterfaceID.SharedBank.FRAME;
@@ -162,6 +165,12 @@ public final class ComponentID
 	public static final int RESIZABLE_VIEWPORT_RESIZABLE_VIEWPORT_OLD_SCHOOL_BOX = InterfaceID.ToplevelOsrsStretch.HUD_CONTAINER_FRONT;
 	public static final int SEED_VAULT_INVENTORY_ITEM_CONTAINER = InterfaceID.SeedVaultDeposit.INV;
 	public static final int SEED_VAULT_ITEM_CONTAINER = InterfaceID.SeedVault.CATEGORY_LINES;
+	// Retain the legacy numeric ID for Microbot source compatibility.
+	// Retain the legacy numeric ID for Microbot source compatibility.
+	public static final int SETTINGS_SIDE_AREA_SOUND_SLIDER = InterfaceID.SettingsSide.SOUND_ICON;
+	public static final int SETTINGS_SIDE_MUSIC_SLIDER = InterfaceID.SettingsSide.MASTER_ICON;
+	// Retain the legacy numeric ID for Microbot source compatibility.
+	public static final int SETTINGS_SIDE_SOUND_EFFECT_SLIDER = InterfaceID.SettingsSide.MUSIC_ICON;
 	public static final int SHOP_INVENTORY_ITEM_CONTAINER = InterfaceID.Shopmain.UNIVERSE;
 	public static final int SKILLS_CONTAINER = InterfaceID.Stats.UNIVERSE;
 	public static final int SMITHING_INVENTORY_ITEM_CONTAINER = InterfaceID.Smithing.UNIVERSE;

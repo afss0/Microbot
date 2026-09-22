@@ -173,11 +173,16 @@ public class InteractHighlightPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick gameTick)
 	{
-		if (client.getTickCount() > clickTick && client.getLocalDestinationLocation() == null && interactedActor == null)
+		if (client.getTickCount() > clickTick && client.getLocalDestinationLocation() == null)
 		{
 			// when the destination is reached, clear the interacting object
 			interactedObject = null;
 			interactedItem = null;
+			Player localPlayer = client.getLocalPlayer();
+			if (localPlayer == null || localPlayer.getInteracting() == null)
+			{
+				interactedActor = null;
+			}
 		}
 	}
 
