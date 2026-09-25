@@ -7,12 +7,13 @@ import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.RuneLiteProperties;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
-import net.runelite.client.plugins.microbot.util.input.PointerState;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.text.Rs2TextSanitizer;
 
 import java.awt.*;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -36,18 +37,8 @@ public class Rs2UiHelper {
         int canvasHeight = Microbot.getClient().getCanvasHeight();
         int canvasWidth = Microbot.getClient().getCanvasWidth();
 
-        return rectangle.getX() >= 0 && rectangle.getY() >= 0 &&
-                rectangle.getX() + rectangle.getWidth() <= (double) canvasWidth &&
+        return rectangle.getX() + rectangle.getWidth() <= (double) canvasWidth &&
                 rectangle.getY() + rectangle.getHeight() <= (double) canvasHeight;
-    }
-
-    public static Rectangle clipToCanvas(Rectangle rectangle) {
-        if (rectangle == null) {
-            return null;
-        }
-        Rectangle visible = rectangle.intersection(new Rectangle(0, 0,
-                Microbot.getClient().getCanvasWidth(), Microbot.getClient().getCanvasHeight()));
-        return visible.isEmpty() ? null : visible;
     }
 
     public static boolean isRectangleWithinRectangle(Rectangle main, Rectangle sub) {
@@ -69,67 +60,33 @@ public class Rs2UiHelper {
         }
     }
 
-    public static boolean isFallbackRectangle(Rectangle rectangle) {
-        if (rectangle == null) return true;
-        if (rectangle.getX() == 1 && rectangle.getY() == 1) return true;
-        return rectangle.getX() == 0 && rectangle.getY() == 0;
-    }
-
     public static Point getClickingPoint(Rectangle rectangle, boolean randomize) {
-        return getClickingPoint(rectangle, randomize, true);
-    }
-
-    public static Point getClickingPoint(Rectangle rectangle, boolean randomize, boolean resolveFallback) {
-        if (rectangle == null || (resolveFallback && isFallbackRectangle(rectangle))) return getRestingPoint();
+        if (rectangle == null) return new Point(1, 1);
+        if (rectangle.getX() == 1 && rectangle.getY() == 1) return new Point(1, 1);
+        if (rectangle.getX() == 0 && rectangle.getY() == 0) return new Point(1, 1);
 
         if (!randomize) return new Point((int) rectangle.getCenterX(), (int) rectangle.getCenterY());
 
         double force = getSessionClickForce();
+        Point basePoint;
         if (Rs2AntibanSettings.naturalMouse) {
             java.awt.Point mousePos = Microbot.getMouse().getMousePosition();
-            return Rs2Random.randomPointEx(new Point(mousePos.x, mousePos.y), rectangle, force);
-        } else
-            return Rs2Random.randomPointEx(Microbot.getMouse().getLastClick(), rectangle, force);
-    }
-
-    static final int RESTING_POINT_MARGIN = 2;
-
-    static Point getRestingPoint() {
-        Point at = PointerState.get();
-        int width = canvasDimension(true);
-        int height = canvasDimension(false);
-        if (width <= 2 * RESTING_POINT_MARGIN || height <= 2 * RESTING_POINT_MARGIN) return at;
-        boolean outsideX = at.getX() < 0 || at.getX() >= width;
-        boolean outsideY = at.getY() < 0 || at.getY() >= height;
-        java.util.concurrent.ThreadLocalRandom random = java.util.concurrent.ThreadLocalRandom.current();
-        if (outsideX && outsideY) {
-            return new Point(clampToCanvas(width / 2.0 + random.nextGaussian() * width / 6.0, width),
-                    clampToCanvas(height / 2.0 + random.nextGaussian() * height / 6.0, height));
+            basePoint = Rs2Random.randomPointEx(new Point(mousePos.x, mousePos.y), rectangle, force);
+        } else {
+            basePoint = Rs2Random.randomPointEx(Microbot.getMouse().getLastClick(), rectangle, force);
         }
-        int x = outsideX ? inwardFromEdge(at.getX() < 0, width, random) : clampToCanvas(at.getX(), width);
-        int y = outsideY ? inwardFromEdge(at.getY() < 0, height, random) : clampToCanvas(at.getY(), height);
-        return new Point(x, y);
-    }
 
-    static final double RESTING_POINT_INWARD_SIGMA_PX = 40;
-
-    private static int inwardFromEdge(boolean fromLowEdge, int size, java.util.Random random) {
-        double inward = Math.abs(random.nextGaussian()) * RESTING_POINT_INWARD_SIGMA_PX;
-        return clampToCanvas(fromLowEdge ? inward : size - 1 - inward, size);
-    }
-
-    private static int clampToCanvas(double value, int size) {
-        return (int) Math.max(RESTING_POINT_MARGIN, Math.min(size - 1 - RESTING_POINT_MARGIN, Math.round(value)));
-    }
-
-    private static int canvasDimension(boolean width) {
-        try {
-            Client client = Microbot.getClient();
-            if (client == null) return 0;
-            return width ? client.getCanvasWidth() : client.getCanvasHeight();
-        } catch (Exception ex) {
-            return 0;
+        // Weather-based click imprecision — wind gusts add extra jitter
+        double gust = WeatherModulation.windGustFactor();
+        int jitter = (int) ((1.0 - gust) * 6); // 0–2px extra in wind
+        if (jitter > 0) {
+            basePoint = new Point(
+                    basePoint.getX() + Rs2Random.between(-jitter, jitter),
+                    basePoint.getY() + Rs2Random.between(-jitter, jitter)
+            );
         }
+
+        return basePoint;
     }
 
     //check if mouse is already within the rectangle
@@ -223,7 +180,8 @@ public class Rs2UiHelper {
 	}
 
 	public static Rectangle getDefaultRectangle() {
-		return new Rectangle(1, 1, Microbot.getClient().getCanvasWidth(), Microbot.getClient().getCanvasHeight());
+		int randomValue = ThreadLocalRandom.current().nextInt(3) - 1;
+		return new Rectangle(randomValue, randomValue, Microbot.getClient().getCanvasWidth(), Microbot.getClient().getCanvasHeight());
 	}
 
 	/**
