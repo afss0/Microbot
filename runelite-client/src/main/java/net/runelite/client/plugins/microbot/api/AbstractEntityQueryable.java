@@ -59,7 +59,7 @@ public abstract class AbstractEntityQueryable<
         }
 
         this.source = this.source
-                .filter(o -> o.getWorldLocation().distanceTo(playerLoc) <= distance);
+                .filter(o -> o.getWorldLocation() != null && o.getWorldLocation().distanceTo(playerLoc) <= distance);
 
         return (Q) this;
     }

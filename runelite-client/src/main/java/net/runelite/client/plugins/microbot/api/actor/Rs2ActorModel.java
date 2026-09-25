@@ -24,6 +24,9 @@ public class Rs2ActorModel implements Actor
     @Override
     public WorldView getWorldView()
     {
+        if (actor == null) {
+            return null;
+        }
         return Microbot.getClientThread().invoke(actor::getWorldView);
     }
 
@@ -453,6 +456,9 @@ public class Rs2ActorModel implements Actor
     public WorldPoint projectActorLocationToMainWorld() {
         WorldPoint actorLocation = actor.getWorldLocation();
         WorldView wv = actor.getWorldView();
+        if (wv == null || actorLocation == null) {
+            return actorLocation;
+        }
         LocalPoint localPoint = LocalPoint.fromWorld(wv, actorLocation);
 
         if (localPoint == null)

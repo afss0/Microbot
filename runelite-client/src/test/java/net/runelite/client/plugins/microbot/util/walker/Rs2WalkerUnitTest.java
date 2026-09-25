@@ -1769,9 +1769,10 @@ public class Rs2WalkerUnitTest {
 
     @Test
     public void shouldClearInterimTarget_preclickDistanceStillKeepsCheckpoint() {
+        // 7 tiles — just beyond INTERIM_CLOSE_TILES (6), so the checkpoint is preserved
         assertFalse(Rs2WalkerMovement.shouldClearInterimTarget(
                 new WorldPoint(2890, 3396, 0),
-                new WorldPoint(2884, 3396, 0),
+                new WorldPoint(2883, 3396, 0),
                 1_000L,
                 1_500L,
                 2_000L));
@@ -1858,7 +1859,7 @@ public class Rs2WalkerUnitTest {
     public void shouldYieldForActiveRecoveryInterim_recentProgress_returnsTrue() {
         assertTrue(Rs2WalkerMovement.shouldYieldForActiveRecoveryInterim(
                 new WorldPoint(2890, 3396, 0),
-                new WorldPoint(2884, 3396, 0),
+                new WorldPoint(2883, 3396, 0),
                 1_000L,
                 2_500L,
                 3_000L,
@@ -1983,7 +1984,11 @@ public class Rs2WalkerUnitTest {
     @Test
     public void interimPreclickKeepsCheckpointUntilCooldownExpires() {
         Rs2WalkerMovement.clearInterimTarget("test setup");
-        WorldPoint interim = new WorldPoint(3206, 3200, 0);
+        // The fork closes the interim as soon as the player is within INTERIM_CLOSE_TILES (6),
+        // so hold the player outside every preclick band (walk 6 / run 8): the checkpoint must
+        // survive while its progress clock is fresh and only be dropped once that clock goes
+        // stale by more than INTERIM_PROGRESS_TIMEOUT_MS.
+        WorldPoint interim = new WorldPoint(3209, 3200, 0);
         WorldPoint player = new WorldPoint(3200, 3200, 0);
         Rs2Walker.routeState.interimTargetWp = interim;
         Rs2Walker.routeState.interimSetAtMs = 1000L;
@@ -1992,8 +1997,13 @@ public class Rs2WalkerUnitTest {
             assertFalse(Rs2WalkerMovement.clearInterimTargetIfReachedOrExpired(player,
                     Collections.emptyList(), 1899L));
             assertEquals(interim, Rs2Walker.routeState.interimTargetWp);
+            long staleAtMs = Rs2Walker.routeState.interimLastProgressAtMs
+                    + Rs2Walker.INTERIM_PROGRESS_TIMEOUT_MS;
+            assertFalse(Rs2WalkerMovement.clearInterimTargetIfReachedOrExpired(player,
+                    Collections.emptyList(), staleAtMs));
+            assertEquals(interim, Rs2Walker.routeState.interimTargetWp);
             assertTrue(Rs2WalkerMovement.clearInterimTargetIfReachedOrExpired(player,
-                    Collections.emptyList(), 1900L));
+                    Collections.emptyList(), staleAtMs + 1L));
             assertNull(Rs2Walker.routeState.interimTargetWp);
         } finally {
             Rs2WalkerMovement.clearInterimTarget("test cleanup");

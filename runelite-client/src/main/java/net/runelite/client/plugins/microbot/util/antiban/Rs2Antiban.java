@@ -295,6 +295,12 @@ public class Rs2Antiban {
         else
             TIMEOUT = playStyle.getPrimaryTickInterval();
 
+        // Weather modulation: scale the action interval by current city temperature.
+        // Subtle effect (≈ ±15 %) but produces measurable divergence between accounts
+        // in different climates, driven by real chaotic data rather than a PRNG seed.
+        WeatherModulation.ensureFresh();
+        TIMEOUT = Math.max(1, (int) Math.round(TIMEOUT * WeatherModulation.combinedSpeedFactor()));
+
         // The pause (universal antiban only) and the always-set active flag both happen only after
         // TIMEOUT is computed: if computing the interval ever throws, scripts must not be left
         // paused with no countdown to clear them.
@@ -349,7 +355,10 @@ public class Rs2Antiban {
             logDebug("MICRO BREAKS ARE DISABLED, cannot take micro break");
             return false;
         }
-        if (Rs2Random.diceFractional(Rs2AntibanSettings.microBreakChance)) {
+        double effectiveChance = Rs2AntibanSettings.microBreakChance;
+        WeatherModulation.ensureFresh();
+        effectiveChance += WeatherModulation.microBreakChanceOffset();
+        if (Rs2Random.diceFractional(effectiveChance)) {
             Rs2AntibanSettings.microBreakActive = true;
             logDebug("Micro break triggered by antiban system");
             if (Rs2AntibanSettings.moveMouseOffScreen)
@@ -484,6 +493,11 @@ public class Rs2Antiban {
             panelComponent.getChildren().add(LineComponent.builder().left("simulateMistakes: " + (Rs2AntibanSettings.simulateMistakes ? "✔" : "❌")).build());
             panelComponent.getChildren().add(LineComponent.builder().left("useNaturalMouse: " + (Rs2AntibanSettings.naturalMouse ? "✔" : "❌")).build());
             panelComponent.getChildren().add(LineComponent.builder().left("useContextualVariability: " + (Rs2AntibanSettings.contextualVariability ? "✔" : "❌")).build());
+            panelComponent.getChildren().add(LineComponent.builder().left("Weather: " + WeatherModulation.getCityName()
+                        + " " + String.format("%.1f°C", WeatherModulation.getCurrentTempCelsius())
+                        + " gust=" + String.format("%.0fkm/h", WeatherModulation.getCurrentWindGustKmh())
+                        + " " + WeatherModulation.getWeatherDescription()
+                        + " speed=×" + String.format("%.3f", WeatherModulation.combinedSpeedFactor())).build());
         }
         if (playStyle != null) {
             panelComponent.getChildren().add(LineComponent.builder().left("Play Style: " + playStyle.getName()).build());
@@ -554,12 +568,22 @@ public class Rs2Antiban {
         resetAntibanSettings(false);
     }
 
-    public static void resetAntibanSettings(boolean forceReset) {
-        if (!forceReset && Rs2AntibanSettings.overwriteScriptSettings) return;
-        Rs2AntibanSettings.reset();
+    /**
+     * Clear transient antiban state (play style, activity, category) without
+     * touching persistent settings. Used during profile switches where
+     * {@link Rs2AntibanSettings#loadFromProfile()} handles settings restoration.
+     */
+    public static void clearTransientState() {
         Rs2Antiban.playStyle = null;
         Rs2Antiban.activity = null;
         Rs2Antiban.activityIntensity = ActivityIntensity.EXTREME;
         Rs2Antiban.category = null;
+    }
+
+    public static void resetAntibanSettings(boolean forceReset) {
+        if (!forceReset && Rs2AntibanSettings.overwriteScriptSettings) return;
+        Rs2AntibanSettings.reset();
+        WeatherModulation.reset();
+        clearTransientState();
     }
 }
