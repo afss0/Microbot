@@ -13,7 +13,7 @@ public class NavigationPanel extends JPanel {
 
         // Create a navigation panel for the buttons
         JPanel navPanel = new JPanel();
-        navPanel.setLayout(new GridLayout(1, 6)); // 1 rows, 6 column
+        navPanel.setLayout(new GridLayout(1, 7)); // 1 rows, 7 column
 
         // Create buttons with icons
         JButton generalButton = createIconButton("general.png", "General");
@@ -22,6 +22,8 @@ public class NavigationPanel extends JPanel {
         JButton mouseButton = createIconButton("mouse.png", "Mouse");
         JButton microBreakButton = createIconButton("microbreak.png", "MicroBreak");
         JButton cooldownButton = createIconButton("cooldown.png", "Cooldown");
+        JButton weatherButton = new JButton("⛅");
+        weatherButton.setToolTipText("Weather");
 
         // Add buttons to the navigation panel
         navPanel.add(generalButton);
@@ -30,6 +32,7 @@ public class NavigationPanel extends JPanel {
         navPanel.add(mouseButton);
         navPanel.add(microBreakButton);
         navPanel.add(cooldownButton);
+        navPanel.add(weatherButton);
 
         // Add navigation panel to the NavigationPanel
         add(navPanel, BorderLayout.CENTER);
@@ -41,6 +44,7 @@ public class NavigationPanel extends JPanel {
         mouseButton.addActionListener(e -> cardPanel.showPanel("Mouse"));
         microBreakButton.addActionListener(e -> cardPanel.showPanel("MicroBreak"));
         cooldownButton.addActionListener(e -> cardPanel.showPanel("Cooldown"));
+        weatherButton.addActionListener(e -> cardPanel.showPanel("Weather"));
     }
 
     private JButton createIconButton(String iconPath, String altText) {
