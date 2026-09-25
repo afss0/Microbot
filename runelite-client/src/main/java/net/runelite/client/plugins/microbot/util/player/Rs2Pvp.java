@@ -184,18 +184,18 @@ public class Rs2Pvp {
         Item[] items = ArrayUtils.addAll(Objects.requireNonNull(client.getItemContainer(InventoryID.EQUIPMENT)).getItems(),
                 Objects.requireNonNull(client.getItemContainer(InventoryID.INVENTORY)).getItems());
         TreeMap<Integer, Item> priceMap = new TreeMap<>(Comparator.comparingInt(Integer::intValue));
-        int wealth = 0;
+        long wealth = 0;
         for (Item i : items) {
-            int value = (itemManager.getItemPrice(i.getId()) * i.getQuantity());
+            long value = ((long) itemManager.getItemPrice(i.getId()) * i.getQuantity());
 
             final ItemComposition itemComposition = itemManager.getItemComposition(i.getId());
             if (!itemComposition.isTradeable() && value == 0) {
                 value = itemComposition.getPrice() * i.getQuantity();
-                priceMap.put(value, i);
+                priceMap.put((int) value, i);
             } else {
                 value = itemManager.getItemPrice(i.getId()) * i.getQuantity();
                 if (i.getId() > 0 && value > 0) {
-                    priceMap.put(value, i);
+                    priceMap.put((int) value, i);
                 }
             }
             wealth += value;
