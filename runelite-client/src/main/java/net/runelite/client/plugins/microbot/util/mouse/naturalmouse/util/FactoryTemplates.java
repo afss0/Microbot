@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.util.mouse.naturalmouse.util;
 
 import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.MouseMotionFactory;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.SpeedManager;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.support.*;
@@ -10,9 +11,20 @@ import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.support.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Random;
 
 public class FactoryTemplates {
+
+    /**
+     * Returns weather-adjusted overshoot count. When weather is disabled or
+     * simulateMistakes is off, returns the base count unchanged.
+     * Weather adds +0 to +2 overshoots based on rain + wind gusts.
+     */
+    private static int weatherAdjustedOvershoots(int base) {
+        if (!Rs2AntibanSettings.simulateMistakes) return 0;
+        double offset = WeatherModulation.mistakeProbabilityOffset();
+        return base + (int) Math.round(offset * 20); // +0 to +2
+    }
+
     /**
      * <h1>Stereotypical granny using a computer with non-optical mouse from the 90s.</h1>
      * Low speed, variating flow, lots of noise in movement.
@@ -45,11 +57,8 @@ public class FactoryTemplates {
         factory.setNoiseProvider(new DefaultNoiseProvider(1.6));
         factory.getNature().setReactionTimeBaseMs(100);
 
-        DefaultOvershootManager overshootManager = newOvershootManager(factory);
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(3);
-        else
-            overshootManager.setOvershoots(0);
+        DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(3));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(400);
         overshootManager.setOvershootRandomModifierDivider(DefaultOvershootManager.OVERSHOOT_RANDOM_MODIFIER_DIVIDER / 2);
@@ -90,7 +99,7 @@ public class FactoryTemplates {
         factory.setDeviationProvider((totalDistanceInPixels, completionFraction) -> DoublePoint.ZERO);
         factory.setNoiseProvider(((random, xStepSize, yStepSize) -> DoublePoint.ZERO));
 
-        DefaultOvershootManager overshootManager = newOvershootManager(factory);
+        DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
         overshootManager.setOvershoots(0);
 
         factory.setSpeedManager(manager);
@@ -134,11 +143,8 @@ public class FactoryTemplates {
         factory.getNature().setReactionTimeVariationMs(100);
         manager.setMouseMovementBaseTimeMs(currentBaseTime);
 
-        DefaultOvershootManager overshootManager = newOvershootManager(factory);
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(4);
-        else
-            overshootManager.setOvershoots(0);
+        DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(4));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(250);
 
@@ -183,11 +189,8 @@ public class FactoryTemplates {
         factory.getNature().setReactionTimeVariationMs(100);
         manager.setMouseMovementBaseTimeMs(currentBaseTime);
 
-        DefaultOvershootManager overshootManager = newOvershootManager(factory);
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(3);
-        else
-            overshootManager.setOvershoots(0);
+        DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(3));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(130);
 
@@ -221,11 +224,8 @@ public class FactoryTemplates {
         factory.getNature().setReactionTimeVariationMs(90);
         manager.setMouseMovementBaseTimeMs(currentBaseTime);
 
-        DefaultOvershootManager overshootManager = newOvershootManager(factory);
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(2);
-        else
-            overshootManager.setOvershoots(0);
+        DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(2));
         overshootManager.setMinDistanceForOvershoots(3);
         overshootManager.setMinOvershootMovementMs(100);
 
@@ -268,27 +268,10 @@ public class FactoryTemplates {
         factory.getNature().setReactionTimeVariationMs(110);
         manager.setMouseMovementBaseTimeMs(400);
 
-        DefaultOvershootManager overshootManager = newOvershootManager(factory);
-        if (Rs2AntibanSettings.simulateMistakes)
-            overshootManager.setOvershoots(4);
-        else
-            overshootManager.setOvershoots(0);
+        DefaultOvershootManager overshootManager = (DefaultOvershootManager) factory.getOvershootManager();
+        overshootManager.setOvershoots(weatherAdjustedOvershoots(4));
 
         factory.setSpeedManager(manager);
         return factory;
-    }
-
-    /**
-     * Bug fix: the templates used to configure the overshoot manager already on the nature, so a
-     * setting one template leaves alone kept the value of whichever template ran before. The average
-     * user template sets only the count, so after a gamer template it overshot from 3 px instead of 10
-     * and kept that template's minimum overshoot time. A motion also reads its manager when it moves,
-     * so a later build changed the overshoots of a motion built before it. A new manager per build
-     * starts every overshoot setting from its default.
-     */
-    private static DefaultOvershootManager newOvershootManager(MouseMotionFactory factory) {
-        DefaultOvershootManager overshootManager = new DefaultOvershootManager(new Random());
-        factory.setOvershootManager(overshootManager);
-        return overshootManager;
     }
 }
