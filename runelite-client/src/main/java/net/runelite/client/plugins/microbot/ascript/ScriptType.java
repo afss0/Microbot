@@ -1,0 +1,23 @@
+package net.runelite.client.plugins.microbot.ascript;
+
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+
+@Getter
+@RequiredArgsConstructor
+public enum ScriptType {
+    NONE("None"),
+    CRAFTING("Crafting"),
+    FLETCHING("Fletching"),
+    MOTHERLOAD_MINE("Motherload Mine"),
+    GEM_CRAB_KILLER("Gem Crab Killer"),
+    BARBARIAN_VILLAGE_FISHER("Barbarian Village Fisher"),
+    JEWEL_ENCHANT("Jewel Enchant");
+
+    private final String name;
+
+    @Override
+    public String toString() {
+        return name;
+    }
+}

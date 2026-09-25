@@ -126,6 +126,8 @@ public class Microbot {
     @Inject
     public static NaturalMouse naturalMouse;
     @Getter
+    public static net.runelite.client.plugins.microbot.mousesync.MouseSyncPlugin mouseSyncPlugin;
+    @Getter
     private static Mouse mouse = new VirtualMouse();
     @Getter
     @Inject
@@ -163,6 +165,8 @@ public class Microbot {
     @Getter
     @Inject
     private static PluginManager pluginManager;
+    @Getter
+    public static InputSelector inputSelector;
     @Getter
     @Inject
     private static WorldMapOverlay worldMapOverlay;

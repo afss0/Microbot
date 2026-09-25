@@ -12,6 +12,7 @@ import net.runelite.client.events.PluginMessage;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.agentserver.handler.WalkerShadowHandler;
 import net.runelite.client.plugins.microbot.testing.TestResult;
 import net.runelite.client.plugins.microbot.testing.TestResultWriter;
 import net.runelite.client.plugins.microbot.util.walker.Rs2PathApi;
@@ -287,6 +288,8 @@ public class GeLumbridgeTeleportHarnessPlugin extends Plugin {
         result.shadowSettled = sleepUntil(() -> Rs2PathApi.getShadowStats().getPending() == 0,
                 SHADOW_SETTLE_TIMEOUT_MS);
         Rs2PlannerShadowStats stats = Rs2PathApi.getShadowStats();
+        result.shadowEvidence = WalkerShadowHandler.snapshot();
+
         long submitted = stats.getSubmitted() - baseline.getSubmitted();
         long completed = stats.getCompleted() - baseline.getCompleted();
         long discarded = stats.getDiscarded() - baseline.getDiscarded();
@@ -380,6 +383,7 @@ public class GeLumbridgeTeleportHarnessPlugin extends Plugin {
         public boolean upstreamPlannerShadow;
         public boolean shadowSettled;
         public String shadowError;
+        public Map<String, Object> shadowEvidence;
         public List<LegOutcome> legs = new ArrayList<>();
 
         public GeLumbridgeTeleportResult(String script) {

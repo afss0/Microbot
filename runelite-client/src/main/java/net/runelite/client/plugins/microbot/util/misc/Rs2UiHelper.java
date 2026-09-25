@@ -4,22 +4,16 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Point;
 import net.runelite.api.*;
 import net.runelite.api.coords.LocalPoint;
-import net.runelite.api.gameval.InterfaceID;
-import net.runelite.api.widgets.Widget;
 import net.runelite.client.RuneLiteProperties;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
-import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
-import net.runelite.client.plugins.microbot.util.input.PointerState;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.text.Rs2TextSanitizer;
 
 import java.awt.*;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.function.Supplier;
-import java.util.function.UnaryOperator;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -43,188 +37,8 @@ public class Rs2UiHelper {
         int canvasHeight = Microbot.getClient().getCanvasHeight();
         int canvasWidth = Microbot.getClient().getCanvasWidth();
 
-        return rectangle.getX() >= 0 && rectangle.getY() >= 0 &&
-                rectangle.getX() + rectangle.getWidth() <= (double) canvasWidth &&
+        return rectangle.getX() + rectangle.getWidth() <= (double) canvasWidth &&
                 rectangle.getY() + rectangle.getHeight() <= (double) canvasHeight;
-    }
-
-    public static Rectangle clipToCanvas(Rectangle rectangle) {
-        if (rectangle == null) {
-            return null;
-        }
-        Rectangle visible = rectangle.intersection(new Rectangle(0, 0,
-                Microbot.getClient().getCanvasWidth(), Microbot.getClient().getCanvasHeight()));
-        return visible.isEmpty() ? null : visible;
-    }
-
-    private static final int[] SCENE_OVERLAY_COMPONENTS = {
-            InterfaceID.ToplevelOsrsStretch.SIDE_MENU,
-            InterfaceID.ToplevelOsrsStretch.CHAT_CONTAINER,
-            InterfaceID.ToplevelOsrsStretch.MAP_CONTAINER,
-            InterfaceID.ToplevelPreEoc.SIDE_CONTAINER,
-            InterfaceID.ToplevelPreEoc.CHAT_CONTAINER,
-            InterfaceID.ToplevelPreEoc.MAP_CONTAINER
-    };
-
-    static final int INTERFACE_CLEARANCE_PX = 4;
-
-    public static List<Rectangle> visibleSceneOverlayBounds() {
-        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            Client client = Microbot.getClient();
-            List<Rectangle> bounds = new ArrayList<>();
-            for (int componentId : SCENE_OVERLAY_COMPONENTS) {
-                Widget widget = client.getWidget(componentId);
-                if (widget != null && !widget.isHidden()) {
-                    bounds.add(widget.getBounds());
-                }
-            }
-            return bounds;
-        }).orElseGet(ArrayList::new);
-    }
-
-    public static Rectangle sceneViewportBounds() {
-        Client client = Microbot.getClient();
-        return new Rectangle(client.getViewportXOffset(), client.getViewportYOffset(),
-                client.getViewportWidth(), client.getViewportHeight());
-    }
-
-    public static Rectangle clearOfInterfaces(Rectangle clickbox, Rectangle viewport, List<Rectangle> interfaceBounds) {
-        if (clickbox == null || clickbox.isEmpty()) {
-            return null;
-        }
-        Rectangle visible = viewport == null ? new Rectangle(clickbox) : clickbox.intersection(viewport);
-        if (visible.isEmpty()) {
-            return null;
-        }
-        List<Rectangle> clear = new ArrayList<>();
-        clear.add(visible);
-        if (interfaceBounds != null) {
-            for (Rectangle bounds : interfaceBounds) {
-                if (bounds == null || bounds.isEmpty()) {
-                    continue;
-                }
-                Rectangle cover = new Rectangle(bounds);
-                cover.grow(INTERFACE_CLEARANCE_PX, INTERFACE_CLEARANCE_PX);
-                List<Rectangle> remaining = new ArrayList<>();
-                for (Rectangle area : clear) {
-                    if (!area.intersects(cover)) {
-                        remaining.add(area);
-                        continue;
-                    }
-                    addIfNotEmpty(remaining, new Rectangle(area.x, area.y, cover.x - area.x, area.height));
-                    addIfNotEmpty(remaining, new Rectangle(cover.x + cover.width, area.y,
-                            area.x + area.width - cover.x - cover.width, area.height));
-                    addIfNotEmpty(remaining, new Rectangle(area.x, area.y, area.width, cover.y - area.y));
-                    addIfNotEmpty(remaining, new Rectangle(area.x, cover.y + cover.height,
-                            area.width, area.y + area.height - cover.y - cover.height));
-                }
-                clear = remaining;
-            }
-        }
-        Rectangle largest = null;
-        for (Rectangle area : clear) {
-            Rectangle candidate = awayFromFallbackOrigin(area);
-            if (candidate == null) {
-                continue;
-            }
-            if (largest == null || (long) candidate.width * candidate.height > (long) largest.width * largest.height) {
-                largest = candidate;
-            }
-        }
-        return largest;
-    }
-
-    public static Rectangle clearClickArea(Rectangle clickbox) {
-        if (isFallbackRectangle(clickbox)) {
-            return clickbox;
-        }
-        return clearClickArea(clickbox, sceneViewportBounds(), visibleSceneOverlayBounds());
-    }
-
-    static Rectangle clearClickArea(Rectangle clickbox, Rectangle viewport, List<Rectangle> interfaceBounds) {
-        if (isFallbackRectangle(clickbox)) {
-            return clickbox;
-        }
-        return clearOfInterfaces(clickbox, viewport, interfaceBounds);
-    }
-
-    public static Rectangle clearHoverArea(Rectangle clickbox) {
-        if (isFallbackRectangle(clickbox)) {
-            return null;
-        }
-        return clearHoverArea(clickbox, sceneViewportBounds(), visibleSceneOverlayBounds());
-    }
-
-    static Rectangle clearHoverArea(Rectangle clickbox, Rectangle viewport, List<Rectangle> interfaceBounds) {
-        if (isFallbackRectangle(clickbox)) {
-            return null;
-        }
-        return clearOfInterfaces(clickbox, viewport, interfaceBounds);
-    }
-
-    public static Rectangle clearClickArea(Supplier<Rectangle> clickbox, Runnable turnCamera, String name) {
-        return clearClickArea(clickbox, Rs2UiHelper::clearClickArea, turnCamera, name, System.currentTimeMillis());
-    }
-
-    static final long COVERED_WARN_INTERVAL_MS = 10_000;
-    private static long lastCoveredWarnAt;
-
-    static Rectangle clearClickArea(Supplier<Rectangle> clickbox, UnaryOperator<Rectangle> clear, Runnable turnCamera,
-                                    String name, long now) {
-        Rectangle clickArea = clear.apply(clickbox.get());
-        if (clickArea != null) {
-            return clickArea;
-        }
-        turnCamera.run();
-        clickArea = clear.apply(clickbox.get());
-        if (clickArea == null) {
-            String message = "Can't click {} - it is behind the chatbox, side panel or minimap even after turning the camera."
-                    + " If this keeps happening, zoom out or move the camera so it is in view.";
-            String target = coveredTargetName(name);
-            if (shouldWarnCovered(now)) {
-                log.warn(message, target);
-            } else {
-                log.debug(message, target);
-            }
-        }
-        return clickArea;
-    }
-
-    static String coveredTargetName(String name) {
-        String trimmed = name == null ? "" : name.trim();
-        return trimmed.isEmpty() || "null".equalsIgnoreCase(trimmed) ? "the target" : trimmed;
-    }
-
-    static synchronized boolean shouldWarnCovered(long now) {
-        if (lastCoveredWarnAt != 0 && now - lastCoveredWarnAt < COVERED_WARN_INTERVAL_MS) {
-            return false;
-        }
-        lastCoveredWarnAt = now;
-        return true;
-    }
-
-    public static final int COVERED_TURN_MAX_ANGLE = 5;
-
-    public static Rectangle clearActorClickArea(Actor actor, String name) {
-        return clearClickArea(() -> getActorClickbox(actor),
-                () -> Rs2Camera.turnTo(actor, COVERED_TURN_MAX_ANGLE), name);
-    }
-
-    static final int FALLBACK_ORIGIN_INSET_PX = 2;
-
-    private static Rectangle awayFromFallbackOrigin(Rectangle area) {
-        if (!isFallbackRectangle(area)) {
-            return area;
-        }
-        Rectangle moved = new Rectangle(FALLBACK_ORIGIN_INSET_PX, FALLBACK_ORIGIN_INSET_PX,
-                area.x + area.width - FALLBACK_ORIGIN_INSET_PX, area.y + area.height - FALLBACK_ORIGIN_INSET_PX);
-        return moved.isEmpty() ? null : moved;
-    }
-
-    private static void addIfNotEmpty(List<Rectangle> areas, Rectangle area) {
-        if (!area.isEmpty() && !areas.contains(area)) {
-            areas.add(area);
-        }
     }
 
     public static boolean isRectangleWithinRectangle(Rectangle main, Rectangle sub) {
@@ -246,67 +60,33 @@ public class Rs2UiHelper {
         }
     }
 
-    public static boolean isFallbackRectangle(Rectangle rectangle) {
-        if (rectangle == null) return true;
-        if (rectangle.getX() == 1 && rectangle.getY() == 1) return true;
-        return rectangle.getX() == 0 && rectangle.getY() == 0;
-    }
-
     public static Point getClickingPoint(Rectangle rectangle, boolean randomize) {
-        return getClickingPoint(rectangle, randomize, true);
-    }
-
-    public static Point getClickingPoint(Rectangle rectangle, boolean randomize, boolean resolveFallback) {
-        if (rectangle == null || (resolveFallback && isFallbackRectangle(rectangle))) return getRestingPoint();
+        if (rectangle == null) return new Point(1, 1);
+        if (rectangle.getX() == 1 && rectangle.getY() == 1) return new Point(1, 1);
+        if (rectangle.getX() == 0 && rectangle.getY() == 0) return new Point(1, 1);
 
         if (!randomize) return new Point((int) rectangle.getCenterX(), (int) rectangle.getCenterY());
 
         double force = getSessionClickForce();
+        Point basePoint;
         if (Rs2AntibanSettings.naturalMouse) {
             java.awt.Point mousePos = Microbot.getMouse().getMousePosition();
-            return Rs2Random.randomPointEx(new Point(mousePos.x, mousePos.y), rectangle, force);
-        } else
-            return Rs2Random.randomPointEx(Microbot.getMouse().getLastClick(), rectangle, force);
-    }
-
-    static final int RESTING_POINT_MARGIN = 2;
-
-    static Point getRestingPoint() {
-        Point at = PointerState.get();
-        int width = canvasDimension(true);
-        int height = canvasDimension(false);
-        if (width <= 2 * RESTING_POINT_MARGIN || height <= 2 * RESTING_POINT_MARGIN) return at;
-        boolean outsideX = at.getX() < 0 || at.getX() >= width;
-        boolean outsideY = at.getY() < 0 || at.getY() >= height;
-        java.util.concurrent.ThreadLocalRandom random = java.util.concurrent.ThreadLocalRandom.current();
-        if (outsideX && outsideY) {
-            return new Point(clampToCanvas(width / 2.0 + random.nextGaussian() * width / 6.0, width),
-                    clampToCanvas(height / 2.0 + random.nextGaussian() * height / 6.0, height));
+            basePoint = Rs2Random.randomPointEx(new Point(mousePos.x, mousePos.y), rectangle, force);
+        } else {
+            basePoint = Rs2Random.randomPointEx(Microbot.getMouse().getLastClick(), rectangle, force);
         }
-        int x = outsideX ? inwardFromEdge(at.getX() < 0, width, random) : clampToCanvas(at.getX(), width);
-        int y = outsideY ? inwardFromEdge(at.getY() < 0, height, random) : clampToCanvas(at.getY(), height);
-        return new Point(x, y);
-    }
 
-    static final double RESTING_POINT_INWARD_SIGMA_PX = 40;
-
-    private static int inwardFromEdge(boolean fromLowEdge, int size, java.util.Random random) {
-        double inward = Math.abs(random.nextGaussian()) * RESTING_POINT_INWARD_SIGMA_PX;
-        return clampToCanvas(fromLowEdge ? inward : size - 1 - inward, size);
-    }
-
-    private static int clampToCanvas(double value, int size) {
-        return (int) Math.max(RESTING_POINT_MARGIN, Math.min(size - 1 - RESTING_POINT_MARGIN, Math.round(value)));
-    }
-
-    private static int canvasDimension(boolean width) {
-        try {
-            Client client = Microbot.getClient();
-            if (client == null) return 0;
-            return width ? client.getCanvasWidth() : client.getCanvasHeight();
-        } catch (Exception ex) {
-            return 0;
+        // Weather-based click imprecision — wind gusts add extra jitter
+        double gust = WeatherModulation.windGustFactor();
+        int jitter = (int) ((1.0 - gust) * 6); // 0–2px extra in wind
+        if (jitter > 0) {
+            basePoint = new Point(
+                    basePoint.getX() + Rs2Random.between(-jitter, jitter),
+                    basePoint.getY() + Rs2Random.between(-jitter, jitter)
+            );
         }
+
+        return basePoint;
     }
 
     //check if mouse is already within the rectangle
@@ -400,7 +180,8 @@ public class Rs2UiHelper {
 	}
 
 	public static Rectangle getDefaultRectangle() {
-		return new Rectangle(1, 1, Microbot.getClient().getCanvasWidth(), Microbot.getClient().getCanvasHeight());
+		int randomValue = ThreadLocalRandom.current().nextInt(3) - 1;
+		return new Rectangle(randomValue, randomValue, Microbot.getClient().getCanvasWidth(), Microbot.getClient().getCanvasHeight());
 	}
 
 	/**

@@ -126,7 +126,6 @@ public class Rs2Antiban {
     @Getter
     @Setter
     public static int TIMEOUT = 0;
-    static volatile boolean cooldownPausedScripts = false;
     @Getter
     private static Activity activity;
     @Getter
@@ -224,23 +223,6 @@ public class Rs2Antiban {
         return current != null && current.isBusy();
     }
 
-    public static boolean isCombatCategory() {
-        Category current = category;
-        return current == Category.COMBAT_LOW || current == Category.COMBAT_MID || current == Category.COMBAT_HIGH;
-    }
-
-    static void pauseScriptsForCooldown() {
-        if (Microbot.pauseAllScripts.compareAndSet(false, true))
-            cooldownPausedScripts = true;
-    }
-
-    static void releaseCooldownPause() {
-        if (!cooldownPausedScripts)
-            return;
-        cooldownPausedScripts = false;
-        Microbot.pauseAllScripts.compareAndSet(true, false);
-    }
-
     /**
      * <h2>Handles the Execution of an Action Cooldown Based on Anti-Ban Behaviors</h2>
      * <p>
@@ -284,10 +266,6 @@ public class Rs2Antiban {
      */
 
     public static void actionCooldown() {
-        if (!Rs2AntibanSettings.antibanEnabled) {
-            logDebug("Antiban not enabled, cannot perform action cooldown");
-            return;
-        }
         if (!Rs2AntibanSettings.usePlayStyle) {
             logDebug("PlayStyle not enabled, cannot perform action cooldown");
             return;
@@ -339,11 +317,17 @@ public class Rs2Antiban {
         else
             TIMEOUT = current.getPrimaryTickInterval();
 
+        // Weather modulation: scale the action interval by current city temperature.
+        // Subtle effect (≈ ±15 %) but produces measurable divergence between accounts
+        // in different climates, driven by real chaotic data rather than a PRNG seed.
+        WeatherModulation.ensureFresh();
+        TIMEOUT = Math.max(1, (int) Math.round(TIMEOUT * WeatherModulation.combinedSpeedFactor()));
+
         // The pause (universal antiban only) and the always-set active flag both happen only after
         // TIMEOUT is computed: if computing the interval ever throws, scripts must not be left
         // paused with no countdown to clear them.
-        if (Rs2AntibanSettings.universalAntiban && !(isCombatCategory() && isCategoryBusy()))
-			pauseScriptsForCooldown();
+        if (Rs2AntibanSettings.universalAntiban)
+			Microbot.pauseAllScripts.compareAndSet(false, true);
 
         Rs2AntibanSettings.actionCooldownActive = true;
 
@@ -393,7 +377,10 @@ public class Rs2Antiban {
             logDebug("MICRO BREAKS ARE DISABLED, cannot take micro break");
             return false;
         }
-        if (Rs2Random.diceFractional(Rs2AntibanSettings.microBreakChance)) {
+        double effectiveChance = Rs2AntibanSettings.microBreakChance;
+        WeatherModulation.ensureFresh();
+        effectiveChance += WeatherModulation.microBreakChanceOffset();
+        if (Rs2Random.diceFractional(effectiveChance)) {
             Rs2AntibanSettings.microBreakActive = true;
             logDebug("Micro break triggered by antiban system");
             if (Rs2AntibanSettings.moveMouseOffScreen)
@@ -526,8 +513,13 @@ public class Rs2Antiban {
             panelComponent.getChildren().add(LineComponent.builder().left("enableProfileSwitching: " + (Rs2AntibanSettings.profileSwitching ? "✔" : "❌")).build());
             panelComponent.getChildren().add(LineComponent.builder().left("adjustForTimeOfDay: " + (Rs2AntibanSettings.timeOfDayAdjust ? "✔" : "❌")).build());
             panelComponent.getChildren().add(LineComponent.builder().left("simulateMistakes: " + (Rs2AntibanSettings.simulateMistakes ? "✔" : "❌")).build());
-            panelComponent.getChildren().add(LineComponent.builder().left("aimClicksFromCursor: " + (Rs2AntibanSettings.naturalMouse ? "✔" : "❌")).build());
+            panelComponent.getChildren().add(LineComponent.builder().left("useNaturalMouse: " + (Rs2AntibanSettings.naturalMouse ? "✔" : "❌")).build());
             panelComponent.getChildren().add(LineComponent.builder().left("useContextualVariability: " + (Rs2AntibanSettings.contextualVariability ? "✔" : "❌")).build());
+            panelComponent.getChildren().add(LineComponent.builder().left("Weather: " + WeatherModulation.getCityName()
+                        + " " + String.format("%.1f°C", WeatherModulation.getCurrentTempCelsius())
+                        + " gust=" + String.format("%.0fkm/h", WeatherModulation.getCurrentWindGustKmh())
+                        + " " + WeatherModulation.getWeatherDescription()
+                        + " speed=×" + String.format("%.3f", WeatherModulation.combinedSpeedFactor())).build());
         }
         if (playStyle != null) {
             panelComponent.getChildren().add(LineComponent.builder().left("Play Style: " + playStyle.getName()).build());
@@ -598,15 +590,41 @@ public class Rs2Antiban {
         resetAntibanSettings(false);
     }
 
-    public static void resetAntibanSettings(boolean forceReset) {
-        if (!forceReset && Rs2AntibanSettings.overwriteScriptSettings) return;
-        Rs2AntibanSettings.reset();
-        if (!forceReset) {
-            Rs2AntibanSettings.loadNaturalMouseFromProfile();
-        }
+    /**
+     * Clear transient antiban state (play style, activity, category) without
+     * touching persistent settings. Used during profile switches where
+     * {@link Rs2AntibanSettings#loadFromProfile()} handles settings restoration.
+     */
+    public static void clearTransientState() {
         Rs2Antiban.playStyle = null;
         Rs2Antiban.activity = null;
         Rs2Antiban.activityIntensity = ActivityIntensity.EXTREME;
         Rs2Antiban.category = null;
     }
+
+    public static void resetAntibanSettings(boolean forceReset) {
+        if (!forceReset && Rs2AntibanSettings.overwriteScriptSettings) return;
+        Rs2AntibanSettings.reset();
+        WeatherModulation.reset();
+        clearTransientState();
+    }
+    static volatile boolean cooldownPausedScripts = false;
+
+    public static boolean isCombatCategory() {
+        Category current = category;
+        return current == Category.COMBAT_LOW || current == Category.COMBAT_MID || current == Category.COMBAT_HIGH;
+    }
+
+    static void pauseScriptsForCooldown() {
+        if (Microbot.pauseAllScripts.compareAndSet(false, true))
+            cooldownPausedScripts = true;
+    }
+
+    static void releaseCooldownPause() {
+        if (!cooldownPausedScripts)
+            return;
+        cooldownPausedScripts = false;
+        Microbot.pauseAllScripts.compareAndSet(true, false);
+    }
+
 }
