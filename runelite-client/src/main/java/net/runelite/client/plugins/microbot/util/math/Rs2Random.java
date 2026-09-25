@@ -553,6 +553,21 @@ public class Rs2Random {
         return (int) sample;
     }
 
+    /**
+     * Log-normal bounded with a weather/session multiplier.
+     * Multiplier > 1.0 = slower (longer waits), &lt; 1.0 = faster (shorter waits).
+     * The max bound is scaled by the multiplier; min stays fixed.
+     *
+     * @param min   minimum value
+     * @param max   base maximum value (before multiplier)
+     * @param multiplier  scaling factor (e.g. 1.0 / WeatherModulation.combinedSpeedFactor())
+     * @return a log-normal sample within [min, max * multiplier]
+     */
+    public static int logNormalBounded(int min, int max, double multiplier) {
+        int adjustedMax = (int) (max * multiplier);
+        return logNormalBounded(min, adjustedMax);
+    }
+
     enum EWaitDir {
         wdLeft, wdMean, wdRight
     }

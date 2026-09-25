@@ -81,8 +81,6 @@ import net.runelite.client.plugins.microbot.util.walker.awaits.Rs2WalkerRuntimeA
 import net.runelite.client.plugins.microbot.util.walker.puzzles.DraynorBasementSolver;
 import net.runelite.client.plugins.microbot.util.walker.stall.Rs2WalkerStallPolicy;
 import net.runelite.client.plugins.microbot.util.walker.transport.Rs2WalkerTransportAwaits;
-import net.runelite.client.plugins.microbot.util.walker.transport.TransportDispatchTrace;
-import net.runelite.client.plugins.microbot.util.walker.transport.TransportRefusalLedger;
 import net.runelite.client.plugins.microbot.util.walker.lifecycle.Rs2WalkerLifecycleRuntime;
 import net.runelite.client.plugins.skillcalculator.skills.MagicAction;
 import net.runelite.client.ui.overlay.worldmap.WorldMapPoint;
@@ -127,7 +125,7 @@ final class Rs2WalkerTransports {
      * Requires matching {@link WorldPoint#getPlane()} before using {@link WorldPoint#distanceTo2D} — that method only
      * compares X/Y, so same X/Y on different planes still reads as distance {@code 0} without an explicit plane check.
      */
-    private static boolean isPlayerWithinChebyshevOf(WorldPoint dest, int maxChebyshevExclusive) {
+    static boolean isPlayerWithinChebyshevOf(WorldPoint dest, int maxChebyshevExclusive) {
         if (dest == null) {
             return false;
         }
@@ -139,7 +137,7 @@ final class Rs2WalkerTransports {
     /**
      * Same-plane Chebyshev distance {@code <= maxInclusiveChebyshev} (e.g. adjacent transport uses {@code 0} for same tile).
      */
-    private static boolean isPlayerWithinChebyshevInclusive(WorldPoint dest, int maxInclusiveChebyshev) {
+    static boolean isPlayerWithinChebyshevInclusive(WorldPoint dest, int maxInclusiveChebyshev) {
         if (dest == null) {
             return false;
         }
@@ -153,92 +151,6 @@ final class Rs2WalkerTransports {
 
 
 
-    static final class DispatchResult {
-        final boolean handled;
-        final TransportDispatchTrace.Verdict verdict;
-        final TransportDispatchTrace trace;
-        final boolean struckOut;
-
-        DispatchResult(boolean handled, TransportDispatchTrace.Verdict verdict,
-                       TransportDispatchTrace trace, boolean struckOut) {
-            this.handled = handled;
-            this.verdict = verdict;
-            this.trace = trace;
-            this.struckOut = struckOut;
-        }
-    }
-
-    private static final ThreadLocal<TransportDispatchTrace> DISPATCH_TRACE = new ThreadLocal<>();
-
-    static DispatchResult dispatchSelectedTransport(List<WorldPoint> path,
-                                                    int indexOfStartPoint,
-                                                    Rs2PathApi.ActiveTransportSelection selection) {
-        TransportDispatchTrace previous = DISPATCH_TRACE.get();
-        TransportDispatchTrace trace = new TransportDispatchTrace();
-        DISPATCH_TRACE.set(trace);
-        boolean handled;
-        try {
-            handled = handleSelectedTransport(path, indexOfStartPoint, selection);
-        } finally {
-            if (previous != null) {
-                DISPATCH_TRACE.set(previous);
-            } else {
-                DISPATCH_TRACE.remove();
-            }
-        }
-        Transport transport = selection != null ? selection.getLocalExecutionTransport() : null;
-        WorldPoint origin = transport != null ? transport.getOrigin() : null;
-        WorldPoint destination = transport != null ? transport.getDestination() : null;
-        TransportDispatchTrace.Verdict verdict =
-                trace.verdict(handled, Rs2Player.getWorldLocation(), origin, destination);
-        boolean struckOut = false;
-        if (verdict == TransportDispatchTrace.Verdict.HANDLED) {
-            transportRefusalLedger.clear(origin, destination);
-        } else if (verdict == TransportDispatchTrace.Verdict.REFUSED_AFTER_INTERACTION) {
-            struckOut = registerTransportRefusal(origin, destination, "interaction-refused");
-        }
-        return new DispatchResult(handled, verdict, trace, struckOut);
-    }
-
-    static boolean dispatchRecoveryTransport(List<WorldPoint> path, int index) {
-        Optional<Rs2PathApi.ActiveTransportSelection> selection =
-                Rs2PathApi.getActiveTransportSelection(path, index);
-        if (selection.isEmpty()) {
-            return false;
-        }
-        DispatchResult result = dispatchSelectedTransport(path, index, selection.get(), false);
-        if (result.handled || result.struckOut) {
-            return true;
-        }
-        if (result.verdict != TransportDispatchTrace.Verdict.REFUSED_WITHOUT_INTERACTION) {
-            return false;
-        }
-        Transport transport = selection.get().getLocalExecutionTransport();
-        return registerTransportFallThrough(transport.getOrigin(), transport.getDestination(),
-                result.trace.reason());
-    }
-
-    private static void noteTransportInteraction() {
-        TransportDispatchTrace trace = DISPATCH_TRACE.get();
-        if (trace != null) {
-            trace.interacted();
-        }
-    }
-
-    private static void noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip reason) {
-        TransportDispatchTrace trace = DISPATCH_TRACE.get();
-        if (trace != null) {
-            trace.skip(reason);
-        }
-    }
-
-    private static void noteRefusal(TransportDispatchTrace.Refusal reason) {
-        TransportDispatchTrace trace = DISPATCH_TRACE.get();
-        if (trace != null) {
-            trace.refuse(reason);
-        }
-    }
-
     /**
      * Executes the exact transport retained by the active route through its registered Microbot executor.
      * Candidate discovery must happen through immutable route steps, never by rescanning the mutable
@@ -249,7 +161,6 @@ final class Rs2WalkerTransports {
                                                     int indexOfStartPoint,
                                                     Rs2PathApi.ActiveTransportSelection selection) {
         if (selection == null || !selection.isExecutable()) {
-            noteRefusal(TransportDispatchTrace.Refusal.UNSUPPORTED);
             if (selection != null) {
                 WebWalkLog.spWarn("selected transport has no executor | type={} origin={} dest={}",
                         selection.getEdge().getType(),
@@ -266,7 +177,6 @@ final class Rs2WalkerTransports {
         }
         if (path != null && indexOfStartPoint >= 0 && indexOfStartPoint < path.size() - 1
                 && recentlyOpenedStationaryDoorOnSegment(path.get(indexOfStartPoint), path.get(indexOfStartPoint + 1))) {
-            noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.STATIONARY_DOOR_SETTLING);
             return false;
         }
         if (log.isDebugEnabled()) {
@@ -306,7 +216,6 @@ final class Rs2WalkerTransports {
                 WorldPoint plOriginLoop = Rs2Player.getWorldLocation();
                 if (!inPohInstance && transport.getOrigin() != null && plOriginLoop != null
                         && plOriginLoop.getPlane() != transport.getOrigin().getPlane()) {
-                    noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.PLANE_MISMATCH);
                     continue;
                 }
 
@@ -321,14 +230,12 @@ final class Rs2WalkerTransports {
                     if (isPlayerWithinChebyshevOf(transport.getDestination(), OFFSET)) {
                         log.debug("[Walker] skip {}: already within {} tiles of Quetzal destination {}",
                                 transport.getDisplayInfo(), OFFSET, transport.getDestination());
-                        noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.ALREADY_AT_DESTINATION);
                         continue;
                     }
                 }
                 if (TransportType.isTeleport(transport.getType(), transport.getOrigin())) {
                     if (isPlayerWithinChebyshevOf(transport.getDestination(), TELEPORT_NEAR_SKIP_CHEBYSHEV)) {
                         log.debug("[Walker] skip {}: already near destination", transport.getDisplayInfo());
-                        noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.ALREADY_AT_DESTINATION);
                         continue;
                     }
                 }
@@ -351,7 +258,6 @@ final class Rs2WalkerTransports {
                             transport.getDisplayInfo(),
                             compactWorldPoint(transport.getOrigin()),
                             compactWorldPoint(transport.getDestination()));
-                    noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.ALREADY_AT_DESTINATION);
                     continue;
                 }
 
@@ -381,7 +287,6 @@ final class Rs2WalkerTransports {
                     }
                     if (!inPohInstance && origin != null && origin.getPlane() != plPathLoop.getPlane()) {
                         log.debug("[Walker] skip {} (i={}): plane mismatch", transport.getDisplayInfo(), i);
-                        noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.PLANE_MISMATCH);
                         break; // plane won't change across iterations, so break instead of continue
                     }
 
@@ -397,7 +302,6 @@ final class Rs2WalkerTransports {
                             if (digOrigin == null || playerAtMound == null || !playerAtMound.equals(digOrigin)) {
                                 // Digging is tile-sensitive. Let the ordinary path click finish the
                                 // approach instead of firing the spade from an adjacent mound tile.
-                                noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.BARROWS_APPROACH);
                                 return false;
                             }
                             boolean dug = attemptObserved(transport,
@@ -427,7 +331,6 @@ final class Rs2WalkerTransports {
                                         "selected terminal travel has no supported interaction mode | type={} origin={} dest={}",
                                         transport.getType(), compactWorldPoint(transport.getOrigin()),
                                         compactWorldPoint(transport.getDestination()));
-                                noteRefusal(TransportDispatchTrace.Refusal.UNSUPPORTED);
                                 break originLoop;
                             }
 
@@ -470,7 +373,6 @@ final class Rs2WalkerTransports {
                                 if (!markTerminalTravelAttempt(transport)) {
                                     log.debug("[Walker] terminal travel edge already attempted this walk: {}",
                                             transport.getDisplayInfo());
-                                    noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.TERMINAL_ALREADY_ATTEMPTED);
                                     break originLoop;
                                 }
                                 if (!npcAction.equalsIgnoreCase(transport.getAction())) {
@@ -546,13 +448,11 @@ final class Rs2WalkerTransports {
                                             transport.getName(), transport.getAction(),
                                             compactWorldPoint(transport.getDestination()),
                                             transport.getDisplayInfo());
-                                        noteRefusal(TransportDispatchTrace.Refusal.ACTION_MISSING);
                                         break originLoop;
                                     }
                                     if (!markTerminalTravelAttempt(transport)) {
                                         log.debug("[Walker] terminal travel edge already attempted this walk: {}",
                                             transport.getDisplayInfo());
-                                        noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.TERMINAL_ALREADY_ATTEMPTED);
                                         break originLoop;
                                     }
                                     prepareTransportObjectForInteraction(terminalObject);
@@ -571,7 +471,6 @@ final class Rs2WalkerTransports {
                                     }
                                 } else {
                                     WorldPoint originTile = path.get(i);
-                                    noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.TERMINAL_APPROACH);
                                     boolean clicked = Rs2Walker.walkFastCanvas(originTile);
                                     if (!clicked) {
                                         WorldPoint playerLoc = Rs2Player.getWorldLocation();
@@ -670,7 +569,6 @@ final class Rs2WalkerTransports {
                     if (transport.getType() == TransportType.SPIRIT_TREE) {
                         if (!Rs2PathApi.isSpiritTreeTravelEnabled()) {
                             log.debug("[Walker] skip spirit tree transport — setting is off");
-                            noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.SPIRIT_TREE_TRAVEL_DISABLED);
                             continue;
                         }
                         if (attemptObserved(transport, () -> handleSpiritTree(transport))) {
@@ -739,9 +637,6 @@ final class Rs2WalkerTransports {
                         WorldPoint plFairy = Rs2Player.getWorldLocation();
                         WorldPoint tdFairy = transport.getDestination();
                         boolean alreadyAtFairyDest = plFairy != null && tdFairy != null && plFairy.equals(tdFairy);
-                        if (alreadyAtFairyDest) {
-                            noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.ALREADY_AT_DESTINATION);
-                        }
                         if (!alreadyAtFairyDest && attemptObserved(transport, () -> handleFairyRing(transport))) {
                             sleepUntilTrue(() -> isPlayerWithinChebyshevOf(transport.getDestination(), OFFSET),
                                     TRANSPORT_LANDING_WAIT_POLL_MS, TRANSPORT_LANDING_WAIT_TIMEOUT_MS);
@@ -872,7 +767,6 @@ final class Rs2WalkerTransports {
                         if (!(object instanceof GroundObject) && !MagicMushtree.isMagicMushtree(transport.getObjectId())) {
                             if (requiresReachableObjectOrigin(Boolean.TRUE.equals(SERVER_APPROACH_ALLOWED.get()))
                                     && !Rs2Tile.isTileReachable(transport.getOrigin())) {
-                                noteRefusal(TransportDispatchTrace.Refusal.ORIGIN_UNREACHABLE);
                                 break;
                             }
                         }
@@ -890,9 +784,7 @@ final class Rs2WalkerTransports {
                                 log.info("[Walker] Closed transport variant at {} (id={} name={}) — opening before {}",
                                         transport.getOrigin(), object.getId(), comp.getName(), transportAction);
                                 final int closedId = object.getId();
-                                if (Rs2GameObject.interact(object, "Open")) {
-                                    noteTransportInteraction();
-                                }
+                                Rs2GameObject.interact(object, "Open");
                                 Rs2Player.waitForAnimation(2000);
                                 TileObject reopened = Rs2GameObject.getAll(o -> {
                                     if (o.getId() == closedId) return false;
@@ -906,11 +798,8 @@ final class Rs2WalkerTransports {
                             }
                         }
 
-                        Optional<String> resolvedAction = resolveTransportObjectAction(object, transportActions);
-                        if (resolvedAction.isEmpty()) {
-                            noteRefusal(TransportDispatchTrace.Refusal.ACTION_MISSING);
-                        }
-                        String interactionAction = resolvedAction.orElse(transportAction);
+                        String interactionAction = resolveTransportObjectAction(object, transportActions)
+                                .orElse(transportAction);
                         if (!Objects.equals(interactionAction, transportAction)) {
                             log.debug("[Walker] Using object action '{}' for transport action '{}' at {} (id={})",
                                     interactionAction, transportAction, object.getWorldLocation(), object.getId());
@@ -954,71 +843,13 @@ final class Rs2WalkerTransports {
                         }
                         return false;
                     }
-                    noteRefusal(TransportDispatchTrace.Refusal.OBJECT_MISSING);
                 }
             }
         }
         return false;
     }
 
-    private static final TransportRefusalLedger transportRefusalLedger = new TransportRefusalLedger();
-
-    static int transportRefusalStrikes(WorldPoint origin, WorldPoint destination) {
-        return transportRefusalLedger.strikes(origin, destination);
-    }
-
-    static boolean registerTransportRefusal(WorldPoint origin, WorldPoint destination, String mode) {
-        if (origin == null || destination == null) {
-            return false;
-        }
-        int strikes = transportRefusalLedger.registerRefusal(origin, destination);
-        if (!TransportRefusalLedger.isStrikeOut(strikes)) {
-            WebWalkLog.spInfo("transport_refused | origin={} dest={} mode={} strike={}/{}",
-                    compactWorldPoint(origin), compactWorldPoint(destination), mode,
-                    strikes, TransportRefusalLedger.STRIKE_LIMIT);
-            return false;
-        }
-        strikeOutTransport(origin, destination, mode, TransportRefusalLedger.STRIKE_LIMIT);
-        return true;
-    }
-
-    static boolean registerTransportFallThrough(WorldPoint origin, WorldPoint destination, String reason) {
-        if (origin == null || destination == null) {
-            return false;
-        }
-        int fallThroughs = transportRefusalLedger.registerFallThrough(origin, destination);
-        if (!TransportRefusalLedger.isFallThroughStrikeOut(fallThroughs)) {
-            WebWalkLog.spInfo("transport_fall_through | origin={} dest={} reason={} strike={}/{}",
-                    compactWorldPoint(origin), compactWorldPoint(destination), reason,
-                    fallThroughs, TransportRefusalLedger.FALL_THROUGH_STRIKE_LIMIT);
-            return false;
-        }
-        strikeOutTransport(origin, destination, "fall-through " + reason,
-                TransportRefusalLedger.FALL_THROUGH_STRIKE_LIMIT);
-        return true;
-    }
-
-    static int transportFallThroughs(WorldPoint origin, WorldPoint destination) {
-        return transportRefusalLedger.fallThroughs(origin, destination);
-    }
-
-    private static void strikeOutTransport(WorldPoint origin, WorldPoint destination, String mode, int limit) {
-        if (Rs2PathApi.learnBlockedEdge(origin, destination, "transport-refused (" + mode + ")")) {
-            transportRefusalLedger.recordWalkScopedBlock(origin, destination);
-        }
-        WebWalkLog.spInfo("transport_strike_out | origin={} dest={} mode={} — {} refusals; "
-                        + "blocking transport for this walk and replanning",
-                compactWorldPoint(origin), compactWorldPoint(destination), mode, limit);
-        recalculatePath();
-    }
-
-    static void withdrawWalkScopedTransportBlocks() {
-        for (WorldPoint[] edge : transportRefusalLedger.drainWalkScopedBlocks()) {
-            Rs2PathApi.unlearnBlockedEdge(edge[0], edge[1], "walk-scoped transport strike-out expired");
-        }
-    }
-
-    private static boolean waitForPostHandleObjectLanding(Transport transport,
+    static boolean waitForPostHandleObjectLanding(Transport transport,
                                                           WorldPoint destWait,
                                                           int maxInclusive) {
         long waitStartedAt = System.currentTimeMillis();
@@ -1109,14 +940,14 @@ final class Rs2WalkerTransports {
      * @param transport the transport object to be checked and processed
      * @return true if the transport is an instance of PohTransport and its transport method executes successfully, false otherwise
      */
-    private static boolean handlePohTransport(Transport transport) {
+    static boolean handlePohTransport(Transport transport) {
         if(!(transport instanceof PohTransport)) {
             throw new IllegalStateException("handlePohTransport should not be called for non-PohTransports");
         }
         return ((PohTransport)transport).execute();
     }
 
-    private static List<String> getTransportActionOptions(String action) {
+    static List<String> getTransportActionOptions(String action) {
         if (action == null || action.isBlank()) {
             return Collections.emptyList();
         }
@@ -1158,7 +989,7 @@ final class Rs2WalkerTransports {
         return Optional.empty();
     }
 
-    private static void prepareTransportObjectForInteraction(TileObject tileObject) {
+    static void prepareTransportObjectForInteraction(TileObject tileObject) {
         if (tileObject == null || tileObject.getLocalLocation() == null) {
             return;
         }
@@ -1205,10 +1036,8 @@ final class Rs2WalkerTransports {
         ensureRequiredItemBeforeTransport(transport);
         WorldPoint before = Rs2Player.getWorldLocation();
         if (!Rs2GameObject.interact(tileObject, action)) {
-            noteRefusal(TransportDispatchTrace.Refusal.INTERACT_FAILED);
             return false;
         }
-        noteTransportInteraction();
         // Unlike the other exception handlers, a toll-gate interaction is not complete merely
         // because the menu action was issued: it may first server-walk from several tiles away and
         // then present a confirmation dialogue. Bubble an unobserved crossing back to the caller so
@@ -1320,17 +1149,10 @@ final class Rs2WalkerTransports {
                                             int indexOfStartPoint,
                                             Rs2PathApi.ActiveTransportSelection selection,
                                             boolean allowServerApproach) {
-        return dispatchSelectedTransport(path, indexOfStartPoint, selection, allowServerApproach).handled;
-    }
-
-    static DispatchResult dispatchSelectedTransport(List<WorldPoint> path,
-                                                    int indexOfStartPoint,
-                                                    Rs2PathApi.ActiveTransportSelection selection,
-                                                    boolean allowServerApproach) {
         Boolean previous = SERVER_APPROACH_ALLOWED.get();
         SERVER_APPROACH_ALLOWED.set(allowServerApproach);
         try {
-            return dispatchSelectedTransport(path, indexOfStartPoint, selection);
+            return handleSelectedTransport(path, indexOfStartPoint, selection);
         } finally {
             if (Boolean.TRUE.equals(previous)) {
                 SERVER_APPROACH_ALLOWED.set(Boolean.TRUE);
@@ -1350,7 +1172,7 @@ final class Rs2WalkerTransports {
         return !allowServerApproach;
     }
 
-    private static boolean finishHandledTransport(Transport transport) {
+    static boolean finishHandledTransport(Transport transport) {
         long handoffStartedAt = System.currentTimeMillis();
         routeState.lastTransportHandledAtMs = handoffStartedAt;
         routeState.lastTransportOriginLocation = transport != null ? transport.getOrigin() : null;
@@ -1425,7 +1247,7 @@ final class Rs2WalkerTransports {
         }
     }
 
-    private static boolean sameOrNearTransportDestination(WorldPoint a, WorldPoint b) {
+    static boolean sameOrNearTransportDestination(WorldPoint a, WorldPoint b) {
         return a != null
                 && b != null
                 && a.getPlane() == b.getPlane()
@@ -2338,7 +2160,7 @@ final class Rs2WalkerTransports {
     /** Wraps an action with {@link #recordTransportAttempt} + {@link #recordTransportResult} (seasonal JSONL, Leagues snapshot for teleports).
      * @see net.runelite.client.plugins.microbot.util.leaguetransport.Rs2LeaguesTransport
      */
-    private static boolean attemptObserved(Transport transport, BooleanSupplier action)
+    static boolean attemptObserved(Transport transport, BooleanSupplier action)
     {
         if (transport == null || action == null)
         {
@@ -2351,14 +2173,6 @@ final class Rs2WalkerTransports {
             recordTransportAttempt(transport);
         }
         boolean ok = action.getAsBoolean();
-        if (ok)
-        {
-            noteTransportInteraction();
-        }
-        else
-        {
-            noteRefusal(TransportDispatchTrace.Refusal.HANDLER_FAILED);
-        }
         if (leaguesActive)
         {
             recordTransportResult(transport, ok);
@@ -2371,7 +2185,7 @@ final class Rs2WalkerTransports {
      * Seasonal handlers record attempts at their click sites so {@link Rs2LeaguesTransport#getLastTransportAttemptSnapshot}
      * matches the handler that actually ran (Leagues Area vs MoA).
      */
-    private static boolean attemptObservedWithoutAttemptRecord(Transport transport, BooleanSupplier action)
+    static boolean attemptObservedWithoutAttemptRecord(Transport transport, BooleanSupplier action)
     {
         if (transport == null || action == null)
         {
@@ -2379,14 +2193,6 @@ final class Rs2WalkerTransports {
         }
         boolean leaguesActive = Rs2LeaguesTransport.isLeaguesActive();
         boolean ok = action.getAsBoolean();
-        if (ok)
-        {
-            noteTransportInteraction();
-        }
-        else
-        {
-            noteRefusal(TransportDispatchTrace.Refusal.HANDLER_FAILED);
-        }
         if (leaguesActive)
         {
             recordTransportResult(transport, ok);
@@ -2399,7 +2205,7 @@ final class Rs2WalkerTransports {
      * Attempt recording is done inside each handler (for built-ins, {@link Rs2LeaguesTransport#tryHandleLeaguesAreaTransportResult})
      * — use {@link #attemptObservedWithoutAttemptRecord} at the call site.
      */
-    private static boolean handleSeasonalTransport(Transport transport) {
+    static boolean handleSeasonalTransport(Transport transport) {
         if (transport == null) {
             return false;
         }
@@ -2468,7 +2274,7 @@ final class Rs2WalkerTransports {
         return false;
     }
 
-    private static boolean handleSpiritTree(Transport transport) {
+    static boolean handleSpiritTree(Transport transport) {
         // Get Transport Information
         String displayInfo = transport.getDisplayInfo();
         int objectId = transport.getObjectId();
@@ -2511,7 +2317,6 @@ final class Rs2WalkerTransports {
             if (!interactResult) {
                 return false;
             }
-            noteTransportInteraction();
         }
 
         boolean result = interactWithAdventureLog(transport);
@@ -2812,7 +2617,7 @@ final class Rs2WalkerTransports {
                 || Rs2Widget.isWidgetVisible(InterfaceID.QuetzalwhistleMenu.CONTENTS);
     }
 
-    private static boolean finishQuetzalWhistleTransport(Transport transport) {
+    static boolean finishQuetzalWhistleTransport(Transport transport) {
         assert transport != null;
         WorldPoint dest = transport.getDestination();
         assert dest != null;
@@ -2916,7 +2721,7 @@ final class Rs2WalkerTransports {
         return sleepUntilTrue(() -> isPlayerWithinChebyshevOf(expectedDestination, OFFSET), 100, 8000);
     }
 
-    private static boolean handleQuetzal(Transport transport) {
+    static boolean handleQuetzal(Transport transport) {
         String displayInfo = transport.getDisplayInfo();
         if (displayInfo == null || displayInfo.isEmpty()) return false;
 
@@ -2931,7 +2736,6 @@ final class Rs2WalkerTransports {
         Rs2NpcModel renu = Rs2Npc.getNpc(NpcID.QUETZAL_CHILD_GREEN);
 
         if (Rs2Tile.isTileReachable(transport.getOrigin()) && Rs2Npc.interact(renu, "travel")) {
-            noteTransportInteraction();
             Rs2Player.waitForWalking();
             WorldPoint dest = transport.getDestination();
             String mapLabel = resolveQuetzalMapOptionLabel(transport);
@@ -2943,7 +2747,7 @@ final class Rs2WalkerTransports {
         return false;
     }
 
-    private static boolean handleMasterScrollBook(String destination) {
+    static boolean handleMasterScrollBook(String destination) {
         boolean isMasterScrollBookOpen = sleepUntilTrue(() -> Rs2Widget.isWidgetVisible(InterfaceID.Bookofscrolls.CONTENTS), 100, 10000);
         if (!isMasterScrollBookOpen) {
             log.error("Master Scroll Book did not open within timeout period");
@@ -2965,7 +2769,7 @@ final class Rs2WalkerTransports {
         return interaction;
     }
 
-    private static boolean handleMagicCarpet(Transport transport) {
+    static boolean handleMagicCarpet(Transport transport) {
         final int flyingPoseAnimation = 6936;
         var rugMerchant = Rs2Npc.getNpc(transport.getObjectId());
         if (rugMerchant == null) return false;
@@ -2977,13 +2781,12 @@ final class Rs2WalkerTransports {
         return sleepUntilTrue(() -> Rs2Player.getPoseAnimation() != flyingPoseAnimation, 600,60000);
     }
 
-    private static boolean handleCharterShip(Transport transport) {
+    static boolean handleCharterShip(Transport transport) {
         String npcName = transport.getName();
 
         Rs2NpcModel npc = Rs2Npc.getNpc(npcName);
         log.info("Charter Ship NPC: " + npcName + " - " + (npc != null ? npc.getId() : "not found"));
         if (Rs2Npc.canWalkTo(npc, 20) && Rs2Npc.interact(npc, transport.getAction())) {
-            noteTransportInteraction();
             Rs2Player.waitForWalking();
             if (!sleepUntil(() -> Rs2Widget.isWidgetVisible(885, 4), 5000)) {
                 return false;
@@ -3136,7 +2939,7 @@ final class Rs2WalkerTransports {
         return !Rs2Widget.isHidden(MINECART_MENU_GROUP, MINECART_MENU_LIST_CHILD);
     }
 
-    private static boolean interactWithAdventureLog(Transport transport) {
+    static boolean interactWithAdventureLog(Transport transport) {
         if (transport.getDisplayInfo() == null || transport.getDisplayInfo().isEmpty()) return false;
 
         // Two menus arrive here, and they are different interfaces: spirit trees and their kin open
@@ -3220,7 +3023,7 @@ final class Rs2WalkerTransports {
         return sleepUntilTrue(() -> isPlayerWithinChebyshevOf(transport.getDestination(), OFFSET), 100, 10000);
     }
 
-    private static boolean handleGlider(Transport transport) {
+    static boolean handleGlider(Transport transport) {
         int TA_QUIR_PRIW = 9043972;
         int SINDARPOS = 9043975;
         int LEMANTO_ANDRA = 9043978;
@@ -3248,7 +3051,6 @@ final class Rs2WalkerTransports {
 
             // Interact with the gnome glider NPC
             if (Rs2Npc.interact(gnome, action)) {
-                noteTransportInteraction();
                 sleepUntil(() -> !Rs2Widget.isHidden(GLIDER_PARENT_WIDGET, GLIDER_CHILD_WIDGET));
             }
         }
@@ -3285,7 +3087,7 @@ final class Rs2WalkerTransports {
         }
     }
 
-    private static boolean handleFairyRing(Transport transport) {
+    static boolean handleFairyRing(Transport transport) {
 
         Rs2ItemModel startingWeapon = null;
 
