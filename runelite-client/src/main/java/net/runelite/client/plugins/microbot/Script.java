@@ -3,14 +3,8 @@ package net.runelite.client.plugins.microbot;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.gameval.InterfaceID;
-import net.runelite.api.widgets.Widget;
-import net.runelite.client.plugins.Plugin;
-import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.agentserver.handler.ScriptHeartbeatRegistry;
-import net.runelite.client.plugins.microbot.externalplugins.PluginResources;
 import net.runelite.client.plugins.microbot.diagnostics.FlightRecorder;
 import net.runelite.client.plugins.microbot.util.antiban.SessionFatigue;
 import net.runelite.client.plugins.microbot.util.input.InputArbiter;
@@ -21,14 +15,22 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2PathApi;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.walker.recovery.CantReachTargetRecovery;
 import org.jetbrains.annotations.NotNull;
-import org.slf4j.event.Level;
 
-import java.lang.reflect.Field;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.PluginManager;
+import net.runelite.client.plugins.microbot.externalplugins.PluginResources;
+import org.slf4j.event.Level;
+import java.lang.reflect.Field;
 
 /**
  * Base class for Microbot automation scripts.
@@ -38,16 +40,161 @@ import java.util.concurrent.atomic.AtomicInteger;
 public abstract class Script extends Global implements IScript {
     static final long EXECUTOR_KEEP_ALIVE_SECONDS = 60;
     private final AtomicBoolean startAnnounced = new AtomicBoolean();
-    private final AtomicBoolean pauseWaitAnnounced = new AtomicBoolean();
 
     private void announceStart() {
-        if (ScriptPauseController.isPaused()) {
-            announcePauseWait();
-        }
         if (Microbot.getEventBus() != null && startAnnounced.compareAndSet(false, true)) {
             Microbot.getEventBus().post(new ScriptStarted(this));
         }
     }
+
+    protected ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(10,
+        new ThreadFactory() {
+            private final AtomicInteger threadNumber = new AtomicInteger(1);
+            @Override
+            public Thread newThread(@NotNull Runnable r) {
+                Thread t = new Thread(r);
+                t.setName(Script.this.getClass().getSimpleName() + "-" + threadNumber.getAndIncrement());
+                t.setDaemon(true);
+                return t;
+            }
+        }) {
+            {
+                setKeepAliveTime(EXECUTOR_KEEP_ALIVE_SECONDS, TimeUnit.SECONDS);
+                allowCoreThreadTimeOut(true);
+                setRemoveOnCancelPolicy(true);
+            }
+
+            @Override
+            public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay,
+                    long delay, TimeUnit unit) {
+                // Announce before a zero-delay loop can report a terminal supply failure.
+                announceStart();
+                return super.scheduleWithFixedDelay(command, initialDelay, delay, unit);
+            }
+
+            @Override
+            public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay,
+                    long period, TimeUnit unit) {
+                announceStart();
+                return super.scheduleAtFixedRate(command, initialDelay, period, unit);
+            }
+        };
+    protected ScheduledFuture<?> scheduledFuture;
+    protected ScheduledFuture<?> mainScheduledFuture;
+
+    /**
+     * Indicates whether the main scheduled script loop is still active.
+     */
+    public boolean isRunning() {
+        return mainScheduledFuture != null && !mainScheduledFuture.isDone();
+    }
+
+    @Getter
+    protected static WorldPoint initialPlayerLocation;
+
+    /**
+     * Cancel scheduled tasks, clear shared state, and reset helpers.
+     * Safe to call multiple times; no-ops if already shut down.
+     */
+    public void shutdown() {
+        startAnnounced.set(false);
+        ScriptHeartbeatRegistry.remove(this.getClass().getName());
+        if (mainScheduledFuture != null && !mainScheduledFuture.isDone()) {
+            mainScheduledFuture.cancel(true);
+            Rs2PathApi.exit();
+            if (Microbot.getClientThread().scheduledFuture != null)
+                Microbot.getClientThread().scheduledFuture.cancel(true);
+            initialPlayerLocation = null;
+            // Backstop for a script stopped between a hold and its release. Fires inconsistently:
+            // most scripts catch-and-continue without reaching here.
+            Rs2Keyboard.releaseHeldKeys();
+            Microbot.pauseAllScripts.set(false);
+            CantReachTargetRecovery.reset();
+            Rs2Walker.disableTeleports = false;
+            Microbot.getSpecialAttackConfigs().reset();
+        }
+        if (scheduledFuture != null && !scheduledFuture.isDone()) {
+            scheduledFuture.cancel(true);
+        }
+    }
+
+    /**
+     * Default pre-loop guard invoked by script schedulers.
+     * Returns {@code false} to pause a loop when a blocking event is executing, scripts are paused,
+     * tutorial island is incomplete, or the current thread is interrupted.
+     */
+    public boolean run() {
+        ScriptHeartbeatRegistry.recordHeartbeat(this.getClass().getName());
+
+        if (Microbot.isLoggedIn() && !SessionFatigue.isActive()) {
+            SessionFatigue.startSession();
+        }
+
+        if (Microbot.isLoggedIn() && !Rs2Player.hasCompletedTutorialIsland())
+            return true;
+
+        if (Rs2Player.hasCompletedTutorialIsland() && Microbot.getBlockingEventManager().shouldBlockAndProcess()) {
+            // A blocking event was found & is executing
+            return false;
+        }
+        // The arbiter keeps its own flag, so a takeover idles every script through the gate that
+        // already exists, cancelling nothing.
+        boolean humanOwnsInput = InputArbiter.isHuman();
+        if (humanOwnsInput) {
+            // A held key is not gesture-scoped, so InputLoop cannot unwind it.
+            Rs2Keyboard.releaseHeldKeys();
+        }
+        if (Microbot.pauseAllScripts.get() || humanOwnsInput)
+            return false;
+        if (Thread.currentThread().isInterrupted())
+            return false;
+
+        if (Microbot.isLoggedIn()) {
+            // Run toggle intentionally NOT done here — the in-game settings already handle
+            // auto-run, and re-enabling it programmatically is a detectable automation marker.
+            if (Microbot.useStaminaPotsIfNeeded && Rs2Player.isMoving()) {
+                Rs2Inventory.useRestoreEnergyItem();
+            }
+            Microbot.getConfigManager().setConfiguration(MicrobotConfig.configGroup, MicrobotConfig.keyEnableAutoRunOn, Microbot.enableAutoRunOn);
+            Microbot.getConfigManager().setConfiguration(MicrobotConfig.configGroup, MicrobotConfig.keyUseStaminaPotsIfNeeded, Microbot.useStaminaPotsIfNeeded);
+        }
+        return true;
+    }
+
+    protected void trace(String key, Object value) {
+        String name = getClass().getName();
+        FlightRecorder.trace(name.substring(name.lastIndexOf('.') + 1) + "." + key, value);
+    }
+
+    /**
+     * Interfaces during which the automatic run toggle must not click: chat dialogues, banks, shops,
+     * the Grand Exchange and skilling/production menus.
+     */
+    private static final int[] AUTO_RUN_BLOCKING_INTERFACES = {
+            InterfaceID.CHAT_LEFT, InterfaceID.CHAT_RIGHT, InterfaceID.CHATMENU,
+            InterfaceID.OBJECTBOX, InterfaceID.OBJECTBOX_DOUBLE, InterfaceID.LEVELUP_DISPLAY,
+            InterfaceID.BANKMAIN, InterfaceID.BANKPIN_KEYPAD, InterfaceID.BANK_DEPOSITBOX,
+            InterfaceID.SHOPMAIN, InterfaceID.GE_OFFERS,
+            InterfaceID.SKILLMULTI, InterfaceID.SMITHING, InterfaceID.CRAFTING_GOLD, InterfaceID.SILVER_CRAFTING
+    };
+
+    /**
+     * Checks, in one client-thread call, whether any interface in {@link #AUTO_RUN_BLOCKING_INTERFACES}
+     * has a visible root widget.
+     *
+     * @return {@code true} if one is open, or if the client thread couldn't answer (so auto-run skips the click)
+     */
+    static boolean isBlockingInterfaceOpen() {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            for (int groupId : AUTO_RUN_BLOCKING_INTERFACES) {
+                Widget root = Microbot.getClient().getWidget(groupId, 0);
+                if (root != null && !root.isHidden()) return true;
+            }
+            return false;
+        }).orElse(true);
+    }
+
+    private final AtomicBoolean pauseWaitAnnounced = new AtomicBoolean();
 
     private void announcePauseWait() {
         if (pauseWaitAnnounced.compareAndSet(false, true)) {
@@ -106,34 +253,12 @@ public abstract class Script extends Global implements IScript {
         }
         return false;
     }
-
-    protected ScheduledExecutorService scheduledExecutorService = PluginResources.registerExecutor(
-        getClass().getClassLoader(), new ScriptScheduledExecutor(10,
-        new ThreadFactory() {
-            private final AtomicInteger threadNumber = new AtomicInteger(1);
-            @Override
-            public Thread newThread(@NotNull Runnable r) {
-                Thread t = new Thread(r);
-                t.setName(Script.this.getClass().getSimpleName() + "-" + threadNumber.getAndIncrement());
-                t.setDaemon(true);
-                return t;
-            }
-        }, this::announceStart));
-    protected ScheduledFuture<?> scheduledFuture;
-    protected ScheduledFuture<?> mainScheduledFuture;
     private final Object lifecycleLock = new Object();
     private volatile boolean disposed;
     private boolean heartbeatRecorded;
 
     protected Script() {
         PluginResources.registerScript(this);
-    }
-
-    /**
-     * Indicates whether the main scheduled script loop is still active.
-     */
-    public boolean isRunning() {
-        return !disposed && mainScheduledFuture != null && !mainScheduledFuture.isDone();
     }
 
     /** Permanently dispose this instance after its plugin has stopped. */
@@ -157,128 +282,4 @@ public abstract class Script extends Global implements IScript {
         return scheduledExecutorService;
     }
 
-    @Getter
-    protected static WorldPoint initialPlayerLocation;
-
-    /**
-     * Cancel scheduled tasks, clear shared state, and reset helpers.
-     * Safe to call multiple times; no-ops if already shut down.
-     */
-    public void shutdown() {
-        startAnnounced.set(false);
-        pauseWaitAnnounced.set(false);
-        synchronized (lifecycleLock) {
-            ScriptHeartbeatRegistry.remove(this.getClass().getName());
-            heartbeatRecorded = false;
-        }
-        if (mainScheduledFuture != null && !mainScheduledFuture.isDone()) {
-            mainScheduledFuture.cancel(true);
-            Rs2PathApi.exit();
-            if (Microbot.getClientThread().scheduledFuture != null)
-                Microbot.getClientThread().scheduledFuture.cancel(true);
-            initialPlayerLocation = null;
-            // Backstop for a script stopped between a hold and its release. Fires inconsistently:
-            // most scripts catch-and-continue without reaching here.
-            Rs2Keyboard.releaseHeldKeys();
-            Microbot.pauseAllScripts.set(false);
-            CantReachTargetRecovery.reset();
-            Rs2Walker.disableTeleports = false;
-            Microbot.getSpecialAttackConfigs().reset();
-        }
-        if (scheduledFuture != null && !scheduledFuture.isDone()) {
-            scheduledFuture.cancel(true);
-        }
-    }
-
-    /**
-     * Default pre-loop guard invoked by script schedulers.
-     * Returns {@code false} to pause a loop when a blocking event is executing, scripts are paused,
-     * tutorial island is incomplete, or the current thread is interrupted.
-     * When logged in, it also turns run on if auto-run is enabled, energy is above
-     * {@link Microbot#runEnergyThreshold} and no blocking interface is open (see {@link #isBlockingInterfaceOpen()}).
-     */
-    public boolean run() {
-        synchronized (lifecycleLock) {
-            if (disposed || Thread.currentThread().isInterrupted()) {
-                return false;
-            }
-            ScriptHeartbeatRegistry.recordHeartbeat(this.getClass().getName());
-            heartbeatRecorded = true;
-        }
-
-        // Do not enter script logic while the user has the game. Plugin lifecycle and state remain intact.
-        if (ScriptPauseController.isPaused()) {
-            announcePauseWait();
-            return false;
-        }
-
-        if (Microbot.isLoggedIn() && !SessionFatigue.isActive()) {
-            SessionFatigue.startSession();
-        }
-
-        if (Microbot.isLoggedIn() && !Rs2Player.hasCompletedTutorialIsland())
-            return true;
-
-        if (Rs2Player.hasCompletedTutorialIsland() && Microbot.getBlockingEventManager().shouldBlockAndProcess()) {
-            // A blocking event was found & is executing
-            return false;
-        }
-        // The arbiter keeps its own flag, so a takeover idles every script through the gate that
-        // already exists, cancelling nothing.
-        boolean humanOwnsInput = InputArbiter.isHuman();
-        if (humanOwnsInput) {
-            // A held key is not gesture-scoped, so InputLoop cannot unwind it.
-            Rs2Keyboard.releaseHeldKeys();
-        }
-        if (Microbot.pauseAllScripts.get() || humanOwnsInput)
-            return false;
-        if (Thread.currentThread().isInterrupted())
-            return false;
-
-        if (Microbot.isLoggedIn()) {
-            boolean hasRunEnergy = Microbot.getClientThread().runOnClientThreadOptional(() -> Microbot.getClient().getEnergy()).orElse(0) > Microbot.runEnergyThreshold;
-            // Clicking the run orb mid-interface steals focus from the script's own dialogue/bank/production flow.
-            if (Microbot.enableAutoRunOn && hasRunEnergy && !isBlockingInterfaceOpen())
-                Rs2Player.toggleRunEnergy(true);
-            if (!hasRunEnergy && Microbot.useStaminaPotsIfNeeded && Rs2Player.isMoving()) {
-                Rs2Inventory.useRestoreEnergyItem();
-            }
-            Microbot.getConfigManager().setConfiguration(MicrobotConfig.configGroup, MicrobotConfig.keyEnableAutoRunOn, Microbot.enableAutoRunOn);
-            Microbot.getConfigManager().setConfiguration(MicrobotConfig.configGroup, MicrobotConfig.keyUseStaminaPotsIfNeeded, Microbot.useStaminaPotsIfNeeded);
-        }
-        return true;
-    }
-
-    protected void trace(String key, Object value) {
-        String name = getClass().getName();
-        FlightRecorder.trace(name.substring(name.lastIndexOf('.') + 1) + "." + key, value);
-    }
-
-    /**
-     * Interfaces during which the automatic run toggle must not click: chat dialogues, banks, shops,
-     * the Grand Exchange and skilling/production menus.
-     */
-    private static final int[] AUTO_RUN_BLOCKING_INTERFACES = {
-            InterfaceID.CHAT_LEFT, InterfaceID.CHAT_RIGHT, InterfaceID.CHATMENU,
-            InterfaceID.OBJECTBOX, InterfaceID.OBJECTBOX_DOUBLE, InterfaceID.LEVELUP_DISPLAY,
-            InterfaceID.BANKMAIN, InterfaceID.BANKPIN_KEYPAD, InterfaceID.BANK_DEPOSITBOX,
-            InterfaceID.SHOPMAIN, InterfaceID.GE_OFFERS,
-            InterfaceID.SKILLMULTI, InterfaceID.SMITHING, InterfaceID.CRAFTING_GOLD, InterfaceID.SILVER_CRAFTING
-    };
-
-    /**
-     * Checks, in one client-thread call, whether any interface in {@link #AUTO_RUN_BLOCKING_INTERFACES}
-     * has a visible root widget.
-     *
-     * @return {@code true} if one is open, or if the client thread couldn't answer (so auto-run skips the click)
-     */
-    static boolean isBlockingInterfaceOpen() {
-        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            for (int groupId : AUTO_RUN_BLOCKING_INTERFACES) {
-                Widget root = Microbot.getClient().getWidget(groupId, 0);
-                if (root != null && !root.isHidden()) return true;
-            }
-            return false;
-        }).orElse(true);
-    }
 }

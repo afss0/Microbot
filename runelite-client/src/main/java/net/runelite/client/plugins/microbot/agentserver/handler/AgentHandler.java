@@ -23,7 +23,7 @@ public abstract class AgentHandler implements HttpHandler {
 	private static final String AUTH_HEADER = "X-Agent-Token";
 
 	private static volatile Supplier<String> tokenSupplier = () -> null;
-	private static final ThreadLocal<String> requestBody = new ThreadLocal<>();
+	private static volatile boolean allowRemoteAccess = false;
 
 	protected final Gson gson;
 
@@ -33,6 +33,10 @@ public abstract class AgentHandler implements HttpHandler {
 
 	public static void setTokenSupplier(Supplier<String> supplier) {
 		tokenSupplier = supplier != null ? supplier : () -> null;
+	}
+
+	public static void setAllowRemoteAccess(boolean allow) {
+		allowRemoteAccess = allow;
 	}
 
 	public abstract String getPath();
@@ -51,7 +55,7 @@ public abstract class AgentHandler implements HttpHandler {
 		}
 
 		String host = exchange.getRequestHeaders().getFirst("Host");
-		if (host == null || !isLoopbackHost(host)) {
+		if (host == null || (!allowRemoteAccess && !isLoopbackHost(host))) {
 			sendOpaqueNotFound(exchange);
 			return;
 		}
@@ -65,7 +69,6 @@ public abstract class AgentHandler implements HttpHandler {
 			}
 		}
 
-		long started = System.nanoTime();
 		try {
 			handleRequest(exchange);
 		} catch (BadRequestException e) {
@@ -78,12 +81,6 @@ public abstract class AgentHandler implements HttpHandler {
 			}
 			log.error("Error handling {}", exchange.getRequestURI(), e);
 			sendErrorResponse(exchange, 500, "Internal server error: " + e.getMessage());
-		} finally {
-			if (AgentTrace.isEnabled()) {
-				AgentTrace.record(exchange.getRequestMethod(), exchange.getRequestURI().toString(),
-						exchange.getResponseCode(), (System.nanoTime() - started) / 1_000_000, requestBody.get());
-			}
-			requestBody.remove();
 		}
 	}
 
@@ -222,7 +219,6 @@ public abstract class AgentHandler implements HttpHandler {
 			throw new BadRequestException("Request body too large");
 		}
 		String body = new String(bodyBytes, StandardCharsets.UTF_8);
-		requestBody.set(body);
 		Map<String, Object> parsed;
 		try {
 			parsed = gson.fromJson(body, LinkedHashMap.class);

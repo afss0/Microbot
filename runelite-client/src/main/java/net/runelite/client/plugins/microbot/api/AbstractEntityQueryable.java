@@ -59,10 +59,7 @@ public abstract class AbstractEntityQueryable<
         }
 
         this.source = this.source
-                .filter(o -> {
-                    WorldPoint loc = o.getWorldLocation();
-                    return loc != null && loc.distanceTo(playerLoc) <= distance;
-                });
+                .filter(o -> o.getWorldLocation() != null && o.getWorldLocation().distanceTo(playerLoc) <= distance);
 
         return (Q) this;
     }
@@ -76,10 +73,7 @@ public abstract class AbstractEntityQueryable<
         }
 
         this.source = this.source
-                .filter(o -> {
-                    WorldPoint loc = o.getWorldLocation();
-                    return loc != null && loc.distanceTo(anchor) <= distance;
-                });
+                .filter(o -> o.getWorldLocation().distanceTo(anchor) <= distance);
 
         return (Q) this;
     }
