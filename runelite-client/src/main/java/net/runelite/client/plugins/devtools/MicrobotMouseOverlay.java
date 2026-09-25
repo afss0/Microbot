@@ -5,6 +5,7 @@ import java.util.LinkedList;
 import net.runelite.api.Client;
 import net.runelite.api.Point;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.mousesync.MouseSyncPlugin;
 import net.runelite.client.plugins.microbot.util.input.PointerState;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
@@ -54,7 +55,7 @@ public class MicrobotMouseOverlay extends Overlay {
 
     @Override
     public Dimension render(Graphics2D g) {
-        Point cursor = botCursorPosition();
+        Point cursor = crosshairPosition();
         if (plugin.getMouseMovement().isActive() && cursor != null) {
             if (!Microbot.getMouse().getTimer().isRunning()) {
                 Microbot.getMouse().getPoints().clear();
@@ -204,6 +205,29 @@ public class MicrobotMouseOverlay extends Overlay {
     }
 
     static Point botCursorPosition() {
+        return PointerState.hasBotPoint() ? PointerState.lastBotPoint() : null;
+    }
+
+    /**
+     * Crosshair source: the bot's own point while MouseSync holds input disabled
+     * (the bot owns the cursor), otherwise the live pointer — which MouseSync's
+     * cursor tracker and the real canvas events keep on the user's physical mouse.
+     * Drawing {@link #botCursorPosition()} unconditionally froze the crosshair at
+     * the bot's last emit, because nothing ever writes {@code lastBotPoint} from
+     * real input ({@code PointerState.setFromReal} only touches the live position).
+     */
+    static Point crosshairPosition() {
+        return crosshairPosition(Microbot.getMouseSyncPlugin());
+    }
+
+    static Point crosshairPosition(MouseSyncPlugin sync) {
+        if (sync != null && sync.isInputDisabled() && PointerState.hasBotPoint()) {
+            return PointerState.lastBotPoint();
+        }
+        Point live = PointerState.get();
+        if (live.getX() != -1 || live.getY() != -1) {
+            return live;
+        }
         return PointerState.hasBotPoint() ? PointerState.lastBotPoint() : null;
     }
 }

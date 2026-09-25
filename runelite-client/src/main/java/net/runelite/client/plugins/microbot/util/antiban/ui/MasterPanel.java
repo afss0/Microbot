@@ -62,6 +62,7 @@ public class MasterPanel extends PluginPanel {
     MousePanel mousePanel = new MousePanel();
     MicroBreakPanel microBreakPanel = new MicroBreakPanel();
     CooldownPanel cooldownPanel = new CooldownPanel();
+    WeatherPanel weatherPanel = new WeatherPanel();
     JButton resetButton = new JButton("Reset");
     private int xPosition = 0;
     private int xVelocity = 1; // Change this value to control the speed of movement
@@ -79,6 +80,7 @@ public class MasterPanel extends PluginPanel {
         cardPanel.addPanel(mousePanel, "Mouse");
         cardPanel.addPanel(microBreakPanel, "MicroBreak");
         cardPanel.addPanel(cooldownPanel, "Cooldown");
+        cardPanel.addPanel(weatherPanel, "Weather");
 
         // Create the NavigationPanel and pass the CardPanel to it
         NavigationPanel navigationPanel = new NavigationPanel(cardPanel);
@@ -194,6 +196,7 @@ public class MasterPanel extends PluginPanel {
         mousePanel.updateValues();
         microBreakPanel.updateValues();
         cooldownPanel.updateValues();
+        weatherPanel.updateValues();
 
         if (!Microbot.isLoggedIn())
             return;
