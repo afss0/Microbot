@@ -3,8 +3,6 @@ package net.runelite.client.plugins.microbot;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.gameval.InterfaceID;
-import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.agentserver.handler.ScriptHeartbeatRegistry;
 import net.runelite.client.plugins.microbot.diagnostics.FlightRecorder;
@@ -25,6 +23,8 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.Widget;
 
 /**
  * Base class for Microbot automation scripts.
@@ -116,8 +116,6 @@ public abstract class Script extends Global implements IScript {
      * Default pre-loop guard invoked by script schedulers.
      * Returns {@code false} to pause a loop when a blocking event is executing, scripts are paused,
      * tutorial island is incomplete, or the current thread is interrupted.
-     * When logged in, it also turns run on if auto-run is enabled, energy is above
-     * {@link Microbot#runEnergyThreshold} and no blocking interface is open (see {@link #isBlockingInterfaceOpen()}).
      */
     public boolean run() {
         ScriptHeartbeatRegistry.recordHeartbeat(this.getClass().getName());
@@ -146,11 +144,9 @@ public abstract class Script extends Global implements IScript {
             return false;
 
         if (Microbot.isLoggedIn()) {
-            boolean hasRunEnergy = Microbot.getClientThread().runOnClientThreadOptional(() -> Microbot.getClient().getEnergy()).orElse(0) > Microbot.runEnergyThreshold;
-            // Clicking the run orb mid-interface steals focus from the script's own dialogue/bank/production flow.
-            if (Microbot.enableAutoRunOn && hasRunEnergy && !isBlockingInterfaceOpen())
-                Rs2Player.toggleRunEnergy(true);
-            if (!hasRunEnergy && Microbot.useStaminaPotsIfNeeded && Rs2Player.isMoving()) {
+            // Run toggle intentionally NOT done here — the in-game settings already handle
+            // auto-run, and re-enabling it programmatically is a detectable automation marker.
+            if (Microbot.useStaminaPotsIfNeeded && Rs2Player.isMoving()) {
                 Rs2Inventory.useRestoreEnergyItem();
             }
             Microbot.getConfigManager().setConfiguration(MicrobotConfig.configGroup, MicrobotConfig.keyEnableAutoRunOn, Microbot.enableAutoRunOn);
@@ -191,4 +187,5 @@ public abstract class Script extends Global implements IScript {
             return false;
         }).orElse(true);
     }
+
 }

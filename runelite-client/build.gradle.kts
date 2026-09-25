@@ -190,6 +190,47 @@ tasks.register<Test>("runTests") {
     }
 }
 
+tasks.register<Test>("runUnitTests") {
+    group = "verification"
+    description = "Run unit tests only (no client, no login) — safe for CI"
+
+    // ClientThreadGuardrailTest scans compiled .class files under runelite-{api,client}/build,
+    // so make sure the main sources are compiled before the test JVM forks.
+    dependsOn(":client:compileJava")
+
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+
+    jvmArgs(
+        "-Dfile.encoding=UTF-8",
+        "-Duser.timezone=Europe/Brussels",
+        "-ea"
+    )
+
+    // Forward the baseline-regenerate flags to the test JVM so contributors can run
+    // `./gradlew :client:runUnitTests -Dmicrobot.guardrail.regenerate-baseline=true` ad-hoc.
+    System.getProperty("microbot.guardrail.regenerate-baseline")?.let {
+        systemProperty("microbot.guardrail.regenerate-baseline", it)
+    }
+    System.getProperty("microbot.queryable-guardrail.regenerate-baseline")?.let {
+        systemProperty("microbot.queryable-guardrail.regenerate-baseline", it)
+    }
+
+    exclude("**/Rs2ActorModelIntegrationTest.class")
+    exclude("**/Rs2WalkerIntegrationTest.class")
+    exclude("**/Rs2ReflectionGroundItemActionsIntegrationTest.class")
+    exclude("**/threadsafety/ClientThreadScannerTest.class")
+    exclude("**/ScreenshotHandlerTest.class")
+
+    useJUnit()
+
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
+
 tasks.register<JavaExec>("exportLocalPlannerComparison") {
     group = "verification"
     description = "Export deterministic local planner results for the opt-in upstream comparison harness"
@@ -233,53 +274,6 @@ tasks.register<JavaExec>("exportEmbeddedUpstreamPlannerComparison") {
     }
 
     outputs.upToDateWhen { false }
-}
-
-tasks.register<Test>("runUnitTests") {
-    group = "verification"
-    description = "Run unit tests only (no client, no login) — safe for CI"
-
-    // ClientThreadGuardrailTest scans compiled .class files under runelite-{api,client}/build,
-    // so make sure the main sources are compiled before the test JVM forks.
-    dependsOn(":client:compileJava")
-
-    testClassesDirs = sourceSets.test.get().output.classesDirs
-    classpath = sourceSets.test.get().runtimeClasspath
-
-    jvmArgs(
-        "-Dfile.encoding=UTF-8",
-        "-Duser.timezone=Europe/Brussels",
-        "-ea"
-    )
-
-    // Forward the baseline-regenerate flags to the test JVM so contributors can run
-    // `./gradlew :client:runUnitTests -Dmicrobot.guardrail.regenerate-baseline=true` ad-hoc.
-    System.getProperty("microbot.guardrail.regenerate-baseline")?.let {
-        systemProperty("microbot.guardrail.regenerate-baseline", it)
-    }
-    System.getProperty("microbot.queryable-guardrail.regenerate-baseline")?.let {
-        systemProperty("microbot.queryable-guardrail.regenerate-baseline", it)
-    }
-
-    exclude("**/Rs2ActorModelIntegrationTest.class")
-    exclude("**/Rs2WalkerIntegrationTest.class")
-    exclude("**/Rs2ReflectionGroundItemActionsIntegrationTest.class")
-    exclude("**/threadsafety/ClientThreadScannerTest.class")
-    exclude("**/ScreenshotHandlerTest.class")
-
-    useJUnit()
-
-    testLogging {
-        events("passed", "skipped", "failed")
-        showStandardStreams = true
-        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-    }
-}
-
-gradle.taskGraph.whenReady {
-    if (gradle.startParameter.taskNames.any { it == ":client:test" || it == "client:test" }) {
-        throw GradleException(":client:test is disabled and runs no tests. Use :client:runUnitTests (it accepts --tests).")
-    }
 }
 
 tasks.register<Test>("regenerateClientThreadGuardrailBaseline") {
@@ -460,6 +454,22 @@ dependencies {
     testImplementation(libs.okhttp.mockserver)
 }
 
+// ── Build number management ────────────────────────────────────────────────
+val buildNumberFile = rootProject.file("build-number.txt")
+
+fun getAndIncrementBuildNumber(): Int {
+    val current = if (buildNumberFile.exists()) {
+        buildNumberFile.readText().trim().toIntOrNull() ?: 0
+    } else {
+        0
+    }
+    buildNumberFile.writeText("${current + 1}")
+    return current + 1
+}
+
+val buildNumber = getAndIncrementBuildNumber()
+val buildNumberPadded = String.format("b%04d", buildNumber)
+
 val shadowJar = tasks.register<Jar>("shadowJar") {
     dependsOn(configurations.runtimeClasspath)
     manifest {
@@ -486,7 +496,7 @@ val shadowJar = tasks.register<Jar>("shadowJar") {
 
     group = BasePlugin.BUILD_GROUP
     archiveClassifier = "shadow"
-    archiveFileName = project.name + "-" + project.version + "-shaded.jar"
+    archiveFileName = "microbot_afss0-" + project.version + "-" + buildNumberPadded + "-shaded.jar"
 }
 tasks.assemble { dependsOn(shadowJar) }
 
@@ -571,7 +581,7 @@ val microbotReleaseJar = tasks.register<Copy>("microbotReleaseJar") {
     dependsOn(shadowJar)
     from(shadowJar.flatMap { it.archiveFile })
     into(layout.buildDirectory.dir("libs"))
-    rename { "microbot-${microbotVersionProvider.get()}.jar" }
+    rename { "microbot_afss0-${microbotVersionProvider.get()}-${buildNumberPadded}.jar" }
 }
 
 tasks.assemble { dependsOn(microbotReleaseJar) }

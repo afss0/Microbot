@@ -56,124 +56,21 @@ public class TelemetryClient
 
 	void submitTelemetry()
 	{
-		HttpUrl url = apiBase.newBuilder()
-			.addPathSegment("telemetry")
-			.build();
-
-		Request request = new Request.Builder()
-			.url(url)
-			.post(RequestBody.create(RuneLiteAPI.JSON, gson.toJson(buildTelemetry())))
-			.build();
-
-		okHttpClient.newCall(request).enqueue(new Callback()
-		{
-			@Override
-			public void onFailure(Call call, IOException e)
-			{
-				log.debug("Error submitting telemetry", e);
-			}
-
-			@Override
-			public void onResponse(Call call, Response response)
-			{
-				log.debug("Submitted telemetry");
-				response.close();
-			}
-		});
+		return;
 	}
 
 	void submitVmErrors(File logsDir)
 	{
-		try
-		{
-			long yesterday = System.currentTimeMillis() - Duration.ofDays(1).toMillis();
-			for (File f : logsDir.listFiles())
-			{
-				if (!f.getName().startsWith("jvm_crash_") || !f.getName().endsWith(".log") // jvm_crash_pid_12345.log
-					|| f.getName().endsWith("_r.log") // avoid sending logs multiple times
-					|| f.lastModified() < yesterday)
-				{
-					continue;
-				}
-
-				String hsErr = Files.readString(f.toPath());
-
-				String destName = f.getName().substring(0, f.getName().length() - 4) + "_r.log";
-				File dest = new File(logsDir, destName);
-				if (!f.renameTo(dest))
-				{
-					continue;
-				}
-
-				// strip username and home directory from the error log
-				String username = System.getProperty("user.name");
-				String home = System.getProperty("user.home");
-				hsErr = hsErr
-					.replace(username, "%USERNAME%")
-					.replace(home, "%HOME%");
-
-				submitError("vm crash", hsErr, Collections.emptyMap());
-			}
-		}
-		catch (Exception ex)
-		{
-			log.error("error reporting errors", ex);
-		}
+		return;
 	}
 
 	public void submitError(String type, String error, Map<String, String> params)
 	{
-		HttpUrl.Builder urlBuilder = apiBase.newBuilder()
-			.addPathSegment("telemetry")
-			.addPathSegment("error")
-			.addQueryParameter("type", type)
-			.addQueryParameter("osname", System.getProperty("os.name"))
-			.addQueryParameter("osver", System.getProperty("os.version"))
-			.addQueryParameter("osarch", System.getProperty("os.arch"))
-			.addQueryParameter("javaversion", System.getProperty("java.version"))
-			.addQueryParameter("javavendor", System.getProperty("java.vendor"));
-		params.forEach(urlBuilder::addQueryParameter);
-
-		HttpUrl url = urlBuilder.build();
-
-		Request request = new Request.Builder()
-			.url(url)
-			.post(RequestBody.create(MediaType.get("text/plain"), error))
-			.build();
-
-		okHttpClient.newCall(request).enqueue(new Callback()
-		{
-			@Override
-			public void onFailure(Call call, IOException e)
-			{
-				log.debug("Error submitting error", e);
-			}
-
-			@Override
-			public void onResponse(Call call, Response response)
-			{
-				log.debug("Submitted error");
-				response.close();
-			}
-		});
+		return;
 	}
 
 	private static Telemetry buildTelemetry()
 	{
-		Telemetry telemetry = new Telemetry();
-		telemetry.setJavaVendor(System.getProperty("java.vendor"));
-		telemetry.setJavaVersion(System.getProperty("java.version"));
-		telemetry.setOsName(System.getProperty("os.name"));
-		telemetry.setOsVersion(System.getProperty("os.version"));
-		telemetry.setOsArch(System.getProperty("os.arch"));
-		telemetry.setLauncherVersion(System.getProperty("runelite.launcher.version"));
-		OperatingSystemMXBean operatingSystemMXBean = ManagementFactory.getOperatingSystemMXBean();
-		if (operatingSystemMXBean instanceof com.sun.management.OperatingSystemMXBean)
-		{
-			long totalPhysicalMemorySize = ((com.sun.management.OperatingSystemMXBean) operatingSystemMXBean).getTotalPhysicalMemorySize();
-			telemetry.setTotalMemory(totalPhysicalMemorySize);
-		}
-		telemetry.setJxAccount(System.getenv("JX_SESSION_ID") != null && System.getenv("JX_CHARACTER_ID") != null);
-		return telemetry;
+		return null;
 	}
 }

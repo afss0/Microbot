@@ -3,6 +3,8 @@ package net.runelite.client.plugins.microbot.util.mouse;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Point;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.mousesync.MouseSyncPlugin;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.input.AwtEmitter;
 import net.runelite.client.plugins.microbot.util.input.InputArbiter;
 import net.runelite.client.plugins.microbot.util.input.InputLoop;
@@ -22,15 +24,14 @@ import static net.runelite.client.plugins.microbot.util.Global.sleep;
 
 @Slf4j
 public class VirtualMouse extends Mouse {
-
-    public static final int CLICK_HOLD_MIN_MS = 55;
-    public static final int CLICK_HOLD_MAX_MS = 140;
-    public static final int QUICK_CLICK_HOLD_MIN_MS = 30;
-    public static final int QUICK_CLICK_HOLD_MAX_MS = 65;
-    public static final int QUICK_CLICK_SETTLE_MIN_MS = 10;
-    public static final int QUICK_CLICK_SETTLE_MAX_MS = 25;
-
     private final ScheduledExecutorService scheduledExecutorService;
+
+    /**
+     * When true, a top-level click or drag is in progress. Prevents
+     * internal NaturalMouse intermediate moves from triggering
+     * MouseSync start/end independently.
+     */
+    private volatile boolean interactionInProgress = false;
 
     @Inject
     public VirtualMouse() {
@@ -52,35 +53,46 @@ public class VirtualMouse extends Mouse {
     }
 
     private void handleClick(InputLoop.Emit emit, Point point, boolean rightClick) {
-        handleClick(emit, point, rightClick, false, () -> { });
-    }
-
-    private void handleClick(InputLoop.Emit emit, Point point, boolean rightClick, boolean quick, Runnable beforePress) {
         int button = rightClick ? MouseEvent.BUTTON3 : MouseEvent.BUTTON1;
         // A human clicking where the pointer already is sends no fresh MOVED, so emit one only
         // when it is not there, which happens when NaturalMouse was skipped. No ENTERED/EXITED:
         // no human click sends those, and the EXITED wrote (-1,-1) into the tracked position.
         if (!PointerState.isAt(point.getX(), point.getY())) {
             emit.move(point.getX(), point.getY());
-            if (quick) {
-                sleep(Rs2Random.logNormalBounded(QUICK_CLICK_SETTLE_MIN_MS, QUICK_CLICK_SETTLE_MAX_MS));
-            }
         }
-        beforePress.run();
         emit.press(point.getX(), point.getY(), button);
-        sleep(quick
-                ? Rs2Random.logNormalBounded(QUICK_CLICK_HOLD_MIN_MS, QUICK_CLICK_HOLD_MAX_MS)
-                : Rs2Random.logNormalBounded(CLICK_HOLD_MIN_MS, CLICK_HOLD_MAX_MS));
         emit.release(point.getX(), point.getY(), button);
         emit.click(point.getX(), point.getY(), button);
         setLastClick(point);
     }
 
     private boolean shouldMoveNaturally(Point point) {
-        return point.getX() >= 0
-                && point.getY() >= 0
+        return point.getX() > 1
+                && point.getY() > 1
                 && Microbot.naturalMouse != null;
     }
+
+    // ── MouseSync helpers ──────────────────────────────────────────────
+
+    private static MouseSyncPlugin getMouseSync() {
+        return Microbot.getMouseSyncPlugin();
+    }
+
+    private void mouseSyncOnStart() {
+        MouseSyncPlugin p = getMouseSync();
+        if (p != null && p.isInputDisabled()) {
+            // Already in a bot interaction (e.g. recursive call) — don't re-enter
+            return;
+        }
+        if (p != null) p.onBotInteractionStart();
+    }
+
+    private void mouseSyncOnEnd() {
+        MouseSyncPlugin p = getMouseSync();
+        if (p != null) p.onBotInteractionEnd();
+    }
+
+    // ── Click methods ──────────────────────────────────────────────────
 
     /**
      * A gesture takes the {@link InputLoop} lock and sleeps while holding it, and neither may
@@ -97,63 +109,82 @@ public class VirtualMouse extends Mouse {
     public Mouse click(Point point, boolean rightClick) {
         if (point == null) return this;
 
-        runGesture(() -> InputLoop.run(emit -> {
-            if (shouldMoveNaturally(point)) {
-                Microbot.naturalMouse.moveTo(point.getX(), point.getY());
+        // Weather-based click error — slight offset in bad conditions
+        final Point clickPoint;
+        double errorChance = WeatherModulation.mistakeProbabilityOffset();
+        if (errorChance > 0 && Rs2Random.diceFractional(errorChance)) {
+            clickPoint = new Point(
+                    point.getX() + Rs2Random.between(-3, 3),
+                    point.getY() + Rs2Random.between(-3, 3)
+            );
+        } else {
+            clickPoint = point;
+        }
+
+        mouseSyncOnStart();
+        interactionInProgress = true;
+
+        runGesture(() -> {
+            try {
+                InputLoop.run(emit -> {
+                    if (shouldMoveNaturally(clickPoint)) {
+                        Microbot.naturalMouse.moveTo(clickPoint.getX(), clickPoint.getY());
+                    }
+                    handleClick(emit, clickPoint, rightClick);
+                });
+            } finally {
+                interactionInProgress = false;
+                mouseSyncOnEnd();
             }
-            handleClick(emit, point, rightClick);
-        }));
+        });
 
         return this;
     }
 
 
     public Mouse click(Point point, boolean rightClick, NewMenuEntry entry) {
-        return click(point, rightClick, entry, false);
-    }
-
-    @Override
-    public Mouse quickClick(Point point, NewMenuEntry entry) {
-        return click(point, false, entry, true);
-    }
-
-    private Mouse click(Point point, boolean rightClick, NewMenuEntry entry, boolean quick) {
         if (point == null) return this;
 
-        runGesture(() -> InputLoop.run(emit -> {
-            Point newPoint = point;
-            if (!quick && shouldMoveNaturally(point)) {
-                Microbot.naturalMouse.moveTo(point.getX(), point.getY());
+        mouseSyncOnStart();
+        interactionInProgress = true;
 
-                if (Rs2UiHelper.hasActor(entry)) {
-                    newPoint = retarget(Rs2UiHelper.getActorClickbox(entry.getActor()), newPoint);
+        runGesture(() -> {
+            try {
+                InputLoop.run(emit -> {
+                    Point newPoint = point;
+                    if (shouldMoveNaturally(point)) {
+                        Microbot.naturalMouse.moveTo(point.getX(), point.getY());
+
+                    if (Rs2UiHelper.hasActor(entry)) {
+                        Rectangle rectangle = Rs2UiHelper.getActorClickbox(entry.getActor());
+                        if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
+                            newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
+                            Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+                        }
+                    }
+
+                    if (Rs2UiHelper.isGameObject(entry)) {
+                        Rectangle rectangle = Rs2UiHelper.getObjectClickbox(entry.getGameObject());
+                        if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
+                            newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
+                            Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+
+                        }
+                    }
                 }
 
-                if (Rs2UiHelper.isGameObject(entry)) {
-                    newPoint = retarget(Rs2UiHelper.getObjectClickbox(entry.getGameObject()), newPoint);
-                }
+                Microbot.targetMenu = entry;
+                handleClick(emit, newPoint, rightClick);
+                });
+            } finally {
+                interactionInProgress = false;
+                mouseSyncOnEnd();
             }
-
-            handleClick(emit, newPoint, rightClick, quick, () -> Microbot.targetMenu = entry);
-        }));
+        });
 
         return this;
     }
 
-
-    static Point retarget(Rectangle clickbox, Point current) {
-        if (Rs2UiHelper.isFallbackRectangle(clickbox)) {
-            return current;
-        }
-        Rectangle clear = Rs2UiHelper.clearOfInterfaces(clickbox, Rs2UiHelper.sceneViewportBounds(),
-                Rs2UiHelper.visibleSceneOverlayBounds());
-        if (clear == null || clear.contains(Microbot.getMouse().getMousePosition())) {
-            return current;
-        }
-        Point target = Rs2UiHelper.getClickingPoint(clear, true, false);
-        Microbot.naturalMouse.moveTo(target.getX(), target.getY());
-        return target;
-    }
 
     public Mouse click(int x, int y) {
         return click(new Point(x, y), false);
@@ -164,9 +195,6 @@ public class VirtualMouse extends Mouse {
     }
 
     public Mouse click(Rectangle rectangle) {
-        if (Rs2UiHelper.isFallbackRectangle(rectangle)) {
-            return this;
-        }
         return click(Rs2UiHelper.getClickingPoint(rectangle, true), false);
     }
 
@@ -190,16 +218,27 @@ public class VirtualMouse extends Mouse {
         return click(Microbot.getClient().getMouseCanvasPosition());
     }
 
-    // NaturalMouse steps through here, so this one check also stops a trajectory mid-curve.
+    // ── Move methods ───────────────────────────────────────────────────
+
+    /**
+     * Only trigger MouseSync for standalone moves (scripts calling move
+     * directly). Moves that happen inside a NaturalMouse path during a
+     * click are internal and guarded by {@link #interactionInProgress}.
+     * NaturalMouse steps through here, so the {@link InputArbiter} check
+     * also stops a trajectory mid-curve.
+     */
     public Mouse move(Point point) {
         if (InputArbiter.isHuman()) {
             return this;
         }
-        if (AwtEmitter.heldMask() != 0 && !InputLoop.isInGesture()) {
-            return this;
+        boolean standalone = !interactionInProgress;
+        if (standalone) mouseSyncOnStart();
+        try {
+            recordTrailPoint(point);
+            AwtEmitter.moved(point.getX(), point.getY());
+        } finally {
+            if (standalone) mouseSyncOnEnd();
         }
-        recordTrailPoint(point);
-        AwtEmitter.moved(point.getX(), point.getY());
         return this;
     }
 
@@ -259,6 +298,8 @@ public class VirtualMouse extends Mouse {
         scheduledExecutorService.shutdownNow();
     }
 
+    // ── Drag ───────────────────────────────────────────────────────────
+
     private void moveTowards(Point point) {
         if (shouldMoveNaturally(point))
             Microbot.naturalMouse.moveTo(point.getX(), point.getY());
@@ -272,15 +313,24 @@ public class VirtualMouse extends Mouse {
     public Mouse drag(Point startPoint, Point endPoint) {
         if (startPoint == null || endPoint == null) return this;
 
-        runGesture(() -> InputLoop.run(emit -> {
-            moveTowards(startPoint);
-            sleep(Rs2Random.logNormalBounded(50, 80));
-            emit.press(startPoint.getX(), startPoint.getY(), MouseEvent.BUTTON1);
-            sleep(Rs2Random.logNormalBounded(80, 120));
-            moveTowards(endPoint);
-            sleep(Rs2Random.logNormalBounded(80, 120));
-            emit.release(endPoint.getX(), endPoint.getY(), MouseEvent.BUTTON1);
-        }));
+        mouseSyncOnStart();
+        interactionInProgress = true;
+        runGesture(() -> {
+            try {
+                InputLoop.run(emit -> {
+                    moveTowards(startPoint);
+                    sleep(Rs2Random.logNormalBounded(50, 80));
+                    emit.press(startPoint.getX(), startPoint.getY(), MouseEvent.BUTTON1);
+                    sleep(Rs2Random.logNormalBounded(80, 120));
+                    moveTowards(endPoint);
+                    sleep(Rs2Random.logNormalBounded(80, 120));
+                    emit.release(endPoint.getX(), endPoint.getY(), MouseEvent.BUTTON1);
+                });
+            } finally {
+                interactionInProgress = false;
+                mouseSyncOnEnd();
+            }
+        });
 
         return this;
     }
