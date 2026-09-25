@@ -23,7 +23,7 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-rootProject.name = "runelite"
+rootProject.name = "microbot_afss0"
 
 // these two have artifact ids that don't match their project directory names
 // and so they are done without includeBuild so that intellij can resolve them properly

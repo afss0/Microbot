@@ -257,10 +257,17 @@ public class Rs2BoatModel implements WorldEntity, IEntity {
             }
 
             WorldPoint playerLocation = Rs2Player.getWorldLocation();
+            if (playerLocation == null) {
+                return null;
+            }
             LocalPoint localPoint = LocalPoint.fromWorld(
                     player.getWorldView(),
                     playerLocation
             );
+
+            if (localPoint == null) {
+                return playerLocation;
+            }
 
             var mainWorldProjection = player
                     .getWorldView()
@@ -328,7 +335,14 @@ public class Rs2BoatModel implements WorldEntity, IEntity {
     public boolean clickSailButton()
     {
         var widget = Rs2Widget.getWidget(InterfaceID.SailingSidepanel.FACILITIES_ROWS);
-        var setSailButton = widget.getDynamicChildren()[0];
+        if (widget == null) {
+            return false;
+        }
+        var children = widget.getDynamicChildren();
+        if (children == null || children.length == 0) {
+            return false;
+        }
+        var setSailButton = children[0];
         return Rs2Widget.clickWidget(setSailButton);
     }
 
@@ -394,6 +408,10 @@ public class Rs2BoatModel implements WorldEntity, IEntity {
     public int getDirection(WorldPoint target)
     {
         WorldPoint current = getPlayerBoatLocation();
+        if (current == null)
+        {
+            return Heading.SOUTH.getValue();
+        }
         int deltaX = target.getX() - current.getX();
         int deltaY = target.getY() - current.getY();
 
@@ -430,9 +448,10 @@ public class Rs2BoatModel implements WorldEntity, IEntity {
                 .forceLeftClick(false);
         var worldview = Microbot.getClientThread().invoke(() -> Microbot.getClient().getLocalPlayer().getWorldView());
 
+        var topLevelView = Microbot.getClient().getTopLevelWorldView();
         if (worldview == null)
         {
-            menuEntry.setWorldViewId(Microbot.getClient().getTopLevelWorldView().getId());
+            menuEntry.setWorldViewId(topLevelView != null ? topLevelView.getId() : -1);
         }
         else
         {

@@ -6,8 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.Global;
-import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
-import net.runelite.client.plugins.microbot.util.antiban.enums.ActivityIntensity;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
+import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.SpeedManager;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.MouseInfoAccessor;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.MouseMotionFactory;
@@ -50,7 +50,6 @@ public class NaturalMouse {
     );
 
     private volatile MouseMotionFactory cachedFactory;
-    private volatile ActivityIntensity cachedIntensity;
 
     @Inject
     public NaturalMouse() {
@@ -91,31 +90,20 @@ public class NaturalMouse {
     }
 
     public MouseMotionFactory getFactory() {
-        ActivityIntensity intensity = Rs2Antiban.getActivityIntensity();
-        if (cachedFactory != null && intensity == cachedIntensity) {
+        if (cachedFactory != null) {
             return cachedFactory;
         }
-        MouseMotionFactory factory;
-        if (intensity == ActivityIntensity.VERY_LOW) {
-            log.debug("Creating average computer user motion factory");
-            factory = FactoryTemplates.createAverageComputerUserMotionFactory(nature);
-        } else if (intensity == ActivityIntensity.LOW) {
-            log.debug("Creating normal gamer motion factory");
-            factory = FactoryTemplates.createNormalGamerMotionFactory(nature);
-        } else if (intensity == ActivityIntensity.MODERATE) {
-            log.debug("Creating fast gamer motion factory");
-            factory = FactoryTemplates.createFastGamerMotionFactory(nature);
-        } else if (intensity == ActivityIntensity.HIGH) {
-            log.debug("Creating fast gamer motion factory");
-            factory = FactoryTemplates.createFastGamerMotionFactory(nature);
-        } else if (intensity == ActivityIntensity.EXTREME) {
-            log.debug("Creating super fast gamer motion factory");
-            factory = FactoryTemplates.createSuperFastGamerMotionFactory(nature);
-        } else {
-            log.debug("Default: Creating super fast gamer motion factory");
-            factory = FactoryTemplates.createSuperFastGamerMotionFactory(nature);
-        }
-        cachedIntensity = intensity;
+        // Forced slow mouse — ignore ActivityIntensity set by scripts
+        log.debug("Creating average computer user motion factory (forced slow)");
+        MouseMotionFactory factory = FactoryTemplates.createAverageComputerUserMotionFactory(nature);
+        // Apply weather speed factor: divide time by factor so lower factor = slower movement
+        SpeedManager baseManager = factory.getSpeedManager();
+        factory.setSpeedManager(distance -> {
+            var pair = baseManager.getFlowWithTime(distance);
+            double factor = WeatherModulation.combinedSpeedFactor();
+            long adjustedTime = (long) (pair.y / Math.max(0.1, factor));
+            return new Pair<>(pair.x, adjustedTime);
+        });
         cachedFactory = factory;
         return factory;
 

@@ -125,7 +125,7 @@ final class Rs2WalkerTransports {
      * Requires matching {@link WorldPoint#getPlane()} before using {@link WorldPoint#distanceTo2D} — that method only
      * compares X/Y, so same X/Y on different planes still reads as distance {@code 0} without an explicit plane check.
      */
-    private static boolean isPlayerWithinChebyshevOf(WorldPoint dest, int maxChebyshevExclusive) {
+    static boolean isPlayerWithinChebyshevOf(WorldPoint dest, int maxChebyshevExclusive) {
         if (dest == null) {
             return false;
         }
@@ -137,7 +137,7 @@ final class Rs2WalkerTransports {
     /**
      * Same-plane Chebyshev distance {@code <= maxInclusiveChebyshev} (e.g. adjacent transport uses {@code 0} for same tile).
      */
-    private static boolean isPlayerWithinChebyshevInclusive(WorldPoint dest, int maxInclusiveChebyshev) {
+    static boolean isPlayerWithinChebyshevInclusive(WorldPoint dest, int maxInclusiveChebyshev) {
         if (dest == null) {
             return false;
         }
@@ -849,7 +849,7 @@ final class Rs2WalkerTransports {
         return false;
     }
 
-    private static boolean waitForPostHandleObjectLanding(Transport transport,
+    static boolean waitForPostHandleObjectLanding(Transport transport,
                                                           WorldPoint destWait,
                                                           int maxInclusive) {
         long waitStartedAt = System.currentTimeMillis();
@@ -940,14 +940,14 @@ final class Rs2WalkerTransports {
      * @param transport the transport object to be checked and processed
      * @return true if the transport is an instance of PohTransport and its transport method executes successfully, false otherwise
      */
-    private static boolean handlePohTransport(Transport transport) {
+    static boolean handlePohTransport(Transport transport) {
         if(!(transport instanceof PohTransport)) {
             throw new IllegalStateException("handlePohTransport should not be called for non-PohTransports");
         }
         return ((PohTransport)transport).execute();
     }
 
-    private static List<String> getTransportActionOptions(String action) {
+    static List<String> getTransportActionOptions(String action) {
         if (action == null || action.isBlank()) {
             return Collections.emptyList();
         }
@@ -989,7 +989,7 @@ final class Rs2WalkerTransports {
         return Optional.empty();
     }
 
-    private static void prepareTransportObjectForInteraction(TileObject tileObject) {
+    static void prepareTransportObjectForInteraction(TileObject tileObject) {
         if (tileObject == null || tileObject.getLocalLocation() == null) {
             return;
         }
@@ -1172,7 +1172,7 @@ final class Rs2WalkerTransports {
         return !allowServerApproach;
     }
 
-    private static boolean finishHandledTransport(Transport transport) {
+    static boolean finishHandledTransport(Transport transport) {
         long handoffStartedAt = System.currentTimeMillis();
         routeState.lastTransportHandledAtMs = handoffStartedAt;
         routeState.lastTransportOriginLocation = transport != null ? transport.getOrigin() : null;
@@ -1247,7 +1247,7 @@ final class Rs2WalkerTransports {
         }
     }
 
-    private static boolean sameOrNearTransportDestination(WorldPoint a, WorldPoint b) {
+    static boolean sameOrNearTransportDestination(WorldPoint a, WorldPoint b) {
         return a != null
                 && b != null
                 && a.getPlane() == b.getPlane()
@@ -2160,7 +2160,7 @@ final class Rs2WalkerTransports {
     /** Wraps an action with {@link #recordTransportAttempt} + {@link #recordTransportResult} (seasonal JSONL, Leagues snapshot for teleports).
      * @see net.runelite.client.plugins.microbot.util.leaguetransport.Rs2LeaguesTransport
      */
-    private static boolean attemptObserved(Transport transport, BooleanSupplier action)
+    static boolean attemptObserved(Transport transport, BooleanSupplier action)
     {
         if (transport == null || action == null)
         {
@@ -2185,7 +2185,7 @@ final class Rs2WalkerTransports {
      * Seasonal handlers record attempts at their click sites so {@link Rs2LeaguesTransport#getLastTransportAttemptSnapshot}
      * matches the handler that actually ran (Leagues Area vs MoA).
      */
-    private static boolean attemptObservedWithoutAttemptRecord(Transport transport, BooleanSupplier action)
+    static boolean attemptObservedWithoutAttemptRecord(Transport transport, BooleanSupplier action)
     {
         if (transport == null || action == null)
         {
@@ -2205,7 +2205,7 @@ final class Rs2WalkerTransports {
      * Attempt recording is done inside each handler (for built-ins, {@link Rs2LeaguesTransport#tryHandleLeaguesAreaTransportResult})
      * — use {@link #attemptObservedWithoutAttemptRecord} at the call site.
      */
-    private static boolean handleSeasonalTransport(Transport transport) {
+    static boolean handleSeasonalTransport(Transport transport) {
         if (transport == null) {
             return false;
         }
@@ -2274,7 +2274,7 @@ final class Rs2WalkerTransports {
         return false;
     }
 
-    private static boolean handleSpiritTree(Transport transport) {
+    static boolean handleSpiritTree(Transport transport) {
         // Get Transport Information
         String displayInfo = transport.getDisplayInfo();
         int objectId = transport.getObjectId();
@@ -2617,7 +2617,7 @@ final class Rs2WalkerTransports {
                 || Rs2Widget.isWidgetVisible(InterfaceID.QuetzalwhistleMenu.CONTENTS);
     }
 
-    private static boolean finishQuetzalWhistleTransport(Transport transport) {
+    static boolean finishQuetzalWhistleTransport(Transport transport) {
         assert transport != null;
         WorldPoint dest = transport.getDestination();
         assert dest != null;
@@ -2721,7 +2721,7 @@ final class Rs2WalkerTransports {
         return sleepUntilTrue(() -> isPlayerWithinChebyshevOf(expectedDestination, OFFSET), 100, 8000);
     }
 
-    private static boolean handleQuetzal(Transport transport) {
+    static boolean handleQuetzal(Transport transport) {
         String displayInfo = transport.getDisplayInfo();
         if (displayInfo == null || displayInfo.isEmpty()) return false;
 
@@ -2747,7 +2747,7 @@ final class Rs2WalkerTransports {
         return false;
     }
 
-    private static boolean handleMasterScrollBook(String destination) {
+    static boolean handleMasterScrollBook(String destination) {
         boolean isMasterScrollBookOpen = sleepUntilTrue(() -> Rs2Widget.isWidgetVisible(InterfaceID.Bookofscrolls.CONTENTS), 100, 10000);
         if (!isMasterScrollBookOpen) {
             log.error("Master Scroll Book did not open within timeout period");
@@ -2769,7 +2769,7 @@ final class Rs2WalkerTransports {
         return interaction;
     }
 
-    private static boolean handleMagicCarpet(Transport transport) {
+    static boolean handleMagicCarpet(Transport transport) {
         final int flyingPoseAnimation = 6936;
         var rugMerchant = Rs2Npc.getNpc(transport.getObjectId());
         if (rugMerchant == null) return false;
@@ -2781,7 +2781,7 @@ final class Rs2WalkerTransports {
         return sleepUntilTrue(() -> Rs2Player.getPoseAnimation() != flyingPoseAnimation, 600,60000);
     }
 
-    private static boolean handleCharterShip(Transport transport) {
+    static boolean handleCharterShip(Transport transport) {
         String npcName = transport.getName();
 
         Rs2NpcModel npc = Rs2Npc.getNpc(npcName);
@@ -2939,7 +2939,7 @@ final class Rs2WalkerTransports {
         return !Rs2Widget.isHidden(MINECART_MENU_GROUP, MINECART_MENU_LIST_CHILD);
     }
 
-    private static boolean interactWithAdventureLog(Transport transport) {
+    static boolean interactWithAdventureLog(Transport transport) {
         if (transport.getDisplayInfo() == null || transport.getDisplayInfo().isEmpty()) return false;
 
         // Two menus arrive here, and they are different interfaces: spirit trees and their kin open
@@ -3023,7 +3023,7 @@ final class Rs2WalkerTransports {
         return sleepUntilTrue(() -> isPlayerWithinChebyshevOf(transport.getDestination(), OFFSET), 100, 10000);
     }
 
-    private static boolean handleGlider(Transport transport) {
+    static boolean handleGlider(Transport transport) {
         int TA_QUIR_PRIW = 9043972;
         int SINDARPOS = 9043975;
         int LEMANTO_ANDRA = 9043978;
@@ -3087,7 +3087,7 @@ final class Rs2WalkerTransports {
         }
     }
 
-    private static boolean handleFairyRing(Transport transport) {
+    static boolean handleFairyRing(Transport transport) {
 
         Rs2ItemModel startingWeapon = null;
 

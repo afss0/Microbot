@@ -15,6 +15,8 @@ Microbot is a RuneLite fork with an always-on Microbot plugin for learning, buil
 
 This repository includes my own modifications to the plugin.
 
+This repository includes my own modifications to the plugin.
+
 This README is intentionally short. Durable details live in the docs below so high-level context does not rot when implementation details move.
 
 ## Start Here
