@@ -128,8 +128,14 @@ public class Rs2Antiban {
     public static int TIMEOUT = 0;
     @Getter
     private static Activity activity;
+    /**
+     * LOCKED (fork customization): pinned to {@link ActivityIntensity#VERY_LOW} and never reassigned.
+     * Mouse speed is forced independently in {@code NaturalMouse.getFactory()} and ignores this value;
+     * the lock stops scripts, hub plugins, the dynamic-intensity feature and the UI slider from
+     * churning it (it was constantly flipping Very Low ↔ Low). See {@link #setActivityIntensity}.
+     */
     @Getter
-    private static ActivityIntensity activityIntensity;
+    private static ActivityIntensity activityIntensity = ActivityIntensity.VERY_LOW;
     @Getter
     @Setter
     private static Category category;
@@ -141,29 +147,36 @@ public class Rs2Antiban {
     public static void setActivity(@NotNull Activity activity) {
         Rs2Antiban.activity = activity;
         Rs2Antiban.category = activity.getCategory();
-        Rs2Antiban.activityIntensity = activity.getActivityIntensity();
+        // activityIntensity intentionally NOT updated here — it is locked to VERY_LOW (see
+        // setActivityIntensity). The playStyle seed below keeps using the activity's own intensity,
+        // so cooldown cadence behaves as it did before the lock.
 
         if (Rs2AntibanSettings.simulateAttentionSpan) {
             Rs2Antiban.playStyle = PlayStyle.EXTREME_AGGRESSIVE;
-            //Rs2Antiban.playStyle = activityIntensity.getPlayStyle();
         } else {
             if (Rs2Antiban.playStyle == null)
-                Rs2Antiban.playStyle = activityIntensity.getPlayStyle();
+                Rs2Antiban.playStyle = activity.getActivityIntensity().getPlayStyle();
         }
 
         if (Rs2AntibanSettings.randomIntervals) {
             Rs2Antiban.playStyle = PlayStyle.RANDOM;
         }
-        playStyle.frequency = activityIntensity.getFrequency();
-        playStyle.amplitude = activityIntensity.getAmplitude();
+        playStyle.frequency = activity.getActivityIntensity().getFrequency();
+        playStyle.amplitude = activity.getActivityIntensity().getAmplitude();
         Rs2Antiban.playStyle.resetPlayStyle();
 
 
     }
 
+    /**
+     * No-op (fork customization): the activity intensity is locked to VERY_LOW.
+     * Calls from scripts, hub plugins, the dynamic intensity feature and the UI slider are all
+     * ignored, so the value cannot churn (it was constantly flipping Very Low ↔ Low). Mouse speed
+     * is forced separately in NaturalMouse.getFactory() and ignores intensity anyway; the lock
+     * only keeps the panels and the per-activity playStyle seeding stable.
+     */
     public static void setActivityIntensity(ActivityIntensity activityIntensity) {
-        Rs2AntibanSettings.dynamicIntensity = false;
-        Rs2Antiban.activityIntensity = activityIntensity;
+        logDebug("setActivityIntensity(" + activityIntensity + ") ignored — intensity is locked to VERY_LOW");
     }
 
 
@@ -576,7 +589,7 @@ public class Rs2Antiban {
     public static void clearTransientState() {
         Rs2Antiban.playStyle = null;
         Rs2Antiban.activity = null;
-        Rs2Antiban.activityIntensity = ActivityIntensity.EXTREME;
+        // activityIntensity is locked to VERY_LOW and deliberately not reset here (see setActivityIntensity).
         Rs2Antiban.category = null;
     }
 
