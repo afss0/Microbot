@@ -29,8 +29,12 @@ public class MenuActionInfoCacheTest {
 
     private static final String INTEGER_MENU_ACTION_DESCRIPTOR =
             "(IIIIIILjava/lang/String;Ljava/lang/String;III)V";
-    private static final String CURRENT_MENU_ACTION_DESCRIPTOR =
+    /** Legacy byte-garbage shape — still supported for caches written by older injects. */
+    private static final String BYTE_MENU_ACTION_DESCRIPTOR =
             "(IIIIIILjava/lang/String;Ljava/lang/String;IIB)V";
+    /** Shape the currently pinned injected-client ships (rev241+): int garbage. */
+    private static final String CURRENT_MENU_ACTION_DESCRIPTOR =
+            INTEGER_MENU_ACTION_DESCRIPTOR;
 
     @Rule
     public TemporaryFolder tempFolder = new TemporaryFolder();
@@ -190,10 +194,11 @@ public class MenuActionInfoCacheTest {
 
     @Test
     public void normalizesGarbageWrapperToDescriptorType() {
+        // Narrowing: Integer wrapper + byte-garbage descriptor → Byte.
         Properties props = new Properties();
         props.setProperty(MenuActionInfoCache.KEY_OWNER, MenuActionInfoCacheTest.class.getName());
         props.setProperty(MenuActionInfoCache.KEY_METHOD, "markerMethod");
-        props.setProperty(MenuActionInfoCache.KEY_DESCRIPTOR, CURRENT_MENU_ACTION_DESCRIPTOR);
+        props.setProperty(MenuActionInfoCache.KEY_DESCRIPTOR, BYTE_MENU_ACTION_DESCRIPTOR);
         props.setProperty(MenuActionInfoCache.KEY_GARBAGE_KIND, "Integer");
         props.setProperty(MenuActionInfoCache.KEY_GARBAGE_VALUE, "127");
 
@@ -201,16 +206,34 @@ public class MenuActionInfoCacheTest {
 
         assertNotNull(r);
         assertEquals(Byte.valueOf((byte) 127), r.garbageValue);
+
+        // Widening: Byte wrapper + int-garbage descriptor (current client shape) → Integer.
+        props.setProperty(MenuActionInfoCache.KEY_DESCRIPTOR, INTEGER_MENU_ACTION_DESCRIPTOR);
+        props.setProperty(MenuActionInfoCache.KEY_GARBAGE_KIND, "Byte");
+        props.setProperty(MenuActionInfoCache.KEY_GARBAGE_VALUE, "5");
+
+        MenuActionAsmResolver.Resolution widened = MenuActionInfoCache.resolveProps(props, "test");
+
+        assertNotNull(widened);
+        assertEquals(Integer.valueOf(5), widened.garbageValue);
     }
 
     @Test
     public void rejectsGarbageOutsideDescriptorTypeRange() {
+        // 128 does not fit the byte-garbage descriptor.
         Properties props = new Properties();
         props.setProperty(MenuActionInfoCache.KEY_OWNER, MenuActionInfoCacheTest.class.getName());
         props.setProperty(MenuActionInfoCache.KEY_METHOD, "markerMethod");
-        props.setProperty(MenuActionInfoCache.KEY_DESCRIPTOR, CURRENT_MENU_ACTION_DESCRIPTOR);
+        props.setProperty(MenuActionInfoCache.KEY_DESCRIPTOR, BYTE_MENU_ACTION_DESCRIPTOR);
         props.setProperty(MenuActionInfoCache.KEY_GARBAGE_KIND, "Integer");
         props.setProperty(MenuActionInfoCache.KEY_GARBAGE_VALUE, "128");
+
+        assertNull(MenuActionInfoCache.resolveProps(props, "test"));
+
+        // A long that overflows the int-garbage descriptor (the shape the current client ships).
+        props.setProperty(MenuActionInfoCache.KEY_DESCRIPTOR, INTEGER_MENU_ACTION_DESCRIPTOR);
+        props.setProperty(MenuActionInfoCache.KEY_GARBAGE_KIND, "Long");
+        props.setProperty(MenuActionInfoCache.KEY_GARBAGE_VALUE, "3000000000");
 
         assertNull(MenuActionInfoCache.resolveProps(props, "test"));
     }
