@@ -34,6 +34,7 @@ import com.google.common.reflect.ClassPath;
 import com.google.common.reflect.ClassPath.ClassInfo;
 import com.google.inject.Module;
 import com.google.inject.*;
+import com.google.inject.util.Modules;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLite;
@@ -542,6 +543,28 @@ public class PluginManager {
             if (module != null)
             {
                 modules.add(module);
+            }
+
+            // Fork-compat: o upstream expoe so o modulo de servicos da dependencia
+            // (getPublicModule), mas plugins deste fork injetam a instancia do plugin
+            // dependencia (ex.: MInventorySetupsPlugin -> BankTagsPlugin) e o Guice
+            // valida a injecao de membros da instancia na criacao do injector
+            // (BindingBuilder.toInstance -> InjectionPoint.forInstanceMethodsAndFields).
+            // Por isso: bind da instancia + install(dependencyPlugin), que registra os
+            // @Provides da dependencia (ex.: BankTagsConfig) no child injector.
+            //
+            // Modules.override: o configure() da dependencia pode registrar a mesma
+            // chave de getPublicModule (ex.: BankTagsPlugin: bind(TagManager) vs
+            // bind(TagManager).toProvider); instalados lado a lado o Guice falha com
+            // "binding was already configured" — o override deixa getPublicModule vencer.
+            if (module != null)
+            {
+                Plugin dependencyPlugin = dependency.get();
+                modules.add(Modules.override((Binder binder) ->
+                {
+                    binder.bind((Class<Plugin>) dependencyPlugin.getClass()).toInstance(dependencyPlugin);
+                    binder.install(dependencyPlugin);
+                }).with(module));
             }
         }
 
