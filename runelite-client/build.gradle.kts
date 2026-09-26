@@ -24,6 +24,7 @@
  */
 
 import java.io.ByteArrayOutputStream
+import java.security.SecureRandom
 import java.util.Properties
 
 fun loadRootProperty(name: String): String? {
@@ -453,21 +454,14 @@ dependencies {
     testImplementation(libs.okhttp.mockserver)
 }
 
-// ── Build number management ────────────────────────────────────────────────
-val buildNumberFile = rootProject.file("build-number.txt")
+// ── Build ID management ────────────────────────────────────────────────────
+// Random 32-bit id in hex (e.g. "b3f7a2c9") — identical filenames are practically
+// impossible, so a stale id can never collide with a previously shipped jar.
+// Replaces the old build-number.txt sequential counter (removed 2026-09-26).
+fun generateBuildId(): String =
+    String.format("b%08x", SecureRandom().nextInt())
 
-fun getAndIncrementBuildNumber(): Int {
-    val current = if (buildNumberFile.exists()) {
-        buildNumberFile.readText().trim().toIntOrNull() ?: 0
-    } else {
-        0
-    }
-    buildNumberFile.writeText("${current + 1}")
-    return current + 1
-}
-
-val buildNumber = getAndIncrementBuildNumber()
-val buildNumberPadded = String.format("b%04d", buildNumber)
+val buildId = generateBuildId()
 
 val shadowJar = tasks.register<Jar>("shadowJar") {
     dependsOn(configurations.runtimeClasspath)
@@ -495,7 +489,7 @@ val shadowJar = tasks.register<Jar>("shadowJar") {
 
     group = BasePlugin.BUILD_GROUP
     archiveClassifier = "shadow"
-    archiveFileName = "microbot_afss0-" + project.version + "-" + buildNumberPadded + "-shaded.jar"
+    archiveFileName = "microbot_afss0-" + project.version + "-" + buildId + "-shaded.jar"
 }
 tasks.assemble { dependsOn(shadowJar) }
 
@@ -580,7 +574,7 @@ val microbotReleaseJar = tasks.register<Copy>("microbotReleaseJar") {
     dependsOn(shadowJar)
     from(shadowJar.flatMap { it.archiveFile })
     into(layout.buildDirectory.dir("libs"))
-    rename { "microbot_afss0-${microbotVersionProvider.get()}-${buildNumberPadded}.jar" }
+    rename { "microbot_afss0-${microbotVersionProvider.get()}-${buildId}.jar" }
 }
 
 tasks.assemble { dependsOn(microbotReleaseJar) }
