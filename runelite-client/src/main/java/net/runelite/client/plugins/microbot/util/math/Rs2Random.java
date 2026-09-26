@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Point;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.antiban.SessionFatigue;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 
 import java.awt.*;
 import java.util.Random;
@@ -385,13 +386,18 @@ public class Rs2Random {
     }
 
     /**
-     * Pauses the execution for a specified amount of time in milliseconds.
-     * This method is a system-level wait used for simulating delays in bot actions.
+     * Pauses execution for the given duration — weather-modulated (fork customization, 2026-09-26):
+     * waits issued through this helper (wait/waitEx) are lengthened by the current weather, same
+     * direction as mouse movement — worse conditions (cold/wind/storms) stretch the duration by
+     * {@code 1/combinedSpeedFactor()} (never shorter; typical ≈ ×1.05–1.2, worst case ≈ ×1.85).
+     * Reads the cached factor only; refreshing remains the job of WeatherModulation.ensureFresh()
+     * callers (Rs2Antiban / ascript).
      *
-     * @param time The duration to wait in milliseconds.
+     * @param time The duration to wait in milliseconds (before weather adjustment).
      */
-    private static void systemWait(long time) {        
-        Global.sleep((int) time);
+    private static void systemWait(long time) {
+        long adjusted = Math.round(time / Math.max(0.1, WeatherModulation.combinedSpeedFactor()));
+        Global.sleep((int) adjusted);
     }
 
     /**
@@ -539,8 +545,44 @@ public class Rs2Random {
      * then hard-clamps the tails to the bounds. Designed to replace uniform {@code between(min,max)}
      * at sites that model micro-delays (keyboard gaps, mouse-button pauses, scroll timing) where
      * a human histogram is right-skewed rather than rectangular.
+     * <p>
+     * Weather modulation (fork customization, 2026-09-26): the max bound is automatically scaled
+     * by {@code 1/WeatherModulation.combinedSpeedFactor()} — waits only ever lengthen in worse
+     * weather (never shorten). Callers that scale by weather themselves must use the
+     * explicit-multiplier overload to avoid applying the factor twice.
      */
     public static int logNormalBounded(int min, int max) {
+        if (max <= min) return Math.max(min, max);
+        return logNormalBoundedRaw(min, (int) (max * weatherMultiplier()));
+    }
+
+    /**
+     * Log-normal bounded with an explicit multiplier — applies ONLY the given multiplier,
+     * no automatic weather scaling (the two-argument overload already applies weather).
+     * Multiplier &gt; 1.0 = slower (longer waits), &lt; 1.0 = faster (shorter waits).
+     * The max bound is scaled by the multiplier; min stays fixed.
+     *
+     * @param min   minimum value
+     * @param max   base maximum value (before multiplier)
+     * @param multiplier  scaling factor (e.g. 1.0 / WeatherModulation.combinedSpeedFactor())
+     * @return a log-normal sample within [min, max * multiplier]
+     */
+    public static int logNormalBounded(int min, int max, double multiplier) {
+        int adjustedMax = (int) (max * multiplier);
+        return logNormalBoundedRaw(min, adjustedMax);
+    }
+
+    /**
+     * Multiplier (≥ 1) that stretches timing by the current weather — the inverse of
+     * {@link WeatherModulation#combinedSpeedFactor()}. Weather can only slow things down:
+     * colder/windier/stormier conditions → longer waits, never shorter.
+     */
+    private static double weatherMultiplier() {
+        return 1.0 / Math.max(0.1, WeatherModulation.combinedSpeedFactor());
+    }
+
+    /** Raw log-normal body — no weather, no multiplier. */
+    private static int logNormalBoundedRaw(int min, int max) {
         if (max <= min) return Math.max(min, max);
         if (min <= 0) min = 1;
         double logMin = Math.log(min);
@@ -551,21 +593,6 @@ public class Rs2Random {
         if (sample < min) return min;
         if (sample > max) return max;
         return (int) sample;
-    }
-
-    /**
-     * Log-normal bounded with a weather/session multiplier.
-     * Multiplier > 1.0 = slower (longer waits), &lt; 1.0 = faster (shorter waits).
-     * The max bound is scaled by the multiplier; min stays fixed.
-     *
-     * @param min   minimum value
-     * @param max   base maximum value (before multiplier)
-     * @param multiplier  scaling factor (e.g. 1.0 / WeatherModulation.combinedSpeedFactor())
-     * @return a log-normal sample within [min, max * multiplier]
-     */
-    public static int logNormalBounded(int min, int max, double multiplier) {
-        int adjustedMax = (int) (max * multiplier);
-        return logNormalBounded(min, adjustedMax);
     }
 
     enum EWaitDir {
