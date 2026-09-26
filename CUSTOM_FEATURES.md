@@ -11,7 +11,7 @@ Used during merges to verify nothing is lost.
 - **Integration points:**
   - `AntibanPlugin.java` — init + refresh on startup/reset
   - `Rs2Antiban.java` — TIMEOUT scaled by `combinedSpeedFactor()`, micro-break chance offset
-  - `Rs2AntibanSettings.java` — `weatherEnabled`, `weatherLat`, `weatherLon`, `weatherCityName` fields
+  - `Rs2AntibanSettings.java` — `weatherLat`, `weatherLon`, `weatherCityName` fields (the old `weatherEnabled` toggle was removed on 2026-09-05 — weather modulation is always on)
   - `NaturalMouse.java` — `SpeedManager` wrapper applies weather factor to mouse movement
   - `MasterPanel.java` + `NavigationPanel.java` — ⛅ Weather tab in antiban UI
 
@@ -22,7 +22,12 @@ Used during merges to verify nothing is lost.
   - **Click error chance** (`VirtualMouse.click()`) — rain + wind add 0–9% chance of clicking 1–3px off-target via `mistakeProbabilityOffset()`
   - **Overshoot count** (`FactoryTemplates`) — rain + wind add +0 to +2 overshoots via `mistakeProbabilityOffset()`
   - **Rs2Random overload** — `logNormalBounded(min, max, multiplier)` for weather-scaled timing
-- **Safety:** All guarded by `Rs2AntibanSettings.weatherEnabled`. When disabled: `combinedSpeedFactor()` returns 1.0, `mistakeProbabilityOffset()` returns 0.0, `windGustFactor()` returns 1.0 — no API calls, no side effects.
+  - **Rs2Random automatic modulation (2026-09-26)** — `systemWait()` (backing `wait`/`waitEx`) and the two-arg `logNormalBounded(min, max)` now automatically stretch by `1/combinedSpeedFactor()`: waits only ever lengthen in worse weather (never shorten). The three-arg overload applies ONLY its explicit multiplier — callers that weather-scale themselves are not double-scaled.
+- **Safety:** Always active by design (the old `weatherEnabled` toggle was removed on 2026-09-05). Factor reads use cached values only — no API calls at call time; refresh stays in `WeatherModulation.ensureFresh()` (AntibanPlugin / ascript).
+
+### Activity Intensity Lock (mouse-speed slider no-op)
+- **Files:** `Rs2Antiban.java`
+- **What:** `activityIntensity` pinned to `VERY_LOW`; `setActivityIntensity(...)` is a no-op and `setActivity()` no longer overwrites the field (playStyle seeding still uses the activity's own intensity, so cooldown cadence is unchanged). Scripts, hub plugins (e.g. AutoWoodcutting), the dynamic-intensity feature and the UI slider can no longer churn it — it was constantly flipping Very Low ↔ Low. Mouse speed is unaffected: forced independently in `NaturalMouse.getFactory()`.
 
 ## Anti-Detection
 
@@ -168,4 +173,8 @@ grep "weatherAdjustedOvershoots" runelite-client/src/main/java/net/runelite/clie
 grep "mistakeProbabilityOffset" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/VirtualMouse.java | head -1
 grep "windGustFactor" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/misc/Rs2UiHelper.java | head -1
 grep "logNormalBounded.*multiplier" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/math/Rs2Random.java | head -1
+# weather timing in Rs2Random + activity intensity lock (2026-09-26)
+grep "weatherMultiplier" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/math/Rs2Random.java | head -1
+grep "intensity is locked" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/antiban/Rs2Antiban.java | head -1
+grep "effectiveMax" runelite-client/src/test/java/net/runelite/client/plugins/microbot/util/math/Rs2RandomLogNormalBoundedTest.java | head -1
 ```
