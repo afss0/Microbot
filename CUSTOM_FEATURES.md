@@ -129,9 +129,9 @@ Used during merges to verify nothing is lost.
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
 
-### Build Number Auto-Increment
-- **Files:** `runelite-client/build.gradle.kts`, `build-number.txt`
-- **What:** `shadowJar` and `microbotReleaseJar` now include a build number (`b0001`, `b0002`, ...) in the JAR filename. `build-number.txt` at repo root auto-increments on each `assemble` run. Format: `microbot_afss0-<version>-<buildN>-shaded.jar`. Ensures every build produces a uniquely-named artifact.
+### Build ID — Random Hex (anti-collision)
+- **Files:** `runelite-client/build.gradle.kts`
+- **What:** `shadowJar` and `microbotReleaseJar` embed a random 32-bit build id in hex (e.g. `b3f7a2c9`) in the JAR filename: `microbot_afss0-<version>-b<8 hex>-shaded.jar`. Identical filenames are practically impossible, so a stale build can never collide with a previously shipped jar. Replaces the old sequential counter — `build-number.txt` was removed on 2026-09-26 (no more counter file to restore before commits/merges).
 
 ## Build Fixes
 
@@ -165,7 +165,7 @@ grep "inputWasAlreadyDisabled" runelite-client/src/main/java/net/runelite/client
 grep "InputSelector.disableClick\|InputSelector.enableClick" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
 grep "cursorTracker" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
 grep "getCurrentTarget" runelite-client/src/main/java/net/runelite/client/plugins/microbot/mousesync/MouseSyncPlugin.java | head -3
-grep "getAndIncrementBuildNumber" runelite-client/build.gradle.kts | head -1
+grep "generateBuildId" runelite-client/build.gradle.kts | head -1
 # aScript + weather mouse modulation
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AGENTS.md
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java
