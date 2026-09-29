@@ -498,45 +498,49 @@ public class PluginManager {
         return activePlugins.contains(plugin);
     }
 
-    private Plugin instantiate(List<Plugin> scannedPlugins, Class<Plugin> clazz) throws PluginInstantiationException {
+    private Plugin instantiate(List<Plugin> scannedPlugins, Class<Plugin> clazz) throws PluginInstantiationException
+    {
         PluginDependency[] pluginDependencies = clazz.getAnnotationsByType(PluginDependency.class);
         List<Module> modules = new ArrayList<>();
-        for (PluginDependency pluginDependency : pluginDependencies) {
+        for (PluginDependency pluginDependency : pluginDependencies)
+        {
             Optional<Plugin> dependency = scannedPlugins.stream().filter(p -> p.getClass() == pluginDependency.value()).findFirst();
-            if (!dependency.isPresent()) {
+            if (!dependency.isPresent())
+            {
                 throw new PluginInstantiationException("Unmet dependency for " + clazz.getSimpleName() + ": " + pluginDependency.value().getSimpleName());
             }
 
             var module = dependency.get().getPublicModule();
-            if (module == null) {
-                throw new PluginInstantiationException("Plugin dependency " + pluginDependency.value().getSimpleName() + " does not expose any services");
+            if (module != null)
+            {
+                modules.add(module);
             }
-
-            // Fork-compat: o upstream expoe so o modulo de servicos da dependencia,
-            // mas plugins deste fork injetam a instancia do plugin dependencia
-            // (ex.: MInventorySetupsPlugin -> BankTagsPlugin). Sem o bind da
-            // instancia o Guice falha ao instanciar o plugin dependente.
-            Plugin dependencyPlugin = dependency.get();
-            modules.add((Binder binder) -> binder.bind((Class<Plugin>) dependencyPlugin.getClass()).toInstance(dependencyPlugin));
-            modules.add(module);
         }
 
         Plugin plugin;
-        try {
+        try
+        {
             plugin = clazz.getDeclaredConstructor().newInstance();
-        } catch (ThreadDeath e) {
+        }
+        catch (ThreadDeath e)
+        {
             throw e;
-        } catch (Throwable ex) {
+        }
+        catch (Throwable ex)
+        {
             throw new PluginInstantiationException(ex);
         }
 
-        try {
+        try
+        {
             Injector parent = Microbot.getInjector();
 
             modules.add(pluginModuleFactory.new PluginModule(plugin));
             Injector pluginInjector = parent.createChildInjector(modules);
             plugin.injector = pluginInjector;
-        } catch (Throwable ex) {
+        }
+        catch (Throwable ex)
+        {
             throw new PluginInstantiationException(ex);
         }
 

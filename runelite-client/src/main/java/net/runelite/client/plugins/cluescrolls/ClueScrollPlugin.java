@@ -251,7 +251,11 @@ public class ClueScrollPlugin extends Plugin
 	@Override
 	public Module getPublicModule()
 	{
-		return b -> b.bind(ClueScrollService.class).toProvider(Providers.of(clueScrollService));
+		return b ->
+		{
+			b.bind(ClueScrollService.class).toProvider(Providers.of(clueScrollService));
+			b.bind(ClueScrollPlugin.class).toProvider(Providers.of(this));
+		};
 	}
 
 	@Override

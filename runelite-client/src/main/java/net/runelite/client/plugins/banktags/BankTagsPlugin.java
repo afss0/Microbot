@@ -176,6 +176,7 @@ public class BankTagsPlugin extends Plugin implements BankTagsService
 	{
 		return b ->
 		{
+			b.bind(BankTagsPlugin.class).toProvider(Providers.of(this));
 			b.bind(BankTagsService.class).toProvider(Providers.of(this));
 			b.bind(LayoutManager.class).toProvider(Providers.of(layoutManager));
 			b.bind(TagManager.class).toProvider(Providers.of(tagManager));

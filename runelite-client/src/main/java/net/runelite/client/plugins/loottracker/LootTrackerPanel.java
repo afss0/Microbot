@@ -639,7 +639,22 @@ public class LootTrackerPanel extends PluginPanel
 				// Otherwise remove specifically this entry
 				: r -> r == record;
 			sessionRecords.removeIf(match);
-			aggregateRecords.values().removeIf(match);
+			if (groupLoot)
+			{
+				aggregateRecords.values().removeIf(match);
+			}
+			else
+			{
+				LootTrackerRecord aggregate = aggregateRecords.get(record);
+				if (aggregate != null)
+				{
+					aggregate.subtract(record);
+					if (aggregate.getKills() == 0 && aggregate.getItems().length == 0)
+					{
+						aggregateRecords.remove(record);
+					}
+				}
+			}
 			boxes.remove(box);
 			updateOverall();
 			logsContainer.remove(box);
