@@ -1,5 +1,6 @@
 package net.runelite.client.plugins.microbot.ascript;
 
+import net.runelite.api.Skill;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
@@ -8,6 +9,7 @@ import net.runelite.client.config.Range;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingFunctions;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingType;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
+import net.runelite.client.plugins.microbot.ascript.eventdismiss.EventAction;
 import net.runelite.client.plugins.microbot.ascript.fletching.*;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantActivity;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantItem;
@@ -505,5 +507,49 @@ public interface AScriptConfig extends Config {
     )
     default int autoEatMaxHpPercent() {
         return 60;
+    }
+
+    @ConfigItem(
+            keyName = "eventDismissGenieAction",
+            name = "Genie",
+            description = "Accept the lamp from the Genie or dismiss the event",
+            position = 4,
+            section = qolSection
+    )
+    default EventAction eventDismissGenieAction() {
+        return EventAction.ACCEPT;
+    }
+
+    @ConfigItem(
+            keyName = "eventDismissCountCheckAction",
+            name = "Count Check",
+            description = "Accept the lamp from Count Check or dismiss the event",
+            position = 5,
+            section = qolSection
+    )
+    default EventAction eventDismissCountCheckAction() {
+        return EventAction.ACCEPT;
+    }
+
+    @ConfigItem(
+            keyName = "eventDismissLampSkill",
+            name = "Lamp skill",
+            description = "Skill to use experience lamps on",
+            position = 6,
+            section = qolSection
+    )
+    default Skill eventDismissLampSkill() {
+        return Skill.HERBLORE;
+    }
+
+    @ConfigItem(
+            keyName = "eventDismissStrayLamps",
+            name = "Use stray lamps",
+            description = "Automatically use lamps found in the inventory from any source",
+            position = 7,
+            section = qolSection
+    )
+    default boolean eventDismissStrayLamps() {
+        return false;
     }
 }
