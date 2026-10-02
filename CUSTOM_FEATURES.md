@@ -103,6 +103,8 @@ Used during merges to verify nothing is lost.
 - **What:** AIO script hosting multiple automation scripts under one plugin, built on standard `Script` (Phase enum: DISABLED/IDLE/BANKING/CRAFTING/ERROR — migrated from StateMachineScript). Modules are plain helper classes (no Guice, no Script inheritance).
 - **Current modules:**
   - **Crafting** (`ascript/crafting/`) — Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry
+  - **Random event handler** (`ascript/eventdismiss/`) — always-on Genie/Count Check dismissal + XP lamp use (lamp skill configurable); banking interlock keeps lamps out of deposits (locked lamp slot + bank yield)
+  - **Cannonball Smelter** (`ascript/cannonballsmelter/`) — smelt steel bars into cannonballs (Edgeville, Shilo Village, Prifddinas, Port Phasmatys); mould as a locked slot; Jewelry-style random-AFK layer (`cannonballAfk`)
 - **Anti-detection:**
   - All timing uses `Rs2Random.logNormalBounded()` with log-normal distributions (not uniform)
   - AFK timing: `Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier)`
@@ -169,6 +171,9 @@ grep "generateBuildId" runelite-client/build.gradle.kts | head -1
 # aScript + weather mouse modulation
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AGENTS.md
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/eventdismiss/
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/cannonballsmelter/
+grep "yieldBankingToLamp" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/eventdismiss/LampUtility.java | head -1
 grep "weatherAdjustedOvershoots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/naturalmouse/util/FactoryTemplates.java | head -1
 grep "mistakeProbabilityOffset" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/VirtualMouse.java | head -1
 grep "windGustFactor" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/misc/Rs2UiHelper.java | head -1
