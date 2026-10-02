@@ -260,6 +260,7 @@ When a module's section is `closedByDefault = true`, the user expands it manuall
 - **Use `sleepUntil(condition, timeoutMs)`** — never fixed `sleep()` to wait on game state.
 - **Verify the action landed.** A click that returned `true` is not a completed action: confirm the state change (inventory count, animation, widget) and count consecutive failures, so a broken run stops with a message instead of spinning.
 - **Use `Rs2Random` for all timing.** Never use `Random.nextInt()` or fixed `sleep()` for delays.
+- **Always use `...OnClientThread()` variants.** When an API exposes an `...OnClientThread()` overload, use it: game updates block client-state access outside the client thread, so the plain variant can compile yet fail in-game.
 
 ## Banking pitfalls
 
@@ -393,6 +394,9 @@ int afkMs = Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier);
 | Gem Crab Killer | `ascript/gemcrabkiller/` | Combat — kill gem crabs, mine loot, bank at Tal Teklan |
 | Barbarian Village Fisher | `ascript/barbarianvillagefisher/` | Fly/Bait fishing, Cook/Drop/Bank fish |
 | Jewel Enchant | `ascript/jewellenchant/` | Enchant Jewellery (Lvl-1 through Lvl-7 Enchant spells) |
+| Cannonball Smelter | `ascript/cannonballsmelter/` | Smelt steel bars into cannonballs (Edgeville, Shilo Village, Prifddinas, Port Phasmatys) |
+
+**Cannonball Smelter notes:** The mould (ammo or double ammo) is held as a **locked inventory slot** (the tool pattern, `AScriptBank.ensureToolLocked`); `doBank()` keeps whichever mould is already held and prefers the double one when withdrawing fresh. One smelt click runs the whole inventory (~6 s per bar); the batch is tracked across ticks by bar-count drops plus the smithing animation, and a 12 s stall window re-issues the furnace click if the batch stops early — never a blind long wait. The furnace click goes through the **entity entry-click** (`Rs2TileObjectModel.click("Smelt")` → `NewMenuEntry` + `targetMenu` override — the jewelry/`clickObject` mechanism), after a bounded wait for a real hull (a canvas-sized clickbox means the object is not rendered yet — never clicked blindly); the smelt interface is clicked with `Rs2Widget.clickWidget` (child 14; child 13 marks it open). The furnace is found via the tile-object query API, always with the `...OnClientThread()` variant (`withId(...).nearestOnClientThread()`; Shilo Village via `withName("Furnace").nearestOnClientThread()`). `doBank()` deposits the produced cannonballs with the toolbar deposit (product, not a tool). Between batches it runs the Jewelry/Crafting randomness layer: an unconditional short randomized pause plus the `cannonballAfk` random AFK (3–120 s log-normal, weather-modulated, interruptible, 5 s min-gap), with `needsBank()` yielding one tick while the post-batch break is pending so the pause runs with the bank still closed.
 
 **GCK special case:** GemCrabKiller handles its own banking internally — the bank (Tal Teklan) is too far from the cave for the orchestrator's open-check-withdraw cycle. `needsBank()` returns false; the module's internal state machine transitions to BANKING when food runs out. The orchestrator calls `doAction()` every tick and GCK routes internally (WALKING→FIGHTING→BANKING→WAITING).
 
