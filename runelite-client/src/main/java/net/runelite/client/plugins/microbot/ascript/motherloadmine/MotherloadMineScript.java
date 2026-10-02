@@ -166,7 +166,9 @@ public class MotherloadMineScript implements AModule {
             return false;
         }
 
-        sleepUntil(() -> Rs2Inventory.isEmpty(), 5000);
+        // Wait for the deposit to land. "Empty" ignores locked slots (pickaxe) and the XP
+        // lamp: the lamp cannot be deposited and must not make this wait time out every cycle.
+        sleepUntil(AScriptBank::isEmptyExceptLocksAndLamp, 5000);
 
         // Withdraw best pickaxe
         Pickaxe best = Pickaxe.getBestPickaxeFromBank();
