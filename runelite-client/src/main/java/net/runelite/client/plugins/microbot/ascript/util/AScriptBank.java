@@ -1,6 +1,7 @@
 package net.runelite.client.plugins.microbot.ascript.util;
 
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
@@ -161,6 +162,7 @@ public final class AScriptBank {
         for (int slot : Rs2Bank.findLockedSlots()) {
             Rs2ItemModel stray = Rs2Inventory.getItemInSlot(slot);
             if (stray == null) continue;
+            if (stray.getId() == ItemID.LAMP) continue; // never release the lamp — it must survive deposits
             if (isToolMatch(stray, nameOrId, nameLc)) continue; // already the item (race) — leave it
             Rs2Bank.toggleItemLock(stray.getName(), false); // unlock so the toolbar deposit removes it
         }
@@ -182,19 +184,26 @@ public final class AScriptBank {
     /**
      * Deposit the entire inventory via the toolbar button.
      * <p>
+     * Before anything else, ensures the XP lamp's slot is LOCKED (see
+     * {@link #ensureLampLocked()}) — the lamp cannot be deposited and must survive to be
+     * used; an unlocked lamp would also make every "inventory empty" check fail.
+     * <p>
      * When the bank is open and the inventory only contains items in LOCKED
-     * slots (held tools/anchors), the deposit is skipped and {@code true} is
-     * returned immediately — the toolbar button ignores locked slots, so
-     * clicking it would be a no-op that triggers a 10-second
+     * slots (held tools/anchors) and/or the XP lamp, the deposit is skipped and
+     * {@code true} is returned immediately — the toolbar button ignores locked
+     * slots, so clicking it would be a no-op that triggers a 10-second
      * {@code waitForInventoryChanges} timeout in {@code Rs2Bank.depositAll()}.
      *
-     * @return true if the inventory is already empty (or only has locked items);
-     *         false if the deposit didn't complete (timeout / bank not open)
+     * @return true if the inventory is already empty (or only has locked items and the
+     *         lamp); false if the deposit didn't complete (timeout / bank not open)
      */
     public static boolean depositAll() {
-        if (Rs2Bank.isOpen() && isInventoryEmptyExceptLocks()) {
-            log.debug("[AScriptBank] skipping deposit — only locked items in inventory");
-            return true;
+        if (Rs2Bank.isOpen()) {
+            ensureLampLocked();
+            if (isEmptyExceptLocksAndLamp()) {
+                log.debug("[AScriptBank] skipping deposit — only locked items and/or the XP lamp in inventory");
+                return true;
+            }
         }
         if (!Rs2Bank.depositAll()) {
             log.warn("[AScriptBank] depositAll toolbar button timed out");
@@ -204,10 +213,30 @@ public final class AScriptBank {
     }
 
     /**
+     * Ensure the XP lamp's inventory slot is locked before a deposit. The toolbar deposit
+     * cannot remove a lamp (it is not deposit-able), so like a held tool it must be made
+     * lock-protected: locking makes the deposit skip it natively, and the bank-view lock
+     * clears itself once the lamp leaves the slot. Same mechanism the modules use for the
+     * mould/cosmic rune. Requires the bank to be open — no-op otherwise.
+     */
+    private static void ensureLampLocked() {
+        if (!Rs2Bank.isOpen()) {
+            return;
+        }
+        Rs2ItemModel lamp = Rs2Inventory.get(ItemID.LAMP);
+        if (lamp == null || Rs2Bank.isLockedSlot(lamp.getSlot())) {
+            return;
+        }
+        if (!Rs2Bank.toggleItemLock(lamp.getName(), true)) { // exact name — never match "Empty Oil Lamp"
+            log.warn("[AScriptBank] Failed to lock the lamp slot — the deposit may stall on it");
+        }
+    }
+
+    /**
      * Deposit all, then wait for the inventory to actually empty — ignoring any
-     * LOCKED slots (held tools like chisel/knife/mould stay across deposits).
-     * If a tool is locked in the inventory the toolbar deposit button will not
-     * remove it, so "empty" here means "no items in non-locked slots".
+     * LOCKED slots (held tools like chisel/knife/mould stay across deposits) and the
+     * XP lamp (which cannot be deposited at all). "Empty" here means "no items in
+     * non-locked slots other than the lamp".
      *
      * @return false if the deposit failed or the inventory did not empty in
      *         time (e.g. silent partial deposit) — callers should retry next tick
@@ -215,10 +244,11 @@ public final class AScriptBank {
     public static boolean depositAndWaitEmpty() {
         if (!depositAll()) {
             // depositAll() may return false when the inventory only contains
-            // LOCKED items (e.g. a locked mould) — the toolbar deposit button
-            // ignores locked slots, so nothing changes and waitForInventoryChanges
-            // times out.  Check if we're already in the desired state.
-            if (!isInventoryEmptyExceptLocks()) {
+            // LOCKED items and/or the lamp (e.g. a locked mould) — the toolbar
+            // deposit button ignores locked slots, so nothing changes and
+            // waitForInventoryChanges times out.  Check if we're already in the
+            // desired state.
+            if (!isEmptyExceptLocksAndLamp()) {
                 return false;
             }
         }
@@ -226,13 +256,17 @@ public final class AScriptBank {
     }
 
     /**
-     * True when the inventory holds no item in a NON-locked slot. Locked slots
-     * (held tools) are ignored, so a deposit that leaves a locked tool behind
-     * still counts as empty for banking purposes.
+     * True when the inventory holds no item in a NON-locked slot other than the XP lamp.
+     * Locked slots (held tools) and the lamp are both ignored: the toolbar deposit cannot
+     * remove either — the lamp cannot be banked at all — so a deposit that leaves them
+     * behind still counts as empty for banking purposes.
+     * <p>
+     * Public for modules that need to wait on the deposit landing without stalling on a
+     * lamp (e.g. Motherload Mine's post-deposit wait).
      */
-    private static boolean isInventoryEmptyExceptLocks() {
+    public static boolean isEmptyExceptLocksAndLamp() {
         return !Rs2Inventory.items()
-                .anyMatch(item -> !Rs2Bank.isLockedSlot(item.getSlot()));
+                .anyMatch(item -> !Rs2Bank.isLockedSlot(item.getSlot()) && item.getId() != ItemID.LAMP);
     }
 
     // ── Numeric-id dispatch helpers ───────────────────────────

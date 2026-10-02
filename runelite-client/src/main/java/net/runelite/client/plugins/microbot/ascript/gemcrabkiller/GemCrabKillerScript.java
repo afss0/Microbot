@@ -8,6 +8,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
+import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -127,6 +128,14 @@ public class GemCrabKillerScript implements AModule {
     @Override
     public boolean doBank(AScriptConfig config) {
         if (!Microbot.isLoggedIn()) return false;
+
+        // Lamp-vs-bank gate: never bank with an XP lamp in the inventory — it must be
+        // used first (lamps are never deposited). Yields (returns false) until the
+        // lamp-use blocking event has consumed it; the internal BANKING state simply
+        // retries next tick, so no failure counter is touched.
+        if (LampUtility.yieldBankingToLamp(config.eventDismissLampSkill())) {
+            return false;
+        }
 
         Microbot.status = "WALKING TO BANK";
         Rs2Walker.walkTo(BankLocation.TAL_TEKLAN.getWorldPoint());
