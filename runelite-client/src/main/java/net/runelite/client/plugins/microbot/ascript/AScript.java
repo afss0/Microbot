@@ -8,6 +8,7 @@ import net.runelite.api.Varbits;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianVillageFisherScript;
+import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterScript;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
 import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
@@ -55,7 +56,8 @@ public class AScript extends Script {
             new MotherloadMineScript(),
             new GemCrabKillerScript(),
             new BarbarianVillageFisherScript(),
-            new JewelEnchantScript()
+            new JewelEnchantScript(),
+            new CannonballSmelterScript()
     );
 
     /** Previous tick's active state per module — for NONE → active transition detection. */
