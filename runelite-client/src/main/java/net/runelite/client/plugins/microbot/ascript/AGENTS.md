@@ -426,6 +426,14 @@ QOL features don't run as automation scripts. Add config items under the QOL `@C
 |---------|-------------|-------|
 | Auto zoom out | `autoZoomOut` | `tick()` step 1b — rate-limited to 60 s |
 | Auto eat | `autoEat`, `autoEatMinHpPercent`, `autoEatMaxHpPercent` | `tick()` step 1c + `rollEatThreshold()` |
+| Random event handler | `eventDismissGenieAction`, `eventDismissCountCheckAction`, `eventDismissLampSkill`, `eventDismissStrayLamps` | `ascript/eventdismiss/` — blocking events registered in `AScriptPlugin.startUp()` |
+
+**Random event handler invariants:**
+- Always-on while the plugin is enabled (no master toggle; not part of the `ScriptType` dispatch). The two `BlockingEvent`s are registered in `AScriptPlugin.startUp()` and removed in `shutDown()`.
+- Every lamp use waits for a sustained idle window (~2–4 s, the MLM idleness pattern): `UseLampEvent.validate()` only enqueues once the window elapsed (the script-pause gate is not held while waiting); `LampUtility.useLamp()` waits the same window internally, covering the Genie/Count Check accept paths.
+- Every dialogue phase is deadline-bounded (`DIALOGUE_PHASE_TIMEOUT_MS`): a dialogue that never closes — or an unforeseen dialogue shape — must never hold the script-pause gate.
+- Genie and the Count Check random event are continue-only dialogues (one bounded closer covers both); a Count Check talk that ends without a lamp dismisses the NPC and marks it tried — never a talk loop. Reward detection is count-based: the lamps in the inventory are counted before the talk, and the lamp-wait ends when that count rises or the NPC leaves — a pre-existing (stranded) lamp never reads as the event's reward. The wait window is wall-clock (~5 s average, `LAMP_WAIT_AVG_MS`), advanced by the event requeue loop — never a blocking sleep. After interacting with the NPC the flow waits (bounded 5 s) for it to lose focus and despawn — a lingering Genie is never re-talked.
+- The pre-action sleep is 4–40 s log-normal with the explicit weather multiplier (the 2-arg `logNormalBounded` overload already applies weather — never apply it twice).
 
 **Auto-eat invariants:**
 - Skipped entirely for `ScriptType.GEM_CRAB_KILLER`: that module owns HP management (50% normal eat, 2% emergency, banks for food at 25%, Dharok mode holds HP at 10). A global 35–60% eat would double-eat in normal mode and break Dharok mode. `autoEatEnabled()` is the single gate.
