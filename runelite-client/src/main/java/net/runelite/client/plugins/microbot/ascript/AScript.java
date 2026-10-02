@@ -9,6 +9,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianVillageFisherScript;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
+import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
 import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
 import net.runelite.client.plugins.microbot.ascript.gemcrabkiller.GemCrabKillerScript;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantScript;
@@ -201,6 +202,14 @@ public class AScript extends Script {
         }
 
         if (bankModule != null) {
+            // Lamp-vs-bank gate: an XP lamp in the inventory blocks banking — lamps are
+            // never deposited and must be used first. Yielding here (before the bank can
+            // open) lets the lamp-use blocking event fire; banking resumes without it.
+            if (LampUtility.yieldBankingToLamp(config.eventDismissLampSkill())) {
+                currentPhase = Phase.BANKING;
+                return;
+            }
+
             // Open bank to check stock; if opening fails, wait for the next tick.
             if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
                 currentPhase = Phase.BANKING;
