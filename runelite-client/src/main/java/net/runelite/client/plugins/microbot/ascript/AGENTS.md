@@ -260,6 +260,7 @@ When a module's section is `closedByDefault = true`, the user expands it manuall
 - **Use `sleepUntil(condition, timeoutMs)`** — never fixed `sleep()` to wait on game state.
 - **Verify the action landed.** A click that returned `true` is not a completed action: confirm the state change (inventory count, animation, widget) and count consecutive failures, so a broken run stops with a message instead of spinning.
 - **Use `Rs2Random` for all timing.** Never use `Random.nextInt()` or fixed `sleep()` for delays.
+- **Always use `...OnClientThread()` variants.** When an API exposes an `...OnClientThread()` overload, use it: game updates block client-state access outside the client thread, so the plain variant can compile yet fail in-game.
 
 ## Banking pitfalls
 
@@ -393,6 +394,9 @@ int afkMs = Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier);
 | Gem Crab Killer | `ascript/gemcrabkiller/` | Combat — kill gem crabs, mine loot, bank at Tal Teklan |
 | Barbarian Village Fisher | `ascript/barbarianvillagefisher/` | Fly/Bait fishing, Cook/Drop/Bank fish |
 | Jewel Enchant | `ascript/jewellenchant/` | Enchant Jewellery (Lvl-1 through Lvl-7 Enchant spells) |
+| Cannonball Smelter | `ascript/cannonballsmelter/` | Smelt steel bars into cannonballs (Edgeville, Shilo Village, Prifddinas, Port Phasmatys) |
+
+**Cannonball Smelter notes:** The mould (ammo or double ammo) is held as a **locked inventory slot** (the tool pattern, `AScriptBank.ensureToolLocked`); `doBank()` keeps whichever mould is already held and prefers the double one when withdrawing fresh. One smelt click runs the whole inventory (~6 s per bar); the batch is tracked across ticks by bar-count drops plus the smithing animation, and a 12 s stall window re-issues the furnace click if the batch stops early — never a blind long wait. The furnace click goes through the **entity entry-click** (`Rs2TileObjectModel.click("Smelt")` → `NewMenuEntry` + `targetMenu` override — the jewelry/`clickObject` mechanism), after a bounded wait for a real hull (a canvas-sized clickbox means the object is not rendered yet — never clicked blindly); the smelt interface is clicked with `Rs2Widget.clickWidget` (child 14; child 13 marks it open). The furnace is found via the tile-object query API, always with the `...OnClientThread()` variant (`withId(...).nearestOnClientThread()`; Shilo Village via `withName("Furnace").nearestOnClientThread()`). `doBank()` deposits the produced cannonballs with the toolbar deposit (product, not a tool). Between batches it runs the Jewelry/Crafting randomness layer: an unconditional short randomized pause plus the `cannonballAfk` random AFK (3–120 s log-normal, weather-modulated, interruptible, 5 s min-gap), with `needsBank()` yielding one tick while the post-batch break is pending so the pause runs with the bank still closed.
 
 **GCK special case:** GemCrabKiller handles its own banking internally — the bank (Tal Teklan) is too far from the cave for the orchestrator's open-check-withdraw cycle. `needsBank()` returns false; the module's internal state machine transitions to BANKING when food runs out. The orchestrator calls `doAction()` every tick and GCK routes internally (WALKING→FIGHTING→BANKING→WAITING).
 
@@ -426,6 +430,16 @@ QOL features don't run as automation scripts. Add config items under the QOL `@C
 |---------|-------------|-------|
 | Auto zoom out | `autoZoomOut` | `tick()` step 1b — rate-limited to 60 s |
 | Auto eat | `autoEat`, `autoEatMinHpPercent`, `autoEatMaxHpPercent` | `tick()` step 1c + `rollEatThreshold()` |
+| Random event handler | `eventDismissGenieAction`, `eventDismissCountCheckAction`, `eventDismissLampSkill`, `eventDismissStrayLamps` | `ascript/eventdismiss/` — blocking events registered in `AScriptPlugin.startUp()` |
+
+**Random event handler invariants:**
+- Always-on while the plugin is enabled (no master toggle; not part of the `ScriptType` dispatch). The two `BlockingEvent`s are registered in `AScriptPlugin.startUp()` and removed in `shutDown()`.
+- Every lamp use waits for a sustained idle window (~2–4 s, the MLM idleness pattern): `UseLampEvent.validate()` only enqueues once the window elapsed (the script-pause gate is not held while waiting); `LampUtility.useLamp()` waits the same window internally, covering the Genie/Count Check accept paths.
+- Every dialogue phase is deadline-bounded (`DIALOGUE_PHASE_TIMEOUT_MS`): a dialogue that never closes — or an unforeseen dialogue shape — must never hold the script-pause gate.
+- Genie and the Count Check random event are continue-only dialogues (one bounded closer covers both); a Count Check talk that ends without a lamp dismisses the NPC and marks it tried — never a talk loop. Reward detection is count-based: the lamps in the inventory are counted before the talk, and the lamp-wait ends when that count rises or the NPC leaves — a pre-existing (stranded) lamp never reads as the event's reward. The wait window is wall-clock (~5 s average, `LAMP_WAIT_AVG_MS`), advanced by the event requeue loop — never a blocking sleep. After interacting with the NPC the flow waits (bounded 5 s) for it to lose focus and despawn — a lingering Genie is never re-talked.
+- The pre-action sleep is 4–40 s log-normal with the explicit weather multiplier (the 2-arg `logNormalBounded` overload already applies weather — never apply it twice).
+- Banking yields to lamps: every bank path — the orchestrator's open step and `GemCrabKillerScript.doBank` (it banks on its own; its `needsBank()` is always false) — consults `LampUtility.yieldBankingToLamp(...)` before opening. An XP lamp in the inventory blocks banking until the lamp-use event consumes it; lamps are never deposited, and `UseLampEvent` bypasses the stray-lamp toggle and the idle window while a yield is pending. A lamp skill with no interface widget never blocks banking and warns once.
+- Lamps are never deposited: before any deposit `AScriptBank` locks the lamp's slot (the mould/cosmic-rune pattern, `ensureLampLocked`, exact-name match) and its empty-checks ignore locked slots and the lamp (`isEmptyExceptLocksAndLamp`) — a stranded lamp must never stall a deposit or an empty-inventory wait. The `UseLampEvent` breaker (`MAX_LAMP_USE_FAILURES = 5`, counted on the warn paths only) suspends lamp handling and unblocks banking instead of retrying forever; the suspension clears when the lamp leaves the inventory. A partial failure can leave the lamp interface open — `useLamp` closes a stale one first (Close action, Escape fallback).
 
 **Auto-eat invariants:**
 - Skipped entirely for `ScriptType.GEM_CRAB_KILLER`: that module owns HP management (50% normal eat, 2% emergency, banks for food at 25%, Dharok mode holds HP at 10). A global 35–60% eat would double-eat in normal mode and break Dharok mode. `autoEatEnabled()` is the single gate.
