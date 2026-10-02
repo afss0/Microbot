@@ -8,6 +8,7 @@ import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingFunctions;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingType;
+import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterFurnace;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.EventAction;
 import net.runelite.client.plugins.microbot.ascript.fletching.*;
@@ -420,6 +421,38 @@ public interface AScriptConfig extends Config {
     )
     default boolean jewelEnchantUseStaff() {
         return false;
+    }
+
+    // ── Cannonball Smelter ─────────────────────────────────────
+
+    @ConfigSection(
+            name = "Cannonball Smelter",
+            description = "Cannonball smelting settings",
+            position = 7,
+            closedByDefault = true
+    )
+    String cannonballSmelterSection = "cannonballsmelter";
+
+    @ConfigItem(
+            keyName = "cannonballFurnace",
+            name = "Furnace",
+            description = "Furnace location to smelt cannonballs at (start at the bank next to it; keep ammo mould and steel bars in the bank)",
+            position = 0,
+            section = cannonballSmelterSection
+    )
+    default CannonballSmelterFurnace cannonballFurnace() {
+        return CannonballSmelterFurnace.EDGEVILLE;
+    }
+
+    @ConfigItem(
+            keyName = "cannonballAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds between smelting batches",
+            position = 1,
+            section = cannonballSmelterSection
+    )
+    default boolean cannonballAfk() {
+        return true;
     }
 
     // ── Barbarian Village Fisher ────────────────────────────────

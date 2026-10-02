@@ -12,7 +12,8 @@ public enum ScriptType {
     MOTHERLOAD_MINE("Motherload Mine"),
     GEM_CRAB_KILLER("Gem Crab Killer"),
     BARBARIAN_VILLAGE_FISHER("Barbarian Village Fisher"),
-    JEWEL_ENCHANT("Jewel Enchant");
+    JEWEL_ENCHANT("Jewel Enchant"),
+    CANNONBALL_SMELTER("Cannonball Smelter");
 
     private final String name;
 
