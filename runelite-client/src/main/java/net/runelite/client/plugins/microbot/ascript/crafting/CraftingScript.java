@@ -40,6 +40,17 @@ public class CraftingScript implements AModule {
     private long lastAfkTime;
     /** Set once per doCraft() call; used by all craft methods for weather-modulated timing. */
     private double weatherMultiplier = 1.0;
+
+    // ── Jewelry batch tracking ──────────────────────────────────
+    /** Bar count at the last observed change; 0 = fresh batch (the action tick resolves it). */
+    private int jewelryLastBarCount = 0;
+    /** Timestamp of the last jewelry batch progress (bar consumed / batch confirmed started). */
+    private long jewelryLastProgressAt = 0L;
+    /** Set while the post-batch break is pending/done — see {@link #needsBankJewelry}. */
+    private boolean jewelryPostBatchBreakDone = false;
+    /** No bar consumed and no animation for this long = the batch is not running anymore. */
+    private static final long JEWELRY_STALL_WINDOW_MS = 8_000L;
+
     /** Prevent repeated exit attempts / Discord spam when furnace not found. */
     private boolean exitRequested = false;
     /** Track consecutive craft failures to trigger exit after persistent failures. */
@@ -54,6 +65,10 @@ public class CraftingScript implements AModule {
     public void resetExitFlag() {
         exitRequested = false;
         consecutiveCraftFailures = 0;
+        jewelryLastBarCount = 0;
+        jewelryLastProgressAt = 0L;
+        jewelryPostBatchBreakDone = false;
+        lastAfkTime = 0L;
     }
 
     // ── Phase resolution ────────────────────────────────────────
@@ -160,8 +175,12 @@ public class CraftingScript implements AModule {
     private boolean needsBankJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
         if (item == JewelryItem.NONE) return false;
-        // Need the bar
-        if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId())) return true;
+        // Need the bar. When the bars just ran out (batch finished), yield one tick so
+        // the post-batch break runs with the bank still closed before banking
+        // (cannonball-smelter pattern), then let the bank cycle fetch more bars.
+        if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId())) {
+            return jewelryPostBatchBreakDone;
+        }
         // Need the mould (tool)
         if (!Rs2Inventory.hasItem(item.getToolItemID())) return true;
         // Need cut gem if jewelry has a gem
@@ -527,16 +546,21 @@ public class CraftingScript implements AModule {
             }
         }
 
-        sleep(Rs2Random.logNormalBounded(800, 1600));
+        // Jewelry drives its own per-tick pacing (in-flight wait + post-batch break
+        // with the randomness layer) — the shared trailing sleep/AFK would otherwise
+        // fire on every tick of a running batch instead of once per batch.
+        if (currentPhase != Phase.JEWELRY) {
+            sleep(Rs2Random.logNormalBounded(800, 1600));
 
-        // Random AFK — log-normal distribution, weather-modulated.
-        // Interruptible: returns early when a blocking event is pending so the
-        // orchestrator's next tick handles it instead of after the full delay.
-        if (config.craftingAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
-            int afkMs = Rs2Random.logNormalBounded(3000, 120000, weatherMultiplier);
-            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
-            AScriptSleep.sleepInterruptibly(afkMs);
-            lastAfkTime = System.currentTimeMillis();
+            // Random AFK — log-normal distribution, weather-modulated.
+            // Interruptible: returns early when a blocking event is pending so the
+            // orchestrator's next tick handles it instead of after the full delay.
+            if (config.craftingAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
+                int afkMs = Rs2Random.logNormalBounded(3000, 120000, weatherMultiplier);
+                Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+                AScriptSleep.sleepInterruptibly(afkMs);
+                lastAfkTime = System.currentTimeMillis();
+            }
         }
     }
 
@@ -718,59 +742,147 @@ public class CraftingScript implements AModule {
             return false;
         }
 
+        int bars = Rs2Inventory.count(item.getJewelryType().getMetalBarId());
+        if (bars <= 0) {
+            // Batch finished — run the post-batch break once (the orchestrator banks on a
+            // later tick; needsBankJewelry yields while the break is pending).
+            postJewelryBatchBreak(config);
+            return true;
+        }
+        jewelryPostBatchBreakDone = false; // bars present again — the next empty state is a new batch end
+
+        long now = System.currentTimeMillis();
+        boolean progressed = bars < jewelryLastBarCount;
+        if (progressed) {
+            jewelryLastBarCount = bars;
+            jewelryLastProgressAt = now;
+        }
+
+        // In flight: a bar was consumed since the last tick, the player is animating, or
+        // the batch started less than the stall window ago (the gap between two items).
+        // NEVER interact with the furnace in this state — a click on it while the make
+        // runs resolves as a mid-batch "Cancel" menu entry and stops the batch.
+        if (progressed || Rs2Player.isAnimating()
+                || now - jewelryLastProgressAt < JEWELRY_STALL_WINDOW_MS) {
+            Microbot.status = "SMELTING " + item.getName().toUpperCase() + " — " + bars + " bars left";
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(400, 900, weatherMultiplier));
+            return true;
+        }
+
+        // Not in flight — (re)start the batch. The stall window above means this runs at
+        // batch start or after a real stall (batch stopped early), never mid-craft.
+        return startJewelryBatch(item, location);
+    }
+
+    /**
+     * Start (or resume) a jewelry batch: open the make interface if needed, click the
+     * item option, and confirm the batch actually started.
+     */
+    private boolean startJewelryBatch(JewelryItem item, JewelryLocation location) {
         Microbot.status = "SMELTING " + item.getName().toUpperCase();
 
-        // Find the furnace game object by ID 16469
-        TileObject furnaceObject = Rs2GameObject.findObjectById(16469);
+        // The interface may already be open from an attempt whose wait timed out —
+        // finish that sequence instead of re-clicking the furnace.
+        if (!isJewelryInterfaceOpen()) {
+            // Find the furnace game object by ID 16469
+            TileObject furnaceObject = Rs2GameObject.findObjectById(16469);
 
-        // If not found, walk to furnace location once
-        if (furnaceObject == null && location != null && location.getFurnaceLocation() != null) {
-            Microbot.status = "WALKING TO " + location.getLabel().toUpperCase();
-            Rs2Walker.walkTo(location.getFurnaceLocation());
-            sleep(Rs2Random.logNormalBounded(2000, 4000)); // randomized wait for walker
+            // If not found, walk to furnace location once
+            if (furnaceObject == null && location.getFurnaceLocation() != null) {
+                Microbot.status = "WALKING TO " + location.getLabel().toUpperCase();
+                Rs2Walker.walkTo(location.getFurnaceLocation());
+                sleep(Rs2Random.logNormalBounded(2000, 4000)); // randomized wait for walker
 
-            // Try finding furnace again after walking
-            furnaceObject = Rs2GameObject.findObjectById(16469);
+                // Try finding furnace again after walking
+                furnaceObject = Rs2GameObject.findObjectById(16469);
+            }
+
+            // If still not found, deactivate script + notify Discord (once)
+            if (furnaceObject == null) {
+                exitRequested = true;
+                Microbot.status = "NO FURNACE — STOPPING";
+                AScriptNotify.notify("Jewelry Script Stopped",
+                        "Furnace (ID 16469) not found at " + location.getLabel()
+                                + ". Deactivating script.");
+                Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                return false;
+            }
+
+            // Turn camera if furnace not on screen
+            if (!Rs2Camera.isTileOnScreen(furnaceObject.getLocalLocation())) {
+                Rs2Camera.turnTo(furnaceObject.getLocalLocation());
+                return false; // retry next tick — transient, resolves in a tick or two
+            }
+
+            // Click furnace with Smelt action
+            Rs2GameObject.interact(furnaceObject, "Smelt");
+
+            // Wait for the make interface — bounded; a blind long wait just delays the retry
+            boolean craftingInterfaceOpen = sleepUntilTrue(this::isJewelryInterfaceOpen, 300,
+                    Rs2Random.logNormalBounded(6000, 10000, weatherMultiplier));
+            if (!craftingInterfaceOpen) {
+                failJewelryAttempt("make interface did not open");
+                return false;
+            }
         }
 
-        // If still not found, deactivate script + notify Discord (once)
-        if (furnaceObject == null) {
-            exitRequested = true;
-            Microbot.status = "NO FURNACE — STOPPING";
-            AScriptNotify.notify("Jewelry Script Stopped",
-                    "Furnace (ID 16469) not found at " + (location != null ? location.getLabel() : "unknown")
-                            + ". Deactivating script.");
-            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        // Click our item. The option can populate a tick after the interface appears and the
+        // name search can miss while the widget tree settles — RETRY until the click is
+        // actually dispatched. A single silent miss here is what used to send the old loop
+        // straight back to the furnace mid-batch.
+        boolean clicked = sleepUntilTrue(
+                () -> Rs2Widget.clickWidget(item.getName(), java.util.Optional.of(item.getWidgetGroup()),
+                        item.getWidgetChild(), false),
+                300, Rs2Random.logNormalBounded(3000, 5000, weatherMultiplier));
+        if (!clicked) {
+            failJewelryAttempt("could not click the " + item.getName() + " option");
             return false;
         }
 
-        // Turn camera if furnace not on screen
-        if (!Rs2Camera.isTileOnScreen(furnaceObject.getLocalLocation())) {
-            Rs2Camera.turnTo(furnaceObject.getLocalLocation());
+        // Confirm the batch started: the player animates or a bar is consumed.
+        int before = Rs2Inventory.count(item.getJewelryType().getMetalBarId());
+        if (!sleepUntil(() -> Rs2Player.isAnimating()
+                || Rs2Inventory.count(item.getJewelryType().getMetalBarId()) < before,
+                Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier))) {
+            failJewelryAttempt("craft did not start");
             return false;
         }
 
-        // Click furnace with Smelt action
-        Rs2GameObject.interact(furnaceObject, "Smelt");
-
-        // Wait for crafting interface to open
-        boolean craftingInterfaceOpen = sleepUntilTrue(() ->
-                Rs2Widget.isProductionWidgetOpen()
-                        || Rs2Widget.isGoldCraftingWidgetOpen()
-                        || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 30000);
-        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
-
-        // Click the correct widget by (group, child) from the JewelryItem enum
-        Rs2Widget.clickWidget(item.getName(), java.util.Optional.of(item.getWidgetGroup()), item.getWidgetChild(), false);
-
-        sleepUntil(() -> Microbot.isGainingExp, Rs2Random.logNormalBounded(3000, 12000, weatherMultiplier));
-
-        sleepUntil(() -> !Microbot.isGainingExp
-                || !Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()),
-                Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
-
-        Microbot.status = "IDLE";
+        jewelryLastBarCount = Rs2Inventory.count(item.getJewelryType().getMetalBarId());
+        jewelryLastProgressAt = System.currentTimeMillis();
         return true;
+    }
+
+    /** True while any of the jewelry make interfaces is up (gold 446, silver 6, production 270). */
+    private boolean isJewelryInterfaceOpen() {
+        return Rs2Widget.isProductionWidgetOpen()
+                || Rs2Widget.isGoldCraftingWidgetOpen()
+                || Rs2Widget.isSilverCraftingWidgetOpen();
+    }
+
+    /** Failed start attempt: log + backoff — the orchestrator's failure counter escalates to a stop. */
+    private void failJewelryAttempt(String reason) {
+        log.warn("[CraftingScript] Jewelry attempt failed: {}", reason);
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1100, weatherMultiplier));
+    }
+
+    /**
+     * Post-batch break — the jewelry randomness layer: a short randomized pause after every
+     * completed batch, then the optional random AFK (log-normal, weather-modulated,
+     * interruptible so blocking events still fire). Runs while {@link #needsBankJewelry}
+     * yields, i.e. with the bank still closed (cannonball-smelter pattern).
+     */
+    private void postJewelryBatchBreak(AScriptConfig config) {
+        if (jewelryPostBatchBreakDone) return;
+        jewelryPostBatchBreakDone = true;
+        jewelryLastBarCount = 0;
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
+        if (config.craftingAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
+            int afkMs = Rs2Random.logNormalBounded(3000, 120000, weatherMultiplier);
+            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+            AScriptSleep.sleepInterruptibly(afkMs);
+            lastAfkTime = System.currentTimeMillis();
+        }
     }
 
     @Override
