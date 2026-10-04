@@ -63,6 +63,7 @@ import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorDetection;
 import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorProbe;
 import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorAheadResolver;
 import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorGeometry;
+import net.runelite.client.plugins.microbot.util.walker.door.FirstRouteInteractionSelector;
 import net.runelite.client.plugins.microbot.util.walker.geometry.WalkerPathGeometry;
 import net.runelite.client.plugins.microbot.util.walker.obstacle.MineableResolver;
 import net.runelite.client.plugins.microbot.util.walker.obstacle.ObstacleResolution;
@@ -6990,6 +6991,32 @@ public class Rs2Walker {
                 || isNearSamePlane(to, origin, 2)
                 || isNearSamePlane(to, destination, 2)));
         return objectNearTransport && edgeMatchesTransport;
+    }
+
+    // --- Upstream interop bridges (rev 241, PR #1876). Consumed via static import
+    // (`import static ...Rs2Walker.*`) by Rs2WalkerDoors and the route-interaction wiring
+    // tests; ported verbatim from chsami/main (ba4127053e, b4d76b3ecc).
+
+    /** Skip a backtracked transport only after its exact edge has an observed crossing. */
+    static int rawScanStartEdge(List<WorldPoint> rawPath, int anchor, WorldPoint playerLoc,
+                                int backtrackEdges) {
+        return FirstRouteInteractionSelector.scanStartEdge(rawPath, anchor, playerLoc,
+                routeState.lastTransportOriginLocation, routeState.lastTransportDestinationLocation,
+                isRecentTransportEdgeWindow(), backtrackEdges);
+    }
+
+    /** Keep the scene-door lookback while restricting transport ownership to the remaining route. */
+    static Map<Integer, Rs2TransportEdge> collectRouteTransportsForInteractionScan(
+            List<Rs2RouteStep> routeSteps, int startEdge, int rawAnchor, int maxEdges) {
+        Map<Integer, Rs2TransportEdge> selectedTransports = new HashMap<>();
+        int endEdge = Math.min(routeSteps.size(), startEdge + maxEdges);
+        for (int edge = startEdge; edge < endEdge; edge++) {
+            Rs2RouteStep step = routeSteps.get(edge);
+            if (step.isTransport() && FirstRouteInteractionSelector.isTransportAtOrAhead(edge, rawAnchor)) {
+                selectedTransports.put(edge, step.getTransport().orElseThrow());
+            }
+        }
+        return selectedTransports;
     }
 
     /**
