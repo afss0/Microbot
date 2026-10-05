@@ -6,6 +6,9 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
+import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabFood;
+import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabLocation;
+import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabPotion;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingFunctions;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingType;
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterFurnace;
@@ -485,6 +488,105 @@ public interface AScriptConfig extends Config {
     )
     default BarbarianFishingFunctions barbarianVillageFisherFunction() {
         return BarbarianFishingFunctions.DROP_RAW;
+    }
+
+    // ── Ammonite Crabs ──────────────────────────────────────────
+
+    @ConfigSection(
+            name = "Ammonite Crabs",
+            description = "Ammonite crab killer settings",
+            position = 7,
+            closedByDefault = true
+    )
+    String ammoniteCrabsSection = "ammonitecrabs";
+
+    @ConfigItem(
+            keyName = "ammoniteCrabLocation",
+            name = "Crab Location",
+            description = "Choose the ammonite crab spot",
+            position = 0,
+            section = ammoniteCrabsSection
+    )
+    default AmmoniteCrabLocation ammoniteCrabLocation() {
+        return AmmoniteCrabLocation.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "ammoniteCrabUseFood",
+            name = "Use Food",
+            description = "Eat food at 50% HP and restock at the bank when the food runs out",
+            position = 1,
+            section = ammoniteCrabsSection
+    )
+    default boolean ammoniteCrabUseFood() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "ammoniteCrabFood",
+            name = "Food",
+            description = "Food to withdraw at the bank",
+            position = 2,
+            section = ammoniteCrabsSection
+    )
+    default AmmoniteCrabFood ammoniteCrabFood() {
+        return AmmoniteCrabFood.SHARK;
+    }
+
+    @ConfigItem(
+            keyName = "ammoniteCrabUsePotions",
+            name = "Use Potions",
+            description = "Drink offensive potions in combat and restock at the bank when out",
+            position = 3,
+            section = ammoniteCrabsSection
+    )
+    default boolean ammoniteCrabUsePotions() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "ammoniteCrabPotion",
+            name = "Potion",
+            description = "Offensive potion to withdraw (4-dose)",
+            position = 4,
+            section = ammoniteCrabsSection
+    )
+    default AmmoniteCrabPotion ammoniteCrabPotion() {
+        return AmmoniteCrabPotion.COMBAT;
+    }
+
+    @Range(min = 1, max = 28)
+    @ConfigItem(
+            keyName = "ammoniteCrabPotionAmount",
+            name = "Potions to withdraw",
+            description = "Number of 4-dose potions to withdraw per bank trip",
+            position = 5,
+            section = ammoniteCrabsSection
+    )
+    default int ammoniteCrabPotionAmount() {
+        return 4;
+    }
+
+    @ConfigItem(
+            keyName = "ammoniteCrabLootSpores",
+            name = "Loot Seaweed Spores",
+            description = "Pick up seaweed spores dropped near the spot",
+            position = 6,
+            section = ammoniteCrabsSection
+    )
+    default boolean ammoniteCrabLootSpores() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "ammoniteCrabHopOnCrash",
+            name = "Hop On Crash",
+            description = "Hop worlds when another player camps the spot",
+            position = 7,
+            section = ammoniteCrabsSection
+    )
+    default boolean ammoniteCrabHopOnCrash() {
+        return true;
     }
 
     // ── QOL ─────────────────────────────────────────────────────
