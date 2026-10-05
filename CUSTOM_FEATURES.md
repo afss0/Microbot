@@ -130,6 +130,11 @@ Used during merges to verify nothing is lost.
   - The item option click **retries until actually dispatched** (`sleepUntilTrue` over `Rs2Widget.clickWidget`; the old single click could silently miss while the make interface tree was still settling) and the batch start is confirmed (animation or bar consumed) before success is reported; ≤3 failed start attempts escalate to the existing craft-failure stop.
   - Batch end: a **post-batch break** (short pause + the `craftingAfk` randomness layer) runs once with the bank still closed (`needsBankJewelry` yields via `jewelryPostBatchBreakDone`), then the bank cycle withdraws more bars — cannonball-smelter parity.
   - Merge check: `grep "JEWELRY_STALL_WINDOW_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java | head -1`
+- **Withdraw retry hardening (Oct 2026):**
+  - `AScriptBank.withdrawVerified*` no longer fails on a single 3 s verify miss: each attempt verifies in two windows (3 s main + 2 s grace — a landing that is merely late under transient lag is caught by the grace window; live cause of a spurious `Failed to withdraw bow string x14` whose items landed ~3–6 s after the click) and an unconfirmed dispatch is retried up to 3 attempts total with exponential backoff (≈0.8 s / 1.6 s, jittered via `Rs2Random.waitEx`).
+  - Each retry waits the backoff and re-checks the inventory **before** re-clicking (a slow landing is confirmed, never double-withdrawn); the bank window is left open across attempts — the loop never closes/re-opens it.
+  - The `Failed to withdraw` WARN fires only after all attempts are exhausted; late-landing recoveries log at DEBUG.
+  - Merge check: `grep "WITHDRAW_GRACE_TIMEOUT_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename
