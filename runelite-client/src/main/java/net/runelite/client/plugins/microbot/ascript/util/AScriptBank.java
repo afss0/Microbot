@@ -6,6 +6,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
+import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -34,6 +35,23 @@ public final class AScriptBank {
 
     private static final int WITHDRAW_VERIFY_TIMEOUT_MS = 3000;
 
+    /**
+     * Extra verification window granted after the main verify miss: a landing that is merely
+     * late (transient lag) is confirmed here before the attempt counts as failed. Observed
+     * live: a withdraw click whose items landed ~3-6 s after dispatch during a lag spike.
+     */
+    private static final int WITHDRAW_GRACE_TIMEOUT_MS = 2000;
+
+    /** Total dispatch attempts for one withdraw call (1 initial + retries with backoff). */
+    private static final int WITHDRAW_MAX_ATTEMPTS = 3;
+
+    /**
+     * Exponential backoff base between failed attempts when an attempt is unconfirmed:
+     * attempt 2 waits ~800 ms, attempt 3 ~1600 ms (jittered and weather-modulated via
+     * {@link Rs2Random#waitEx(double, double)}).
+     */
+    private static final int WITHDRAW_RETRY_BACKOFF_BASE_MS = 800;
+
     private AScriptBank() {
         // static utility
     }
@@ -42,21 +60,17 @@ public final class AScriptBank {
      * Withdraw {@code quantity} of {@code name} from the bank and verify it landed
      * in the inventory. Use for stackable items where a specific amount is needed
      * (e.g. 14 unstrung bows + 14 bow strings for stringing).
+     * <p>
+     * The verify runs in two windows (main + grace) and an unconfirmed dispatch is
+     * retried with exponential backoff — see {@link #withdrawWithRetry}.
      *
      * @param name item name (or numeric id as a string) to withdraw
      * @param quantity exact number to withdraw
      * @return true if withdrawn and verified in inventory; false on failure
      */
     public static boolean withdrawVerified(String name, int quantity) {
-        if (!hasBankItem(name)) {
-            return false;
-        }
-        withdrawBankItemX(name, quantity);
-        if (!sleepUntil(() -> hasInventoryItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
-            log.warn("[AScriptBank] Failed to withdraw {} x{}", name, quantity);
-            return false;
-        }
-        return true;
+        return withdrawWithRetry(name, () -> withdrawBankItemX(name, quantity),
+                name + " x" + quantity);
     }
 
     /**
@@ -69,15 +83,7 @@ public final class AScriptBank {
      *         lacks it or the withdraw didn't land (caller should return false)
      */
     public static boolean withdrawVerified(String name) {
-        if (!hasBankItem(name)) {
-            return false;
-        }
-        withdrawBankItem(name, true);
-        if (!sleepUntil(() -> hasInventoryItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
-            log.warn("[AScriptBank] Failed to withdraw {}", name);
-            return false;
-        }
-        return true;
+        return withdrawWithRetry(name, () -> withdrawBankItem(name, true), name);
     }
 
     /**
@@ -89,15 +95,61 @@ public final class AScriptBank {
      * @return true if one was withdrawn and is now in the inventory
      */
     public static boolean withdrawOneVerified(String name) {
-        if (!hasBankItem(name)) {
-            return false;
+        return withdrawWithRetry(name, () -> withdrawBankItemOne(name), "one " + name);
+    }
+
+    /**
+     * Shared withdraw core: dispatch, verify, grace re-check, retry with exponential backoff.
+     * <p>
+     * Each attempt verifies in two windows — the main {@link #WITHDRAW_VERIFY_TIMEOUT_MS}
+     * window, then a {@link #WITHDRAW_GRACE_TIMEOUT_MS} grace window that confirms merely-late
+     * landings (transient lag) before the attempt counts as failed. Unconfirmed attempts are
+     * retried up to {@link #WITHDRAW_MAX_ATTEMPTS} total dispatches, spaced by an exponential
+     * backoff.
+     * <p>
+     * A retry waits the backoff FIRST and re-checks the inventory BEFORE re-dispatching, so a
+     * slow landing in flight is confirmed instead of double-clicked. The bank window is left
+     * exactly as it is across attempts — the loop never closes or re-opens it (typical
+     * scripting behavior); the caller keeps the window open for the whole call.
+     *
+     * @param nameOrId item name (or numeric id as a string) to withdraw
+     * @param dispatch performs one withdraw dispatch (the retry loop owns the verification)
+     * @param describe label for the log lines (e.g. "bow string x14", "one mould")
+     * @return true once the item is verified in the inventory; false when every attempt
+     *         failed or the bank lacks the item
+     */
+    private static boolean withdrawWithRetry(String nameOrId, Runnable dispatch, String describe) {
+        if (!hasBankItem(nameOrId)) {
+            return false; // bank lacks it — nothing to dispatch (silent, as before)
         }
-        withdrawBankItemOne(name);
-        if (!sleepUntil(() -> hasInventoryItem(name), WITHDRAW_VERIFY_TIMEOUT_MS)) {
-            log.warn("[AScriptBank] Failed to withdraw one {}", name);
-            return false;
+        for (int attempt = 1; attempt <= WITHDRAW_MAX_ATTEMPTS; attempt++) {
+            if (attempt > 1) {
+                // Exponential backoff, jittered: give a pending landing time to arrive
+                // BEFORE re-checking, so an in-flight withdraw is never double-dispatched.
+                long backoffMs = (long) WITHDRAW_RETRY_BACKOFF_BASE_MS << (attempt - 2);
+                Rs2Random.waitEx(backoffMs, backoffMs / 4.0);
+                if (hasInventoryItem(nameOrId)) {
+                    log.debug("[AScriptBank] Withdraw {} landed during backoff — not re-dispatching", describe);
+                    return true;
+                }
+            }
+            dispatch.run();
+            if (sleepUntil(() -> hasInventoryItem(nameOrId), WITHDRAW_VERIFY_TIMEOUT_MS)) {
+                return true;
+            }
+            // Grace re-check: the observed failure mode is a landing that takes longer than
+            // the verify window under transient lag — confirm it before failing the attempt.
+            if (sleepUntil(() -> hasInventoryItem(nameOrId), WITHDRAW_GRACE_TIMEOUT_MS)) {
+                log.debug("[AScriptBank] Withdraw {} landed during the grace window (late landing)", describe);
+                return true;
+            }
+            if (attempt < WITHDRAW_MAX_ATTEMPTS) {
+                log.debug("[AScriptBank] Withdraw {} not confirmed (attempt {}/{}) — backing off to retry",
+                        describe, attempt, WITHDRAW_MAX_ATTEMPTS);
+            }
         }
-        return true;
+        log.warn("[AScriptBank] Failed to withdraw {} after {} attempts", describe, WITHDRAW_MAX_ATTEMPTS);
+        return false;
     }
 
     /**
