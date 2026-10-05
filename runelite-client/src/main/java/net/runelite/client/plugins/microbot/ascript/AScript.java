@@ -7,6 +7,7 @@ import net.runelite.api.Skill;
 import net.runelite.api.Varbits;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
+import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabsScript;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianVillageFisherScript;
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterScript;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
@@ -57,7 +58,8 @@ public class AScript extends Script {
             new GemCrabKillerScript(),
             new BarbarianVillageFisherScript(),
             new JewelEnchantScript(),
-            new CannonballSmelterScript()
+            new CannonballSmelterScript(),
+            new AmmoniteCrabsScript()
     );
 
     /** Previous tick's active state per module — for NONE → active transition detection. */
@@ -305,10 +307,15 @@ public class AScript extends Script {
      * normal, 2% emergency), its own bank-for-food trip at 25% and the Dharok mode
      * that deliberately holds HP at 10 for the set effect. A global 35–60% eat would
      * double-eat in normal mode and silently break Dharok mode, so the QOL stays out.
+     * Ammonite Crabs owns its food the same way (eats at 50 and banks when empty).
      */
     private boolean autoEatEnabled(AScriptConfig config) {
         if (!config.autoEat()) return false;
-        return config.scriptSelection() != ScriptType.GEM_CRAB_KILLER;
+        // Combat modules own their HP management: GCK (50% normal eat, 2% emergency,
+        // Dharok mode holds HP at 10) and Ammonite Crabs (eatAt 50 + bank restock).
+        // A global 35-60% eat would double-eat for either.
+        return config.scriptSelection() != ScriptType.GEM_CRAB_KILLER
+                && config.scriptSelection() != ScriptType.AMMONITE_CRABS;
     }
 
     /**
