@@ -14,6 +14,8 @@ import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.Barba
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterFurnace;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.EventAction;
+import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingLocation;
+import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingLog;
 import net.runelite.client.plugins.microbot.ascript.fletching.*;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantActivity;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantItem;
@@ -586,6 +588,49 @@ public interface AScriptConfig extends Config {
             section = ammoniteCrabsSection
     )
     default boolean ammoniteCrabHopOnCrash() {
+        return true;
+    }
+
+    // ── Firemaking ──────────────────────────────────────────────
+
+    @ConfigSection(
+            name = "Firemaking",
+            description = "Firemaking settings",
+            position = 8,
+            closedByDefault = true
+    )
+    String firemakingSection = "firemaking";
+
+    @ConfigItem(
+            keyName = "firemakingLog",
+            name = "Log Type",
+            description = "Logs to burn on fires/campfires (keep them in the bank; a tinderbox is required to light a fire when none is nearby)",
+            position = 0,
+            section = firemakingSection
+    )
+    default FiremakingLog firemakingLog() {
+        return FiremakingLog.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "firemakingLocation",
+            name = "Fire Location",
+            description = "Where to light a fire when no campfire/fire is within range (start at the bank next to it)",
+            position = 1,
+            section = firemakingSection
+    )
+    default FiremakingLocation firemakingLocation() {
+        return FiremakingLocation.GRAND_EXCHANGE_NORTH_EAST;
+    }
+
+    @ConfigItem(
+            keyName = "firemakingAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds between batches",
+            position = 2,
+            section = firemakingSection
+    )
+    default boolean firemakingAfk() {
         return true;
     }
 
