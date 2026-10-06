@@ -64,6 +64,7 @@ import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorDetection;
 import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorProbe;
 import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorAheadResolver;
 import net.runelite.client.plugins.microbot.util.walker.door.Rs2DoorGeometry;
+import net.runelite.client.plugins.microbot.util.walker.geometry.RouteCameraPolicy;
 import net.runelite.client.plugins.microbot.util.walker.geometry.WalkerPathGeometry;
 import net.runelite.client.plugins.microbot.util.walker.obstacle.MineableResolver;
 import net.runelite.client.plugins.microbot.util.walker.obstacle.ObstacleResolution;
@@ -79,6 +80,8 @@ import net.runelite.client.plugins.microbot.util.walker.door.Rs2WalkerAwaits;
 import net.runelite.client.plugins.microbot.util.walker.door.model.AwaitTicket;
 import net.runelite.client.plugins.microbot.util.walker.door.model.DoorResolution;
 import net.runelite.client.plugins.microbot.util.walker.banking.Rs2WalkerBankingPlanner;
+import net.runelite.client.plugins.microbot.util.walker.banking.TransportWithdrawalConfirmation;
+import net.runelite.client.plugins.microbot.util.walker.banking.WithdrawNoteModePolicy;
 import net.runelite.client.plugins.microbot.util.walker.awaits.Rs2WalkerRuntimeAwaits;
 import net.runelite.client.plugins.microbot.util.walker.puzzles.DraynorBasementSolver;
 import net.runelite.client.plugins.microbot.util.walker.stall.Rs2WalkerStallPolicy;
@@ -126,8 +129,8 @@ public class Rs2Walker {
     private static long nextRouteCameraVariationAtNanos;
     private static int routeCameraYawOffsetDegrees;
     private static int routeCameraPitch = 300;
-    private static int routeCameraYawKey;
-    private static int routeCameraPitchKey;
+    private static volatile int routeCameraYawKey;
+    private static volatile int routeCameraPitchKey;
 
     /** The active walk's configured finish distance — the goal-object guard needs it outside processWalk. */
     static volatile int currentWalkDistance;
@@ -3575,9 +3578,7 @@ public class Rs2Walker {
 
     private static void manageRunEnergy(int pathRemaining) {
         try {
-            if (!Rs2Player.isRunEnabled() && Rs2Player.getRunEnergy() > 10) {
-                Rs2Player.toggleRunEnergy(true);
-            }
+            Rs2Player.toggleRunEnergy(true);
             if (pathRemaining < STAMINA_MIN_PATH_TILES) return;
             if (Rs2Player.getRunEnergy() >= staminaThreshold()) return;
             if (Rs2Player.hasStaminaBuffActive()) return;
@@ -3914,7 +3915,6 @@ public class Rs2Walker {
             return false;
         }
         Rs2Player.toggleRunEnergy(toggleRun);
-        Point canv;
         LocalPoint localPoint = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), worldPoint);
 
         if (Microbot.getClient().getTopLevelWorldView().isInstance() && localPoint == null) {
@@ -3932,33 +3932,17 @@ public class Rs2Walker {
             return false;
         }
 
-        canv = Perspective.localToCanvas(Microbot.getClient(), localPoint, Microbot.getClient().getTopLevelWorldView().getPlane());
-
-        int canvasX = canv != null ? canv.getX() : -1;
-        int canvasY = canv != null ? canv.getY() : -1;
-
-        //if the tile is not on screen, use minimap
-        if (!Rs2Camera.isTileOnScreen(localPoint) || canvasX < 0 || canvasY < 0) {
-            WorldPoint playerLoc = Rs2Player.getWorldLocation();
-            if (playerLoc != null
-                    && playerLoc.getPlane() == worldPoint.getPlane()
-                    && walkMiniMapToward(worldPoint, playerLoc, 13)) {
-                return true;
-            }
-            return Rs2Walker.walkMiniMap(worldPoint);
+        if (!Rs2WalkerMovement.SCENE_CLICKS.isSuppressed(System.currentTimeMillis())
+                && Rs2WalkerMovement.dispatchSceneWalk(worldPoint)) {
+            return true;
         }
-
-        NewMenuEntry entry = new NewMenuEntry()
-                .param0(canvasX)
-                .param1(canvasY)
-                .type(MenuAction.WALK)
-                .identifier(0)
-                .itemId(0)
-                .option("Walk here");
-
-        Microbot.doInvoke(entry,
-                new Rectangle(canvasX, canvasY, Microbot.getClient().getCanvasWidth(), Microbot.getClient().getCanvasHeight()));
-        return true;
+        WorldPoint playerLoc = Rs2Player.getWorldLocation();
+        if (playerLoc != null
+                && playerLoc.getPlane() == worldPoint.getPlane()
+                && walkMiniMapToward(worldPoint, playerLoc, 13)) {
+            return true;
+        }
+        return Rs2Walker.walkMiniMap(worldPoint);
     }
 
     public static WorldPoint walkCanvas(WorldPoint worldPoint) {
@@ -7840,52 +7824,33 @@ public class Rs2Walker {
 
             // Step 3: Withdraw missing transport items
             Map<Integer, Integer> missingItemsWithQuantities = transportLoadout.getWithdrawals();
-            if (!missingItemsWithQuantities.isEmpty()) {
-                log.debug("Withdrawing transport items with quantities: " + missingItemsWithQuantities);
-
-                for (Map.Entry<Integer, Integer> entry : missingItemsWithQuantities.entrySet()) {
-                    if (!Rs2Bank.hasBankItem(entry.getKey(), entry.getValue())) {
-                        log.warn("Required transport item {} unavailable at bank (need {}) — falling back direct",
-                                entry.getKey(), entry.getValue());
-                        return fallbackDirectFromBank(finalTarget, distance, "bank-quantity-changed");
-                    }
+            for (Map.Entry<Integer, Integer> entry : missingItemsWithQuantities.entrySet()) {
+                if (!Rs2Bank.hasBankItem(entry.getKey(), entry.getValue())) {
+                    log.warn("Required transport item {} unavailable at bank (need {}) — falling back direct",
+                            entry.getKey(), entry.getValue());
+                    return fallbackDirectFromBank(finalTarget, distance, "bank-quantity-changed");
                 }
-
-                // Withdraw the correct amount of each unique item
-                for (Map.Entry<Integer, Integer> entry : missingItemsWithQuantities.entrySet()) {
-                    int itemId = entry.getKey();
-                    int amountNeeded = entry.getValue();
-                    int currentQuantity = Rs2Inventory.itemQuantity(itemId);
-                    int amountToWithdraw = Math.max(0, amountNeeded );
-
-                    if (amountToWithdraw > 0) {
-                        log.debug("Withdrawing {} x {} (item ID: {})", amountToWithdraw, itemId, itemId);
-                        if (!Rs2Bank.withdrawX(itemId, amountToWithdraw)
-                                || !sleepUntil(() -> Rs2Inventory.itemQuantity(itemId)
-                                        >= currentQuantity + amountToWithdraw, 3000)) {
-                            log.warn("Failed to withdraw required transport item {} x{} — falling back direct",
-                                    itemId, amountToWithdraw);
-                            return fallbackDirectFromBank(finalTarget, distance, "withdraw-failed");
-                        }
-                    } else {
-                        log.debug("Already have enough of item {}: {} (need {})", itemId, currentQuantity, amountNeeded);
-                    }
-                }
-
-                // Wait a bit for all withdrawals to complete
-                sleepTickJitter(1);
             }
 
-            for (Integer equipmentItemId : transportLoadout.getEquipmentItemIds()) {
-                if (Rs2Equipment.isWearing(equipmentItemId)) {
-                    continue;
+            boolean restoreNotedMode = WithdrawNoteModePolicy.shouldSwitchToItemMode(
+                    WithdrawNoteModePolicy.requiresItemMode(missingItemsWithQuantities.keySet(), itemId -> {
+                        Rs2ItemModel row = Rs2Bank.getBankItemForSavedId(itemId);
+                        return row != null && row.isStackable();
+                    }),
+                    Rs2Bank.hasWithdrawAsNote());
+            String preparationFailure;
+            try {
+                preparationFailure = prepareTransportLoadoutAtBank(transportLoadout, restoreNotedMode);
+            } finally {
+                if (restoreNotedMode && !Rs2Bank.setWithdrawAsNote()) {
+                    log.warn("Failed to restore bank noted withdraw mode");
                 }
-                if (!Rs2Inventory.hasItem(equipmentItemId)
-                        || !Rs2Bank.wearItem(equipmentItemId)
-                        || !sleepUntil(() -> Rs2Equipment.isWearing(equipmentItemId), 3000)) {
-                    log.warn("Failed to equip required transport provider {}", equipmentItemId);
-                    return WalkerState.EXIT;
-                }
+            }
+            if (BANK_PREPARATION_EQUIP_FAILED.equals(preparationFailure)) {
+                return WalkerState.EXIT;
+            }
+            if (preparationFailure != null) {
+                return fallbackDirectFromBank(finalTarget, distance, preparationFailure);
             }
 
             // Step 4: Close bank
@@ -7907,6 +7872,59 @@ public class Rs2Walker {
             log.error("Error in banking workflow: " + e.getMessage(), e);
             return WalkerState.EXIT;
         }
+    }
+
+    private static final String BANK_PREPARATION_EQUIP_FAILED = "equip-failed";
+
+    private static String prepareTransportLoadoutAtBank(Rs2TransportLoadout transportLoadout,
+                                                        boolean switchToItemMode) {
+        if (switchToItemMode && !Rs2Bank.setWithdrawAsItem()) {
+            log.warn("Failed to switch bank to item withdraw mode — falling back direct");
+            return "withdraw-note-mode";
+        }
+
+        Map<Integer, Set<Integer>> withdrawnItemIds = new HashMap<>();
+        for (Map.Entry<Integer, Integer> entry : transportLoadout.getWithdrawals().entrySet()) {
+            int itemId = entry.getKey();
+            int amountToWithdraw = Math.max(0, entry.getValue());
+            if (amountToWithdraw == 0) {
+                continue;
+            }
+            Rs2ItemModel bankRow = Rs2Bank.getBankItemForSavedId(itemId);
+            TransportWithdrawalConfirmation confirmation = TransportWithdrawalConfirmation.start(
+                    itemId, bankRow == null ? -1 : bankRow.getId(), amountToWithdraw,
+                    Rs2Inventory::itemQuantity);
+            log.debug("Withdrawing {} x {} (target quantity {})",
+                    amountToWithdraw, confirmation.getItemIds(), confirmation.getTargetQuantity());
+            if (Rs2Bank.withdrawX(itemId, amountToWithdraw)) {
+                sleepUntil(() -> confirmation.evaluate(Rs2Inventory::itemQuantity, Rs2Bank.isOpen())
+                                != TransportWithdrawalConfirmation.State.PENDING,
+                        TransportWithdrawalConfirmation.TIMEOUT_MS);
+            }
+            if (confirmation.evaluate(Rs2Inventory::itemQuantity, true)
+                    != TransportWithdrawalConfirmation.State.CONFIRMED) {
+                log.warn("Failed to withdraw required transport item {} x{} (carried {} of {}) — falling back direct",
+                        itemId, amountToWithdraw, confirmation.carriedQuantity(Rs2Inventory::itemQuantity),
+                        confirmation.getTargetQuantity());
+                return "withdraw-failed";
+            }
+            withdrawnItemIds.put(itemId, confirmation.getItemIds());
+        }
+
+        for (Integer equipmentItemId : transportLoadout.getEquipmentItemIds()) {
+            Set<Integer> providerIds = WithdrawNoteModePolicy.providerItemIds(equipmentItemId, withdrawnItemIds);
+            if (providerIds.stream().anyMatch(Rs2Equipment::isWearing)) {
+                continue;
+            }
+            Integer carriedId = providerIds.stream().filter(Rs2Inventory::hasItem).findFirst().orElse(null);
+            if (carriedId == null
+                    || !Rs2Bank.wearItem(carriedId)
+                    || !sleepUntil(() -> Rs2Equipment.isWearing(carriedId), 3000)) {
+                log.warn("Failed to equip required transport provider {}", providerIds);
+                return BANK_PREPARATION_EQUIP_FAILED;
+            }
+        }
+        return null;
     }
 
     /**
@@ -8065,6 +8083,10 @@ public class Rs2Walker {
         return isMiniMapClickable(worldPoint);
     }
 
+    static boolean isRouteCameraTurning() {
+        return routeCameraYawKey != 0 || routeCameraPitchKey != 0;
+    }
+
     private static void releaseRouteCameraKeys() {
         if (routeCameraYawKey != 0) {
             Rs2Keyboard.keyRelease(routeCameraYawKey);
@@ -8088,18 +8110,31 @@ public class Rs2Walker {
                 return;
             }
             WorldPoint playerLoc = Microbot.getClient().getLocalPlayer().getWorldLocation();
-            if (playerLoc.getPlane() != walkTarget.getPlane() || playerLoc.distanceTo2D(walkTarget) < 4) {
+            if (playerLoc.getPlane() != walkTarget.getPlane()) {
                 return;
             }
             long now = System.nanoTime();
-            if (lastRouteCameraAlignAtNanos != 0L && now - lastRouteCameraAlignAtNanos < 1_200_000_000L) {
-                return;
-            }
             int worldAngle = Math.floorMod((int) Math.round(Math.toDegrees(Math.atan2(
                     walkTarget.getY() - playerLoc.getY(), walkTarget.getX() - playerLoc.getX()))), 360);
             // Rs2Camera returns legacy pitch units (128-383), not degrees.
             int startPitch = Rs2Camera.getPitch();
             boolean varyView = nextRouteCameraVariationAtNanos == 0L || now >= nextRouteCameraVariationAtNanos;
+            int distance = playerLoc.distanceTo2D(walkTarget);
+            long sinceLastTurn = lastRouteCameraAlignAtNanos == 0L ? -1L : now - lastRouteCameraAlignAtNanos;
+            RouteCameraPolicy.Decision decision = RouteCameraPolicy.decide(distance, sinceLastTurn,
+                    distance >= RouteCameraPolicy.MIN_TARGET_DISTANCE_TILES
+                            && Rs2WalkerMovement.isSceneCanvasClickable(walkTarget),
+                    Rs2WalkerMovement.SCENE_CLICKS.failedWithin(System.currentTimeMillis(),
+                            RouteCameraPolicy.RECENT_SCENE_FAILURE_MS),
+                    Rs2Camera.getAngleTo(Math.floorMod(worldAngle + routeCameraYawOffsetDegrees - 90, 360)),
+                    varyView);
+            if (decision != RouteCameraPolicy.Decision.TURN) {
+                if (decision == RouteCameraPolicy.Decision.SKIP_VISIBLE || decision == RouteCameraPolicy.Decision.SKIP_ALIGNED) {
+                    WebWalkLog.spDebug("route_camera_skip | reason={} distance={}", decision, distance);
+                }
+                return;
+            }
+            WebWalkLog.spDebug("route_camera_turn | distance={} vary={}", distance, varyView);
             if (varyView) {
                 java.util.concurrent.ThreadLocalRandom random = java.util.concurrent.ThreadLocalRandom.current();
                 routeCameraYawOffsetDegrees = random.nextInt(-12, 13);
@@ -8112,10 +8147,6 @@ public class Rs2Walker {
             }
             int viewAngle = Math.floorMod(worldAngle + routeCameraYawOffsetDegrees, 360);
             int cameraAngle = Math.floorMod(viewAngle - 90, 360);
-            if (!varyView && Math.abs(Rs2Camera.getAngleTo(cameraAngle)) < 20
-                    && Math.abs(routeCameraPitch - startPitch) <= 4) {
-                return;
-            }
             releaseRouteCameraKeys();
             int yawDirection = Integer.signum(Rs2Camera.getAngleTo(cameraAngle));
             int pitchTarget = routeCameraPitch;

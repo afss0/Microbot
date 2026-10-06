@@ -388,3 +388,66 @@ Door and scene-object scans retain a lookback window for nearby ordinary doors. 
 **Where this applies:** `Rs2Walker` raw-route scene and pending-door scans, `handleFirstRouteInteractionAtRange` transport-map construction, and `Rs2WalkerDoors.handlePendingDoorNearRawPath`.
 
 **Defensive check:** With a transport behind the raw anchor and a door ahead, select the door outside the suppression window and after plain walking. Transports at or ahead of the anchor must still block later doors. Test the production transport map used by both the pending-interaction predicate and the blocked-transport predicate, rather than filtering only the test predicates.
+
+## 21. Apply the shared energy policy before clicking the run orb
+
+Every run-enable caller must pass through `Rs2Player.toggleRunEnergy`: energy must exceed
+`Microbot.runEnergyThreshold` in hundredths of a percent (default 1000 = 10%). The
+walker previously checked whole percentages in one path while direct scene/bank calls
+bypassed the check. An already satisfied state and explicit disable do not require energy.
+
+**Why this matters:** At zero energy, repeated requests cannot enable run. The orb's
+canvas location is its bounding-box corner, outside its circular hit area. Read visibility
+and bounds on the client thread and target the center; perform mouse gestures off-thread.
+A click is only a request: the helper returns true only if the desired state is observed,
+and throttles retries while the update is pending. Normal script iterations can retry.
+
+**Where this applies:** `Rs2Player`, `Rs2Walker`, `Rs2WalkerMovement`, bank/deposit helpers,
+and the base `Script` auto-run policy. The shared threshold now consistently uses raw
+energy (>1000 by default), replacing the walker's rounded >10% (>=1100) check.
+
+**Defensive check:** `Rs2PlayerRunEnergyTest` covers threshold boundaries, explicit disable,
+missing/hidden orbs, interior geometry, pending updates, and client-thread requests.
+
+## 22. A scene walk click is only valid on a tile rendered at click time
+
+`MenuAction.WALK` carries canvas coordinates. The client resolves the destination from the
+tile under that point during the next rendered frame. A point over an unrendered tile selects
+nothing. If the camera or player moved after the point was computed, it selects a different
+tile. Checking that the projection lies inside the viewport proves neither condition.
+
+**Why this matters:** Software rendering (GPU off) draws only 25 tiles around the camera eye,
+not around the player. `Scene.getDrawDistance()` keeps reporting the GPU value after GPU is
+disabled, so read `client.isGpu()` first. Tiles beyond that square still project into the
+viewport, and the old helper reported success for clicks that set no destination. Route
+camera turns held by arrow keys can also move the view during the natural-mouse gesture.
+
+**Where this applies:** `Rs2WalkerMovement.walkFastCanvasOnScreenOnly`, `dispatchSceneWalk`,
+and the public `Rs2Walker.walkFastCanvas`. Toggle run before computing the point. Reject tiles
+within 2 of the rendered edge, and skip scene clicks while the walker is turning the camera.
+After dispatch, report success only once the client destination lies within 2 tiles of the
+target. Otherwise return false so the caller's minimap fallback runs once. After two
+consecutive failures, scene clicks pause for 3 seconds.
+
+**Defensive check:** `SceneClickPolicyTest` covers draw-distance selection, camera-relative
+bounds, destination classification, and bounded suppression.
+
+## 23. Route camera turns are for targets the scene cannot reach
+
+`Rs2Walker.alignCameraTowardWalkTarget` runs after every scene and minimap walk click. A
+visible, rendered click target gains nothing from a turn. The turn only moves the view the
+user is watching, and while its arrow keys are held, scene clicks are skipped.
+
+**Why this matters:** The old alignment re-randomised yaw offset and pitch every 5–10 seconds
+and turned even when the target was on screen. On five fixed routes, 22 of 29 turns started
+while the destination was already clickable.
+
+**Where this applies:** `RouteCameraPolicy.decide`. Turn only when the target is at least
+4 tiles away, 1.2 seconds have passed since the last turn, and one of two conditions holds:
+the target is not scene-clickable, or a scene click failed within the last 2 seconds. When
+the heading is within 20 degrees, turn only if a view variation is due. View variation
+(yaw offset and pitch) is applied only to turns that are already needed. After a scene
+fallback click toward a nearer visible tile, the walker aligns toward the requested target.
+
+**Defensive check:** `RouteCameraPolicyTest` covers visible, hidden, aligned, recently
+failed, near, and throttled cases.

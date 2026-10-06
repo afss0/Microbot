@@ -213,14 +213,51 @@ An explicit `Take` must remain `GROUND_ITEM_THIRD_OPTION`, even when an inventor
 
 **Why this matters:** The walker waited for three new matching slots after withdrawing three air runes for Falador Teleport. The runes occupy one stack, so the wait timed out and the walker incorrectly abandoned the banking route even if the withdrawal succeeded.
 
-**Pattern to follow:**
+Two more traps sit on the same check. An id-based `withdrawX` can resolve a saved id to a different bank row (linked or same-name id, see section 4), so the inventory gains the row id, not the requested one. With the bank in noted mode a non-stackable item such as jewellery or a staff arrives noted and is unusable for the transport. The bank now has a single Note toggle (`InterfaceID.Bankmain.NOTE`, actions "Enable Notes"/"Disable Notes"); `setWithdrawAs` clicks it in both directions, since the old Item button is gone and `QUANTITY1_TEXT` only selects quantity 1. Live, the game reset the toggle to Item every time the bank was opened, so noted mode only matters within one bank session; the walker switches only for non-stackable withdrawals and restores the previous mode before closing. A fixed short wait also turns a slow tick into a reported failure.
+
+**Pattern to follow:** switch to item mode only for a non-stackable item while noted mode is on, restore it in `finally`, then confirm on inventory quantity of the requested id plus the bank row id, waiting until confirmed or the bank closes, and decide from the final state.
 
 ```java
-int before = Rs2Inventory.itemQuantity(itemId);
-if (!Rs2Bank.withdrawX(itemId, amount)
-        || !sleepUntil(() -> Rs2Inventory.itemQuantity(itemId) >= before + amount, 3000)) {
-    return false;
+Rs2ItemModel row = Rs2Bank.getBankItemForSavedId(itemId);
+boolean restoreNoted = WithdrawNoteModePolicy.shouldSwitchToItemMode(
+        row == null || !row.isStackable(), Rs2Bank.hasWithdrawAsNote());
+try {
+    if (restoreNoted && !Rs2Bank.setWithdrawAsItem()) {
+        return false;
+    }
+    TransportWithdrawalConfirmation confirmation = TransportWithdrawalConfirmation.start(
+            itemId, row == null ? -1 : row.getId(), amount, Rs2Inventory::itemQuantity);
+    if (Rs2Bank.withdrawX(itemId, amount)) {
+        sleepUntil(() -> confirmation.evaluate(Rs2Inventory::itemQuantity, Rs2Bank.isOpen())
+                != TransportWithdrawalConfirmation.State.PENDING, TransportWithdrawalConfirmation.TIMEOUT_MS);
+    }
+    return confirmation.evaluate(Rs2Inventory::itemQuantity, true) == TransportWithdrawalConfirmation.State.CONFIRMED;
+} finally {
+    if (restoreNoted) {
+        Rs2Bank.setWithdrawAsNote();
+    }
 }
 ```
 
 **Where this applies:** `Rs2Walker.walkWithBankingState` and any bank or inventory workflow that verifies a quantity of stackable items.
+
+## 14. Address chatbox and Grand Exchange widgets through gameval, and read the offer price from its long varp
+
+Chatbox (group 162) child indices shift when Jagex adds a component; RuneLite regenerates `net.runelite.api.gameval.InterfaceID` each update, but raw `(162, n)` pairs stay stale. The Grand Exchange offer price is no longer a varbit: varbit 4398 was removed on 30 Sep 2026 and the in-progress price now lives in long varp 5753, read with `client.getVarpLongValue`.
+
+**Why this matters:** After the 30 Sep 2026 update, `MES_LAYER_SCROLLCONTENTS` moved from 162:52 to 162:53. The buy flow waited 5 s on 162:52 for the search prompt every time, `getVarbitValue(4398)` threw `IndexOutOfBoundsException` on every price check and printed the stack trace in chat, and buy/sell returned success before the offer was placed because they waited on the details panel (465:15) instead of the setup panel (465:26).
+
+**Pattern to follow:**
+
+```java
+// Wrong
+Rs2Widget.sleepUntilHasWidgetText("Start typing", 162, 52, false, 5000);
+Microbot.getVarbitValue(4398);
+
+// Right
+Rs2Widget.sleepUntilHasWidgetText("Start typing", InterfaceID.CHATBOX,
+        InterfaceID.Chatbox.MES_LAYER_SCROLLCONTENTS & 0xFFFF, false, 5000);
+Microbot.getClientThread().runOnClientThreadOptional(() -> Microbot.getClient().getVarpLongValue(5753));
+```
+
+**Where this applies:** `Rs2GrandExchange`, `GrandExchangeWidget`, `Rs2Dialogue`, `Rs2Bank` X-amount prompts, and any helper reading chatbox prompts or GE offer state.

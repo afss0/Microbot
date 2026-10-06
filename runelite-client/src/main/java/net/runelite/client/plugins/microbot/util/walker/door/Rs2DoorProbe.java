@@ -120,7 +120,9 @@ public final class Rs2DoorProbe {
         // all, but both are crossed by moving through them, and the door cascade can only wait for an
         // edge to open — a wait a moves-you obstacle can never satisfy. Deciding on the name alone is
         // what handed a Climb-over stile to the door handler and cost twenty seconds per crossing.
-        if (Rs2DoorClassifier.isMovesYouAction(transport.getAction())) {
+        if (Rs2DoorClassifier.isMovesYouAction(transport.getAction())
+                || Rs2DoorClassifier.isTrapdoorName(transport.getTarget())
+                || Rs2DoorClassifier.isTrapdoorName(transport.getDisplayInfo())) {
             return false;
         }
 		return Rs2DoorClassifier.isDoorLikeGameObjectName(transport.getTarget())
