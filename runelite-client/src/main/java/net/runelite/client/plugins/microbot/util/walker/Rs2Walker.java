@@ -456,6 +456,10 @@ public class Rs2Walker {
         // still (or worse, a step the wrong way) before the new route's first click. Per-edge
         // cooldowns survive on purpose: hammering one door across two walks is still hammering.
         doorAttemptLedger.clearLatestAttempt();
+        // Successful crossings belong to the previous route, too. Keeping their 10s suppression
+        // hides a self-closing entrance on a return walk and lets scans select the door beyond it.
+        // The separate per-edge attempt cooldown above remains intact.
+        doorAttemptLedger.clearOpenedDoors();
         routeState.walledDoorEdgeFrom = null;
         routeState.walledDoorEdgeTo = null;
         routeState.walledDoorEdgeAtMs = 0L;
@@ -6783,6 +6787,7 @@ public class Rs2Walker {
         return routeState.routeProgressIdx;
     }
 
+    /** Anchors later click selection without treating an issued click as observed route progress. */
     static void hintRouteProgressIndex(List<WorldPoint> path, int hintedIdx, WorldPoint target) {
         if (path == null || path.isEmpty() || hintedIdx < 0 || hintedIdx >= path.size()) {
             return;
@@ -6802,13 +6807,13 @@ public class Rs2Walker {
             routeState.routeProgressPathEnd = pathEnd;
             routeState.routeProgressPathSize = path.size();
             routeState.routeProgressIdx = hintedIdx;
-            recordRouteProgressAdvanced();
+            // Start the new route's stagnation clock, but a click hint is not player movement.
+            routeState.routeProgressAdvancedAtMs = System.currentTimeMillis();
             return;
         }
 
         if (hintedIdx > routeState.routeProgressIdx) {
             routeState.routeProgressIdx = hintedIdx;
-            recordRouteProgressAdvanced();
         }
     }
 
