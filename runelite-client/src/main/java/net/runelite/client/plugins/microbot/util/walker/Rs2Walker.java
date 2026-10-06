@@ -375,8 +375,9 @@ public class Rs2Walker {
 
     /**
      * When the last walkable path tile is within this Chebyshev distance of the goal, treat the leg as a
-     * "short interior" finish (e.g. door → small room): cap {@link #tightFinishThreshold} so we do not
-     * return {@link WalkerState#ARRIVED} while still outside the building.
+     * "short interior" finish (e.g. door → small room): the final canvas click pins the goal tile itself.
+     * (The finish distance is no longer capped at this radius — arrival is unconditional within the
+     * configured finish distance; see {@link #tightFinishThreshold}.)
      */
     private static final int TIGHT_PATH_GOAL_GAP = 4;
 
@@ -675,54 +676,21 @@ public class Rs2Walker {
 
 
     /**
-     * Caps configured finish distance when the route already ends very close to the marked goal.
-     * Without this, a large "Finish distance" (e.g. 5) allows {@link WalkerState#ARRIVED} on the
-     * wrong side of a wall/door for small interiors. When {@code dLast &lt; TIGHT_PATH_GOAL_GAP}, cap is {@code 1};
-     * when {@code dLast == TIGHT_PATH_GOAL_GAP}, cap is {@code 2} (outdoor micro-walking relief at the gap radius).
-     * <p>
-     * The cap is skipped when the goal tile is reachable from the player's current position (no wall,
-     * closed door, or other collision obstacle in between). Without this guard, even an open-field
-     * finish forces the walker to keep clicking tiles until it is within 1–2 tiles of the goal,
-     * ignoring the configured finish distance entirely.
+     * Returns the configured finish distance, unconditionally.
+     *
+     * <p><b>Fork policy: the walk completes whenever the player is within the configured finish
+     * distance of the goal — no exceptions.</b> Upstream capped this distance to 1–2 tiles when
+     * the route ended within {@link #TIGHT_PATH_GOAL_GAP} of a goal that was not reachable from
+     * the player's position (typically a wall or closed door between), making walks refuse to
+     * complete until the player was almost touching the blocked goal. The cap — and its
+     * {@code isGoalReachable} BFS guard — were removed: completion is purely distance-based
+     * (default 10 Chebyshev tiles; see {@code ShortestPathConfig#reachedDistance}).
      */
     static int tightFinishThreshold(WorldPoint goal, WorldPoint pathLastWalkable, int configuredChebyshev) {
-        int cfg = Math.max(0, configuredChebyshev);
-        if (goal == null || pathLastWalkable == null) {
-            return cfg;
-        }
-        if (goal.getPlane() != pathLastWalkable.getPlane()) {
-            return cfg;
-        }
-        int dLast = pathLastWalkable.distanceTo2D(goal);
-        if (dLast <= TIGHT_PATH_GOAL_GAP) {
-            // If the goal is reachable from the player's current position (no wall/door
-            // blocking), the tight cap is unnecessary — the walker can walk directly to
-            // the goal without needing to be 1-2 tiles away first.
-            if (isGoalReachable(goal)) {
-                return cfg;
-            }
-            if (dLast < TIGHT_PATH_GOAL_GAP) {
-                return Math.min(cfg, 1);
-            }
-            return Math.min(cfg, 2);
-        }
-        return cfg;
+        return Math.max(0, configuredChebyshev);
     }
 
 
-
-    /**
-     * Returns {@code true} when the goal tile is on the same plane as the player and
-     * walkable/reachable via the collision map from the player's current position.
-     * Used by {@link #tightFinishThreshold} to determine whether a wall or closed door
-     * actually separates the player from the goal.
-     */
-    private static boolean isGoalReachable(WorldPoint goal) {
-        if (goal == null) return false;
-        WorldPoint playerLoc = Rs2Player.getWorldLocation();
-        if (playerLoc == null || playerLoc.getPlane() != goal.getPlane()) return false;
-        return Rs2Tile.isTileReachable(goal);
-    }
 
     /**
      * After opening a door, if the walk goal is still close, scene-click a random walkable tile near the
@@ -1368,32 +1336,13 @@ public class Rs2Walker {
             return WalkerState.MOVING;
         }
         int distToTarget = playerLocWalk.distanceTo(target);
-        LocalPoint localTarget = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), target);
-        boolean walkableCheck = Rs2Tile.isWalkable(localTarget);
-        Map<WorldPoint, Integer> reachableWithinDistance = distToTarget <= distance
-                ? Rs2Tile.getReachableTilesFromTile(playerLocWalk, distance)
-                : Collections.emptyMap();
-        boolean reachableTileCheck = distToTarget <= distance && reachableWithinDistance.containsKey(target);
-
-        // An unwalkable target is normal — you cannot stand ON a door, chest or bank booth, so the
-        // walk has to finish beside it. But distanceTo is straight-line and knows nothing about walls,
-        // so "within distance of an object" was reported as ARRIVED even with a wall between: the
-        // caller then tried to interact from the wrong side of it and the script failed with the
-        // walker claiming success. Require somewhere we can actually STAND next to the target.
-        //
-        // Falls back to the old distance-only answer when the BFS is unavailable, so a reachability
-        // hiccup cannot turn arrival into a walk that never terminates.
-        boolean unwalkableTargetReached = !walkableCheck && distToTarget <= distance
-                && (reachableWithinDistance.isEmpty()
-                || hasReachableNeighbour(target, reachableWithinDistance));
-
-        if (reachableTileCheck || unwalkableTargetReached) {
+        // Fork policy: arrival is purely distance-based — within the configured finish distance
+        // (default 10 Chebyshev tiles) the walk always completes, no exceptions. The old gates
+        // (goal tile must be in the reachable set; an unwalkable goal needs a reachable tile
+        // beside it — "arrival_declined_unreachable") are removed: they kept the walker walking
+        // while already within the finish distance.
+        if (distToTarget <= distance) {
             return WalkerState.ARRIVED;
-        }
-        if (!walkableCheck && distToTarget <= distance && !reachableWithinDistance.isEmpty()) {
-            WebWalkLog.spInfo("arrival_declined_unreachable | target={} player={} dist={} — within distance "
-                            + "but no reachable tile beside it; continuing",
-                    compactWorldPoint(target), compactWorldPoint(playerLocWalk), distToTarget);
         }
 
         final Rs2ActiveRouteStatus routeStatus = Rs2PathApi.getActiveRouteStatus();
@@ -1478,13 +1427,9 @@ public class Rs2Walker {
             return WalkerState.MOVING;
         }
 
-        // Arrived? (mirrors walkWithStateInternal's arrival test)
+        // Arrived? (mirrors walkWithStateInternal's arrival test — purely distance-based)
         int distToTarget = playerLoc.distanceTo(target);
-        LocalPoint localTarget = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), target);
-        boolean walkableCheck = localTarget != null && Rs2Tile.isWalkable(localTarget);
-        boolean reachableTileCheck = distToTarget <= distance
-                && Rs2Tile.getReachableTilesFromTile(playerLoc, distance).containsKey(target);
-        if (reachableTileCheck || (!walkableCheck && distToTarget <= distance)) {
+        if (distToTarget <= distance) {
             return WalkerState.ARRIVED;
         }
 
@@ -10381,13 +10326,8 @@ public class Rs2Walker {
             // Transient snapshot; main walk / `processWalk` exits when not logged in — MOVING retries next beat.
             return WalkerState.MOVING;
         }
-        Client rlClient = Microbot.getClient();
-        WorldView wv = rlClient != null ? rlClient.getTopLevelWorldView() : null;
-        LocalPoint targetLocal = wv != null ? LocalPoint.fromWorld(wv, target) : null;
-        boolean nearUnwalkableGoal = targetLocal != null
-                && !Rs2Tile.isWalkable(targetLocal)
-                && pl.distanceTo(target) <= distance;
-        if (Rs2Tile.getReachableTilesFromTile(pl, distance).containsKey(target) || nearUnwalkableGoal) {
+        // Fork policy: arrival is purely distance-based (see walkWithStateInternal).
+        if (pl.distanceTo(target) <= distance) {
             return WalkerState.ARRIVED;
         }
         final Rs2ActiveRouteStatus routeStatus = Rs2PathApi.getActiveRouteStatus();
