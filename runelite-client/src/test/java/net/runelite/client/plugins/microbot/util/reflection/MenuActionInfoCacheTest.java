@@ -32,9 +32,9 @@ public class MenuActionInfoCacheTest {
     /** Legacy byte-garbage shape — still supported for caches written by older injects. */
     private static final String BYTE_MENU_ACTION_DESCRIPTOR =
             "(IIIIIILjava/lang/String;Ljava/lang/String;IIB)V";
-    /** Shape the currently pinned injected-client ships (rev241+): int garbage. */
+    /** Shape the currently pinned injected-client ships (ev/iv): byte garbage. */
     private static final String CURRENT_MENU_ACTION_DESCRIPTOR =
-            INTEGER_MENU_ACTION_DESCRIPTOR;
+            BYTE_MENU_ACTION_DESCRIPTOR;
 
     @Rule
     public TemporaryFolder tempFolder = new TemporaryFolder();
