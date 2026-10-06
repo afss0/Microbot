@@ -105,6 +105,7 @@ Used during merges to verify nothing is lost.
   - **Crafting** (`ascript/crafting/`) — Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry
   - **Random event handler** (`ascript/eventdismiss/`) — always-on Genie/Count Check dismissal + XP lamp use (lamp skill configurable); banking interlock keeps lamps out of deposits (locked lamp slot + bank yield)
   - **Cannonball Smelter** (`ascript/cannonballsmelter/`) — smelt steel bars into cannonballs (Edgeville, Shilo Village, Prifddinas, Port Phasmatys); mould as a locked slot; Jewelry-style random-AFK layer (`cannonballAfk`)
+  - **Firemaking** (`ascript/firemaking/`) — burn logs on fires / forester's campfires (GE corners, Castle Wars); deadlock-free tick-driven burn tracking (stall re-engage + relight), ID-only fire lookup, locked tinderbox slot; Jewelry-style random-AFK layer (`firemakingAfk`)
 - **Anti-detection:**
   - All timing uses `Rs2Random.logNormalBounded()` with log-normal distributions (not uniform)
   - AFK timing: `Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier)`
@@ -135,6 +136,11 @@ Used during merges to verify nothing is lost.
   - Each retry waits the backoff and re-checks the inventory **before** re-clicking (a slow landing is confirmed, never double-withdrawn); the bank window is left open across attempts — the loop never closes/re-opens it.
   - The `Failed to withdraw` WARN fires only after all attempts are exhausted; late-landing recoveries log at DEBUG.
   - Merge check: `grep "WITHDRAW_GRACE_TIMEOUT_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1`
+- **Firemaking module (Oct 2026):**
+  - New `FIREMAKING` module — the robust replacement for the hub GEFiremaker pattern: no persistent "burning" flag (the hub's guard could deadlock forever when the fire died in the unprotected engage window or the loop idled through a burn's end); state is re-derived from the log count + a 20 s stall window every tick, so pause/resume, fire death and restarts self-heal.
+  - Fires are found by object id only (`49927` → `26185`, radius 12, `...OnClientThread()`): scenery fires that merely look like fires (e.g. Barbarian Village, id 43475) are not convertible. No fire in range ⇒ light own at the configured spot (tinderbox locked tool slot, numeric-id withdraw) — the tend then creates/converts the campfire.
+  - Dispatch follows the hub AutoWoodcutting campfire flow: `useItemOnObject` → brief make-X probe (SPACE only if the prompt shows; single log type auto-burns since 12 Aug 2026) → confirm via tending animation or first log consumed; 3 failed starts stop with a Discord notify.
+  - Merge check: `grep "BURN_STALL_WINDOW_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/firemaking/FiremakingScript.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename
