@@ -48,6 +48,7 @@ Used during merges to verify nothing is lost.
 ### Unconditional Finish Distance (no exceptions)
 - **Files:** `Rs2Walker.java` → `tightFinishThreshold()`, `walkWithStateInternal()`, `walkStep()`, `walkWithBankedTransportsAndStateLocked()`
 - **What:** The walk completes whenever the player is within the configured finish distance (default 10 Chebyshev tiles) of the goal — no exceptions. Arrival is purely distance-based: the upstream 1–2 tile tight cap (and its `isGoalReachable` BFS guard) is removed, as is the `arrival_declined_unreachable` gate that declined arrival next to an unwalkable goal without a reachable tile beside it.
+- **Trade-off:** a blocked goal no longer forces proximity — ARRIVED can land up to the finish distance away on the wrong side of a wall/door; callers must not assume adjacency.
 
 ### RouteRecovery Skip Occupied Tile
 - **File:** `RouteRecovery.java`
