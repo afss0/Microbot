@@ -8,6 +8,7 @@ import net.runelite.api.Varbits;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabsScript;
+import net.runelite.client.plugins.microbot.ascript.barbarianfishing.BarbarianFishingScript;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianVillageFisherScript;
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterScript;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
@@ -61,7 +62,8 @@ public class AScript extends Script {
             new JewelEnchantScript(),
             new CannonballSmelterScript(),
             new AmmoniteCrabsScript(),
-            new FiremakingScript()
+            new FiremakingScript(),
+            new BarbarianFishingScript()
     );
 
     /** Previous tick's active state per module — for NONE → active transition detection. */

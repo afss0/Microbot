@@ -15,7 +15,8 @@ public enum ScriptType {
     JEWEL_ENCHANT("Jewel Enchant"),
     CANNONBALL_SMELTER("Cannonball Smelter"),
     AMMONITE_CRABS("Ammonite Crabs"),
-    FIREMAKING("Firemaking");
+    FIREMAKING("Firemaking"),
+    BARBARIAN_FISHING("Barbarian Fishing");
 
     private final String name;
 
