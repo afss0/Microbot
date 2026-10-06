@@ -9,6 +9,7 @@ import net.runelite.client.config.Range;
 import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabFood;
 import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabLocation;
 import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabPotion;
+import net.runelite.client.plugins.microbot.ascript.barbarianfishing.BarbarianFishingActivity;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingFunctions;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingType;
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterFurnace;
@@ -631,6 +632,49 @@ public interface AScriptConfig extends Config {
             section = firemakingSection
     )
     default boolean firemakingAfk() {
+        return true;
+    }
+
+    // ── Barbarian Fishing ───────────────────────────────────────
+
+    @ConfigSection(
+            name = "Barbarian Fishing",
+            description = "Barbarian fishing settings",
+            position = 9,
+            closedByDefault = true
+    )
+    String barbarianFishingSection = "barbarianfishing";
+
+    @ConfigItem(
+            keyName = "barbarianFishingActivity",
+            name = "Activity",
+            description = "Choose the barbarian fishing activity to perform",
+            position = 0,
+            section = barbarianFishingSection
+    )
+    default BarbarianFishingActivity barbarianFishingActivity() {
+        return BarbarianFishingActivity.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "barbarianFishingAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds after every dropped batch",
+            position = 1,
+            section = barbarianFishingSection
+    )
+    default boolean barbarianFishingAfk() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "barbarianFishingHarpoonSpec",
+            name = "Dragon Harpoon Spec",
+            description = "Activate the dragon harpoon special attack when worn and its energy is full",
+            position = 2,
+            section = barbarianFishingSection
+    )
+    default boolean barbarianFishingHarpoonSpec() {
         return true;
     }
 
