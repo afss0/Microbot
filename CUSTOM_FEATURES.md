@@ -106,6 +106,7 @@ Used during merges to verify nothing is lost.
   - **Random event handler** (`ascript/eventdismiss/`) — always-on Genie/Count Check dismissal + XP lamp use (lamp skill configurable); banking interlock keeps lamps out of deposits (locked lamp slot + bank yield)
   - **Cannonball Smelter** (`ascript/cannonballsmelter/`) — smelt steel bars into cannonballs (Edgeville, Shilo Village, Prifddinas, Port Phasmatys); mould as a locked slot; Jewelry-style random-AFK layer (`cannonballAfk`)
   - **Firemaking** (`ascript/firemaking/`) — burn logs on fires / forester's campfires (GE corners, Castle Wars); deadlock-free tick-driven burn tracking (stall re-engage + relight), ID-only fire lookup, locked tinderbox slot; Jewelry-style random-AFK layer (`firemakingAfk`)
+  - **Barbarian Fishing** (`ascript/barbarianfishing/`) — powerfish leaping fish at Otto's Grotto (drop-only); rod + feather locked slots, walk-gated bank at the Barbarian Outpost chest, spec actuation verified before latching, sliced humanized mouse drops; Jewelry-style random-AFK layer (`barbarianFishingAfk`)
 - **Anti-detection:**
   - All timing uses `Rs2Random.logNormalBounded()` with log-normal distributions (not uniform)
   - AFK timing: `Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier)`
@@ -141,6 +142,11 @@ Used during merges to verify nothing is lost.
   - Fires are found by object id only (`49927` → `26185`, radius 12, `...OnClientThread()`): scenery fires that merely look like fires (e.g. Barbarian Village, id 43475) are not convertible. No fire in range ⇒ light own at the configured spot (tinderbox locked tool slot, numeric-id withdraw) — the tend then creates/converts the campfire.
   - Dispatch follows the hub AutoWoodcutting campfire flow: `useItemOnObject` → brief make-X probe (SPACE only if the prompt shows; single log type auto-burns since 12 Aug 2026) → confirm via tending animation or first log consumed; 3 failed starts stop with a Discord notify.
   - Merge check: `grep "BURN_STALL_WINDOW_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/firemaking/FiremakingScript.java | head -1`
+- **Barbarian Fishing module (Oct 2026):**
+  - New `BARBARIAN_FISHING` module — migrated from the Hub `barbarianfishing` plugin (Otto's Grotto rod fishing) onto the module contract, with the hub review findings folded in instead of carried: the dragon-harpoon spec activation is verified via `getSpecState()` before latching (a missed orb click no longer burns the whole energy cycle), the camera turn runs off the client thread, and every action is a client-mouse click (no menu injection).
+  - Powerdrop with rod + feathers as locked anchors; drops slice 5–9 items per tick with count-drop verification; the post-batch break + `barbarianFishingAfk` run when a drop session completes.
+  - Banking is restock-only (rod/feather missing): walk-gated to the Barbarian Outpost chest (`BankLocation.BARBARIAN_OUTPOST`); `isBankMissingMaterials` uses the retrying `hasBankItem` so a stale bank mirror cannot stop the run.
+  - Merge check: `grep "HARPOON_SPEC_MAX_ATTEMPTS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/barbarianfishing/BarbarianFishingScript.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename
