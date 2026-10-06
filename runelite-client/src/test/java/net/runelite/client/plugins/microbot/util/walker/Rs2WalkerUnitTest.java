@@ -2074,16 +2074,22 @@ public class Rs2WalkerUnitTest {
     }
 
     @Test
-    public void routeArrivalSatisfied_usesTightFinalApproachThreshold() {
+    public void routeArrivalSatisfied_usesConfiguredFinishDistanceUnconditionally() {
         WorldPoint goal = new WorldPoint(3304, 3336, 0);
         List<WorldPoint> path = Arrays.asList(
                 new WorldPoint(3300, 3333, 0),
                 goal);
 
+        // Within the configured finish distance => satisfied, including where the old
+        // tight cap (1-2 tiles) used to refuse arrival.
         assertTrue(Rs2Walker.routeArrivalSatisfied(
                 new WorldPoint(3303, 3336, 0), goal, path, 10));
-        assertFalse(Rs2Walker.routeArrivalSatisfied(
+        assertTrue(Rs2Walker.routeArrivalSatisfied(
                 new WorldPoint(3302, 3336, 0), goal, path, 10));
+        // Beyond the configured finish distance => not satisfied.
+        assertFalse(Rs2Walker.routeArrivalSatisfied(
+                new WorldPoint(3293, 3336, 0), goal, path, 10));
+        // Different plane => never satisfied.
         assertFalse(Rs2Walker.routeArrivalSatisfied(
                 new WorldPoint(3304, 3336, 1), goal, path, 10));
     }

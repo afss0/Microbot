@@ -45,9 +45,9 @@ Used during merges to verify nothing is lost.
 
 ## Walker
 
-### isGoalReachable Guard
-- **File:** `Rs2Walker.java` → `tightFinishThreshold()`
-- **What:** Skips tight finish cap when goal tile is reachable from player's current position (no wall/door blocking). Prevents walker from forcing 1-2 tile proximity when direct path exists.
+### Unconditional Finish Distance (no exceptions)
+- **Files:** `Rs2Walker.java` → `tightFinishThreshold()`, `walkWithStateInternal()`, `walkStep()`, `walkWithBankedTransportsAndStateLocked()`
+- **What:** The walk completes whenever the player is within the configured finish distance (default 10 Chebyshev tiles) of the goal — no exceptions. Arrival is purely distance-based: the upstream 1–2 tile tight cap (and its `isGoalReachable` BFS guard) is removed, as is the `arrival_declined_unreachable` gate that declined arrival next to an unwalkable goal without a reachable tile beside it.
 
 ### RouteRecovery Skip Occupied Tile
 - **File:** `RouteRecovery.java`
@@ -179,7 +179,7 @@ When merging upstream, verify these files/features are present:
 grep -r "WeatherModulation" runelite-client/src/main/java/ | head -5
 grep -r "detectable automation" runelite-client/src/main/java/ | head -5
 grep -r "bindAllInterfaces" runelite-client/src/main/java/ | head -5
-grep -r "isGoalReachable" runelite-client/src/main/java/ | head -5
+grep "return Math.max(0, configuredChebyshev);" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
 grep -r "Skip the tile" runelite-client/src/main/java/ | head -5
 grep "microbot_afss0" settings.gradle.kts
 grep "return 15" runelite-client/src/main/java/net/runelite/client/plugins/microbot/shortestpath/ShortestPathConfig.java | head -1
