@@ -10746,6 +10746,10 @@ public class Rs2Walker {
         return isMiniMapClickable(worldPoint);
     }
 
+    static boolean isRouteCameraTurning() {
+        return routeCameraYawKey != 0 || routeCameraPitchKey != 0;
+    }
+
     private static void releaseRouteCameraKeys() {
         if (routeCameraYawKey != 0) {
             Rs2Keyboard.keyRelease(routeCameraYawKey);
