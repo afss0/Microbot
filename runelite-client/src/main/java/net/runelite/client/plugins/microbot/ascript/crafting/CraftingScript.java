@@ -212,37 +212,38 @@ public class CraftingScript implements AModule {
     private boolean bankMissingGems(AScriptConfig config) {
         CraftingGem gem = config.gemType();
         boolean amethyst = gem.getName().contains("Amethyst");
-        // Only check bank for items missing from inventory
-        if (!AScriptBank.hasUnnotedItem("chisel") && !Rs2Bank.hasItem("chisel")) return true;
+        // Only check bank for items missing from inventory (retrying bank reads — the bare
+        // mirror read can report an item the bank no longer lists)
+        if (!AScriptBank.hasUnnotedItem("chisel") && !Rs2Bank.hasBankItem("chisel", 1)) return true;
         if (amethyst) {
-            return !Rs2Inventory.hasItem(21347) && !Rs2Bank.hasItem(21347);
+            return !Rs2Inventory.hasItem(21347) && !Rs2Bank.hasBankItem(21347, 1);
         }
-        return !AScriptBank.hasUnnotedItem("uncut " + gem.getName()) && !Rs2Bank.hasItem("uncut " + gem.getName());
+        return !AScriptBank.hasUnnotedItem("uncut " + gem.getName()) && !Rs2Bank.hasBankItem("uncut " + gem.getName(), 1);
     }
 
     private boolean bankMissingGlass() {
-        if (!AScriptBank.hasUnnotedItem("glassblowing pipe") && !Rs2Bank.hasItem("glassblowing pipe")) return true;
-        return !AScriptBank.hasUnnotedItem("molten glass") && !Rs2Bank.hasItem("molten glass");
+        if (!AScriptBank.hasUnnotedItem("glassblowing pipe") && !Rs2Bank.hasBankItem("glassblowing pipe", 1)) return true;
+        return !AScriptBank.hasUnnotedItem("molten glass") && !Rs2Bank.hasBankItem("molten glass", 1);
     }
 
     private boolean bankMissingStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
         if (staff == CraftingStaff.NONE) return false;
-        if (!AScriptBank.hasUnnotedItem(staff.getItemName()) && !Rs2Bank.hasItem(staff.getItemName())) return true;
-        return !AScriptBank.hasUnnotedItem(staff.getOrb()) && !Rs2Bank.hasItem(staff.getOrb());
+        if (!AScriptBank.hasUnnotedItem(staff.getItemName()) && !Rs2Bank.hasBankItem(staff.getItemName(), 1)) return true;
+        return !AScriptBank.hasUnnotedItem(staff.getOrb()) && !Rs2Bank.hasBankItem(staff.getOrb(), 1);
     }
 
     private boolean bankMissingFlax() {
-        return !AScriptBank.hasUnnotedItem("flax") && !Rs2Bank.hasItem("flax");
+        return !AScriptBank.hasUnnotedItem("flax") && !Rs2Bank.hasBankItem("flax", 1);
     }
 
     private boolean bankMissingDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
         if (armour == CraftingDragonLeather.NONE) return false;
         String needle = config.useCostumeNeedle() ? "costume needle" : "needle";
-        if (!Rs2Inventory.hasItem(armour.getLeatherId()) && !Rs2Bank.hasItem(armour.getLeatherId())) return true;
-        if (!Rs2Inventory.hasItem(needle) && !Rs2Bank.hasItem(needle)) return true;
-        if (!config.useCostumeNeedle() && !AScriptBank.hasUnnotedItem("thread") && !Rs2Bank.hasItem("thread")) return true;
+        if (!Rs2Inventory.hasItem(armour.getLeatherId()) && !Rs2Bank.hasBankItem(armour.getLeatherId(), 1)) return true;
+        if (!Rs2Inventory.hasItem(needle) && !Rs2Bank.hasBankItem(needle, 1)) return true;
+        if (!config.useCostumeNeedle() && !AScriptBank.hasUnnotedItem("thread") && !Rs2Bank.hasBankItem("thread", 1)) return true;
         return false;
     }
 
@@ -252,16 +253,16 @@ public class CraftingScript implements AModule {
         // Check ONLY items that are missing from inventory
         // If mould is already in inventory, don't require it in bank
         if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId())
-                && !Rs2Bank.hasItem(item.getJewelryType().getMetalBarId())) {
+                && !Rs2Bank.hasBankItem(item.getJewelryType().getMetalBarId(), 1)) {
             return true; // need bar, bank doesn't have it
         }
         if (!Rs2Inventory.hasItem(item.getToolItemID())
-                && !Rs2Bank.hasItem(item.getToolItemID())) {
+                && !Rs2Bank.hasBankItem(item.getToolItemID(), 1)) {
             return true; // need mould, bank doesn't have it
         }
         if (item.hasGem()
                 && !Rs2Inventory.hasItem(item.getGem().getCutItemID())
-                && !Rs2Bank.hasItem(item.getGem().getCutItemID())) {
+                && !Rs2Bank.hasBankItem(item.getGem().getCutItemID(), 1)) {
             return true; // need cut gem, bank doesn't have it
         }
         return false;
@@ -288,11 +289,12 @@ public class CraftingScript implements AModule {
         boolean amethyst = gem.getName().contains("Amethyst");
         StringBuilder sb = new StringBuilder();
         if (amethyst) {
-            if (!Rs2Inventory.hasItem(21347)) sb.append("Amethyst block (not in bank), ");
-            if (!AScriptBank.hasUnnotedItem("chisel")) sb.append("chisel (not in bank), ");
+            if (!Rs2Inventory.hasItem(21347) && !Rs2Bank.hasBankItem(21347, 1)) sb.append("Amethyst block (not in bank), ");
+            if (!AScriptBank.hasUnnotedItem("chisel") && !Rs2Bank.hasBankItem("chisel", 1)) sb.append("chisel (not in bank), ");
         } else {
-            if (!AScriptBank.hasUnnotedItem("uncut " + gem.getName())) sb.append("uncut ").append(gem.getName()).append(" (not in bank), ");
-            if (!AScriptBank.hasUnnotedItem("chisel")) sb.append("chisel (not in bank), ");
+            if (!AScriptBank.hasUnnotedItem("uncut " + gem.getName()) && !Rs2Bank.hasBankItem("uncut " + gem.getName(), 1))
+                sb.append("uncut ").append(gem.getName()).append(" (not in bank), ");
+            if (!AScriptBank.hasUnnotedItem("chisel") && !Rs2Bank.hasBankItem("chisel", 1)) sb.append("chisel (not in bank), ");
         }
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
@@ -300,8 +302,10 @@ public class CraftingScript implements AModule {
 
     private String describeMissingGlass() {
         StringBuilder sb = new StringBuilder();
-        if (!AScriptBank.hasUnnotedItem("molten glass")) sb.append("molten glass (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem("glassblowing pipe")) sb.append("glassblowing pipe (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem("molten glass") && !Rs2Bank.hasBankItem("molten glass", 1))
+            sb.append("molten glass (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem("glassblowing pipe") && !Rs2Bank.hasBankItem("glassblowing pipe", 1))
+            sb.append("glassblowing pipe (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -310,26 +314,30 @@ public class CraftingScript implements AModule {
         CraftingStaff staff = config.staffType();
         if (staff == CraftingStaff.NONE) return "";
         StringBuilder sb = new StringBuilder();
-        if (!AScriptBank.hasUnnotedItem(staff.getItemName())) sb.append(staff.getItemName()).append(" (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem(staff.getOrb())) sb.append(staff.getOrb()).append(" (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(staff.getItemName()) && !Rs2Bank.hasBankItem(staff.getItemName(), 1))
+            sb.append(staff.getItemName()).append(" (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(staff.getOrb()) && !Rs2Bank.hasBankItem(staff.getOrb(), 1))
+            sb.append(staff.getOrb()).append(" (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
 
     private String describeMissingFlax() {
-        return !AScriptBank.hasUnnotedItem("flax") ? "flax (not in bank)" : "";
+        return !AScriptBank.hasUnnotedItem("flax") && !Rs2Bank.hasBankItem("flax", 1) ? "flax (not in bank)" : "";
     }
 
     private String describeMissingDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
         if (armour == CraftingDragonLeather.NONE) return "";
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(armour.getLeatherId())) sb.append(armour.getName()).append(" (not in bank), ");
+        if (!Rs2Inventory.hasItem(armour.getLeatherId()) && !Rs2Bank.hasBankItem(armour.getLeatherId(), 1))
+            sb.append(armour.getName()).append(" (not in bank), ");
         boolean hasNeedle = config.useCostumeNeedle()
-                ? AScriptBank.hasUnnotedItem("costume needle")
-                : AScriptBank.hasUnnotedItem("needle");
+                ? AScriptBank.hasUnnotedItem("costume needle") || Rs2Bank.hasBankItem("costume needle", 1)
+                : AScriptBank.hasUnnotedItem("needle") || Rs2Bank.hasBankItem("needle", 1);
         if (!hasNeedle) sb.append(config.useCostumeNeedle() ? "costume needle" : "needle").append(" (not in bank), ");
-        boolean hasThread = config.useCostumeNeedle() || AScriptBank.hasUnnotedItem("thread");
+        boolean hasThread = config.useCostumeNeedle()
+                || AScriptBank.hasUnnotedItem("thread") || Rs2Bank.hasBankItem("thread", 1);
         if (!hasThread) sb.append("thread (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
@@ -339,11 +347,14 @@ public class CraftingScript implements AModule {
         JewelryItem item = config.jewelryItem();
         if (item == JewelryItem.NONE) return "";
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId()))
+        if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId())
+                && !Rs2Bank.hasBankItem(item.getJewelryType().getMetalBarId(), 1))
             sb.append(item.getJewelryType().getLabel()).append(" (not in bank), ");
-        if (!Rs2Inventory.hasItem(item.getToolItemID()))
+        if (!Rs2Inventory.hasItem(item.getToolItemID())
+                && !Rs2Bank.hasBankItem(item.getToolItemID(), 1))
             sb.append("mould (not in bank), ");
-        if (item.hasGem() && !Rs2Inventory.hasItem(item.getGem().getCutItemID()))
+        if (item.hasGem() && !Rs2Inventory.hasItem(item.getGem().getCutItemID())
+                && !Rs2Bank.hasBankItem(item.getGem().getCutItemID(), 1))
             sb.append(item.getGem().getCutItemName()).append(" (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();

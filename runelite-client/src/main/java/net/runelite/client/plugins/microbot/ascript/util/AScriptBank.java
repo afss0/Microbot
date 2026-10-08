@@ -359,11 +359,19 @@ public final class AScriptBank {
                         && item.getName().toLowerCase().contains(name.toLowerCase()));
     }
 
+    /**
+     * Bank presence check used by every withdraw pre-check. Uses the retrying
+     * {@link Rs2Bank#hasBankItem} family, never the bare {@link Rs2Bank#hasItem} mirror
+     * read: the mirror is refreshed only by bank container events, so one stale read
+     * must not fail a withdraw outright — and must not let a dispatch go out against an
+     * item the bank no longer lists (that produced "Failed to withdraw ... after 3
+     * attempts" with no item click at all).
+     */
     private static boolean hasBankItem(String nameOrId) {
         if (isNumeric(nameOrId)) {
-            return Rs2Bank.hasItem(Integer.parseInt(nameOrId));
+            return Rs2Bank.hasBankItem(Integer.parseInt(nameOrId), 1);
         }
-        return Rs2Bank.hasItem(nameOrId);
+        return Rs2Bank.hasBankItem(nameOrId, 1);
     }
 
     private static void withdrawBankItem(String nameOrId, boolean checkInv) {

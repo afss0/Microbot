@@ -166,11 +166,12 @@ public class JewelEnchantScript implements AModule {
         if (item == null || item == JewelEnchantItem.NONE) return false;
         JewelEnchantLevel level = item.getEnchantLevel();
 
-        // Missing from both inventory AND bank
-        if (!Rs2Inventory.hasItem(item.getUnenchantedId()) && !Rs2Bank.hasItem(item.getUnenchantedId())) {
+        // Missing from both inventory AND bank (retrying bank reads — the bare mirror read
+        // can report an item the bank no longer lists)
+        if (!Rs2Inventory.hasItem(item.getUnenchantedId()) && !Rs2Bank.hasBankItem(item.getUnenchantedId(), 1)) {
             return true;
         }
-        if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId()) && !Rs2Bank.hasItem(Runes.COSMIC.getItemId())) {
+        if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId()) && !Rs2Bank.hasBankItem(Runes.COSMIC.getItemId(), 1)) {
             return true;
         }
 
@@ -202,11 +203,11 @@ public class JewelEnchantScript implements AModule {
         StringBuilder sb = new StringBuilder();
         sb.append(item.getName()).append(" enchant: ");
         if (!Rs2Inventory.hasItem(item.getUnenchantedId())
-                && !Rs2Bank.hasItem(item.getUnenchantedId())) {
+                && !Rs2Bank.hasBankItem(item.getUnenchantedId(), 1)) {
             sb.append("jewellery (not in bank), ");
         }
         if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId())
-                && !Rs2Bank.hasItem(Runes.COSMIC.getItemId())) {
+                && !Rs2Bank.hasBankItem(Runes.COSMIC.getItemId(), 1)) {
             sb.append("cosmic runes (not in bank), ");
         }
         JewelEnchantLevel level = item.getEnchantLevel();
@@ -522,15 +523,16 @@ public class JewelEnchantScript implements AModule {
      * most of its staff-coverable runes (a mud battlestaff beats a plain earth
      * staff for Lvl-5).
      * <p>
-     * Only meaningful with the bank open — {@code Rs2Bank.hasItem} reads a cached
-     * snapshot that stays empty while the bank never opened. Returns {@code null}
-     * when the bank holds no usable staff.
+     * Only meaningful with the bank open — {@code Rs2Bank.hasBankItem} reads a cached
+     * snapshot that stays empty while the bank never opened (and retries, so one stale
+     * read does not hide a staff that is really there). Returns {@code null} when the
+     * bank holds no usable staff.
      */
     private ElementalStaff bestStaffInBank(JewelEnchantLevel level) {
         ElementalStaff best = null;
         int bestCovered = 0;
         for (ElementalStaff staff : ElementalStaff.values()) {
-            if (!Rs2Bank.hasItem(staff.getItemId())) continue;
+            if (!Rs2Bank.hasBankItem(staff.getItemId(), 1)) continue;
             int covered = 0;
             for (Runes rune : staffCoverableRunes(level)) {
                 if (staff.providesRune(rune)) covered++;
