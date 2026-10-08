@@ -146,27 +146,27 @@ public class FletchingScript implements AModule {
 
     private boolean bankMissingDarts(AScriptConfig config) {
         FletchingDart dart = config.fletchingDartType();
-        if (!AScriptBank.hasUnnotedItem(dart.getDartTipName()) && !Rs2Bank.hasItem(dart.getDartTipName())) return true;
-        return !AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasItem("feather");
+        if (!AScriptBank.hasUnnotedItem(dart.getDartTipName()) && !Rs2Bank.hasBankItem(dart.getDartTipName(), 1)) return true;
+        return !AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1);
     }
 
     private boolean bankMissingBolts(AScriptConfig config) {
         FletchingBolt bolt = config.fletchingBoltType();
-        if (!AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName()) && !Rs2Bank.hasItem(bolt.getUnfinishedBoltName())) return true;
-        return !AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasItem("feather");
+        if (!AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName()) && !Rs2Bank.hasBankItem(bolt.getUnfinishedBoltName(), 1)) return true;
+        return !AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1);
     }
 
     private boolean bankMissingArrows(AScriptConfig config) {
         FletchingArrow arrow = config.fletchingArrowType();
-        if (!AScriptBank.hasUnnotedItem(arrow.getHeadlessArrowName()) && !Rs2Bank.hasItem(arrow.getHeadlessArrowName())) return true;
-        return !AScriptBank.hasUnnotedItem(arrow.getArrowTipName()) && !Rs2Bank.hasItem(arrow.getArrowTipName());
+        if (!AScriptBank.hasUnnotedItem(arrow.getHeadlessArrowName()) && !Rs2Bank.hasBankItem(arrow.getHeadlessArrowName(), 1)) return true;
+        return !AScriptBank.hasUnnotedItem(arrow.getArrowTipName()) && !Rs2Bank.hasBankItem(arrow.getArrowTipName(), 1);
     }
 
     private boolean bankMissingBows(AScriptConfig config) {
         FletchingBowType bow = config.fletchingBowType();
         if (bow == FletchingBowType.NONE) return false;
-        if (!AScriptBank.hasUnnotedItem(bow.getUnstrungName()) && !Rs2Bank.hasItem(bow.getUnstrungName())) return true;
-        return !AScriptBank.hasUnnotedItem("bow string") && !Rs2Bank.hasItem("bow string");
+        if (!AScriptBank.hasUnnotedItem(bow.getUnstrungName()) && !Rs2Bank.hasBankItem(bow.getUnstrungName(), 1)) return true;
+        return !AScriptBank.hasUnnotedItem("bow string") && !Rs2Bank.hasBankItem("bow string", 1);
     }
 
     // ── Missing-materials description ────────────────────────────
@@ -186,8 +186,9 @@ public class FletchingScript implements AModule {
     private String describeMissingDarts(AScriptConfig config) {
         FletchingDart dart = config.fletchingDartType();
         StringBuilder sb = new StringBuilder();
-        if (!AScriptBank.hasUnnotedItem(dart.getDartTipName())) sb.append(dart.getDartTipName()).append(" (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem("feather")) sb.append("feather (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(dart.getDartTipName()) && !Rs2Bank.hasBankItem(dart.getDartTipName(), 1))
+            sb.append(dart.getDartTipName()).append(" (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1)) sb.append("feather (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -195,8 +196,9 @@ public class FletchingScript implements AModule {
     private String describeMissingBolts(AScriptConfig config) {
         FletchingBolt bolt = config.fletchingBoltType();
         StringBuilder sb = new StringBuilder();
-        if (!AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName())) sb.append(bolt.getUnfinishedBoltName()).append(" (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem("feather")) sb.append("feather (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName()) && !Rs2Bank.hasBankItem(bolt.getUnfinishedBoltName(), 1))
+            sb.append(bolt.getUnfinishedBoltName()).append(" (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1)) sb.append("feather (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -204,8 +206,10 @@ public class FletchingScript implements AModule {
     private String describeMissingArrows(AScriptConfig config) {
         FletchingArrow arrow = config.fletchingArrowType();
         StringBuilder sb = new StringBuilder();
-        if (!AScriptBank.hasUnnotedItem(arrow.getHeadlessArrowName())) sb.append(arrow.getHeadlessArrowName()).append(" (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem(arrow.getArrowTipName())) sb.append(arrow.getArrowTipName()).append(" (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(arrow.getHeadlessArrowName()) && !Rs2Bank.hasBankItem(arrow.getHeadlessArrowName(), 1))
+            sb.append(arrow.getHeadlessArrowName()).append(" (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(arrow.getArrowTipName()) && !Rs2Bank.hasBankItem(arrow.getArrowTipName(), 1))
+            sb.append(arrow.getArrowTipName()).append(" (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -214,8 +218,9 @@ public class FletchingScript implements AModule {
         FletchingBowType bow = config.fletchingBowType();
         if (bow == FletchingBowType.NONE) return "";
         StringBuilder sb = new StringBuilder();
-        if (!AScriptBank.hasUnnotedItem(bow.getUnstrungName())) sb.append(bow.getUnstrungName()).append(" (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem("bow string")) sb.append("bow string (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(bow.getUnstrungName()) && !Rs2Bank.hasBankItem(bow.getUnstrungName(), 1))
+            sb.append(bow.getUnstrungName()).append(" (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem("bow string") && !Rs2Bank.hasBankItem("bow string", 1)) sb.append("bow string (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
