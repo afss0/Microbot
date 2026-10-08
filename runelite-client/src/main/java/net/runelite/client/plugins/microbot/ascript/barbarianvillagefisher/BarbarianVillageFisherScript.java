@@ -153,6 +153,19 @@ public class BarbarianVillageFisherScript implements AModule {
         return false;
     }
 
+    /**
+     * The bank cycle is allowed only once a bank the orchestrator can click is in the scene
+     * and on camera ({@link AScriptBank#bankVisible()}). Until then the tick falls through
+     * to {@link #doAction}, and the module's own WALK_TO_BANK phase walks there — the
+     * Village's bank is Edgeville, well outside the loaded scene from the river, so that is
+     * the normal path for a restock. Judged on the object, never on a distance to the
+     * anchor: a visible bank is clicked directly and the game walks the last few tiles.
+     */
+    @Override
+    public boolean readyForBank(AScriptConfig config) {
+        return AScriptBank.bankVisible();
+    }
+
     @Override
     public boolean isBankMissingMaterials(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
