@@ -137,12 +137,12 @@ public class AmmoniteCrabsScript implements AModule {
         if (!needsBank(config)) return false;
         if (config.ammoniteCrabUseFood()) {
             int foodId = config.ammoniteCrabFood().getId();
-            if (!Rs2Inventory.hasItem(foodId) && !Rs2Bank.hasItem(foodId)) return true;
+            if (!Rs2Inventory.hasItem(foodId) && !Rs2Bank.hasBankItem(foodId, 1)) return true;
         }
         if (config.ammoniteCrabUsePotions()) {
             int potionId = config.ammoniteCrabPotion().getId();
             if (Rs2Inventory.getFilteredPotionItemsInInventory(config.ammoniteCrabPotion().getPotionName()).isEmpty()
-                    && !Rs2Bank.hasItem(potionId)) return true;
+                    && !Rs2Bank.hasBankItem(potionId, 1)) return true;
         }
         return false;
     }
@@ -152,13 +152,13 @@ public class AmmoniteCrabsScript implements AModule {
         StringBuilder sb = new StringBuilder();
         if (config.ammoniteCrabUseFood()) {
             int foodId = config.ammoniteCrabFood().getId();
-            if (!Rs2Inventory.hasItem(foodId) && !Rs2Bank.hasItem(foodId))
+            if (!Rs2Inventory.hasItem(foodId) && !Rs2Bank.hasBankItem(foodId, 1))
                 sb.append(config.ammoniteCrabFood().getName());
         }
         if (config.ammoniteCrabUsePotions()) {
             int potionId = config.ammoniteCrabPotion().getId();
             if (Rs2Inventory.getFilteredPotionItemsInInventory(config.ammoniteCrabPotion().getPotionName()).isEmpty()
-                    && !Rs2Bank.hasItem(potionId)) {
+                    && !Rs2Bank.hasBankItem(potionId, 1)) {
                 if (sb.length() > 0) sb.append(", ");
                 sb.append(config.ammoniteCrabPotion().getPotionName());
             }
