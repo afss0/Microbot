@@ -16,7 +16,6 @@ import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
@@ -66,6 +65,14 @@ public class CannonballSmelterScript implements AModule {
     private static final int BANK_TRAVEL_RADIUS = 4;
     /** No movement at all for this long while travelling = the site is unreachable. */
     private static final long TRAVEL_STAGNATION_MS = 120_000L;
+    /** Render-wait steps for a furnace that is in the scene but not yet rendered. */
+    private static final int RENDER_WAIT_STEPS = 5;
+    /**
+     * Consecutive "furnace not rendered yet" attempts before the module stops. Deliberately
+     * generous — a render race (the render-distance/fog boundary) is not a module failure,
+     * and it must not spend {@link #MAX_ACTION_FAILURES} lives.
+     */
+    private static final int MAX_RENDER_MISSES = 20;
 
     private Phase currentPhase = Phase.NONE;
     private boolean exitRequested = false;
@@ -82,6 +89,8 @@ public class CannonballSmelterScript implements AModule {
     private int lastTravelY = Integer.MIN_VALUE;
     private int lastTravelPlane = Integer.MIN_VALUE;
     private long lastTravelMoveAt = 0L;
+    /** Consecutive furnace render misses — its own budget, never the action-failure counter. */
+    private int renderMisses = 0;
 
     public enum Phase {
         NONE, WALK_TO_BANK, WALK_TO_FURNACE, SMELTING
@@ -97,6 +106,7 @@ public class CannonballSmelterScript implements AModule {
         lastProgressAt = 0L;
         lastAfkTime = 0L;
         postBatchBreakDone = false;
+        renderMisses = 0;
         resetTravelWatchdog();
     }
 
@@ -160,8 +170,7 @@ public class CannonballSmelterScript implements AModule {
      */
     @Override
     public boolean readyForBank(AScriptConfig config) {
-        TileObject bank = nearestBankObject();
-        return bank != null && Rs2Camera.isTileOnScreen(bank);
+        return AScriptBank.bankVisible();
     }
 
     @Override
@@ -328,16 +337,32 @@ public class CannonballSmelterScript implements AModule {
                 Rs2Camera.turnTo(furnace.getLocalLocation());
                 return; // retry next tick — not a failure
             }
-            // A canvas-sized clickbox means getObjectClickbox fell back because the object
-            // has no hull yet (not rendered in the last frame) — give the render a bounded
-            // moment to catch up so the mouse lands on the furnace, then click either way:
-            // the entity click goes through the menu-entry override, which fires the right
-            // action regardless of where the pixel lands (jewelry/clickObject mechanism).
+            // A canvas-sized clickbox means getObjectClickbox fell back: the object is in
+            // the scene but not actually rendered yet (the render-distance / fog boundary),
+            // and a click would scatter over the terrain ("Walk here" — the menu-entry
+            // override is not a substitute for a real hull). Never click blindly: wait
+            // briefly for the hull, then turn the camera to force a re-render and retry on a
+            // later tick. The budget is deliberately generous and is NOT the action-failure
+            // counter — a render race is not a module failure, so it must not spend lives.
             Rectangle clickbox = Rs2UiHelper.getObjectClickbox(furnace);
-            for (int i = 0; i < 5 && isCanvasFallback(clickbox); i++) {
+            for (int i = 0; i < RENDER_WAIT_STEPS && isCanvasFallback(clickbox); i++) {
                 AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(150, 300, weatherMultiplier));
                 clickbox = Rs2UiHelper.getObjectClickbox(furnace);
             }
+            if (isCanvasFallback(clickbox)) {
+                renderMisses++;
+                log.debug("[CannonballSmelter] Furnace not rendered yet ({}/{})",
+                        renderMisses, MAX_RENDER_MISSES);
+                if (renderMisses >= MAX_RENDER_MISSES) {
+                    exitRequested = true;
+                    stopWithMessage("furnace not rendered after " + renderMisses
+                            + " attempts (" + choice + ")");
+                    return;
+                }
+                Rs2Camera.turnTo(furnace.getLocalLocation()); // rotation rebuilds the frame
+                return;
+            }
+            renderMisses = 0;
             Microbot.status = "SMELTING — approaching furnace";
             furnace.click("Smelt");
 
@@ -397,17 +422,6 @@ public class CannonballSmelterScript implements AModule {
     }
 
     /**
-     * The nearest bank object the orchestrator could open from where the player stands —
-     * the same query {@code Rs2Bank.openBank()} runs (a bank booth/chest or a Grand
-     * Exchange booth, both searched within 20 tiles). Null means no bank is loaded in the
-     * scene at all, which is the only case that justifies walking.
-     */
-    private TileObject nearestBankObject() {
-        TileObject bank = Rs2GameObject.findBank();
-        return bank != null ? bank : Rs2GameObject.findGrandExchangeBooth();
-    }
-
-    /**
      * Gets the player into a position to bank without inventing movement: a bank already in
      * the scene but off camera needs one glance ({@link Rs2Camera#turnTo}) — the
      * orchestrator then clicks it and the game walks the last few tiles as part of the
@@ -416,7 +430,7 @@ public class CannonballSmelterScript implements AModule {
      */
     private void approachBank(CannonballSmelterFurnace site) {
         currentPhase = Phase.WALK_TO_BANK;
-        TileObject bank = nearestBankObject();
+        TileObject bank = AScriptBank.findBankObject();
         if (bank != null) {
             Microbot.status = "BANKING — " + site.getName();
             Rs2Camera.turnTo(bank);
