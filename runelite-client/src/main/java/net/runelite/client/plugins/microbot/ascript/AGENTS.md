@@ -444,6 +444,16 @@ Three stop titles, deliberately distinct — the operator must be able to tell t
 | `Bank Cycle Failed (<Module>)` | the bank opened, but `doBank` failed N times — the deposit/withdraw did not land (the `AScriptBank` WARN lines name the item) |
 | `Bank State Unreadable (<Module>)` | no live mirror within the confirmation bound |
 
+### Reading a failed withdraw
+
+`[AScriptBank] Failed to withdraw <item> x<n> after 3 attempts [<state>] — <miss>` is deliberately self-describing:
+
+- `<state>` comes from `AScriptBank.resolution(...)`: whether the bank **mirror** resolves the item, at which slot, and whether that slot has a **clickable widget** at that moment.
+- `<miss>` is `Rs2Bank.getLastWithdrawMiss()` — why the dispatch had nothing to click: `no item widget for '<item>' at bank slot N — sending a 1x1 fallback click` (the bank list re-sorted under a stale mirror, or the tab/scroll did not land) or `the 'Enter amount:' prompt never appeared …` (the prompt click was swallowed).
+- The per-attempt debug line adds `hadItemToClick=` and the bank epoch `before→after`. A mirror that never advanced **cannot** have changed its answer — a third retry against it is futile, and saying so is the point.
+
+The chain behind it: `Rs2Bank.withdrawX/withdrawOne/withdrawAll(name)` resolve the item from the **mirror** (`findBankItem`) and then compute the click rectangle from the **live widget** at the mirror's slot (`getItemWidget(slot)`). A mismatch between the two is what makes a click land nowhere — the two silent `return false` paths this instrumentation replaced.
+
 ### The bank phase gate (`readyForBank`)
 
 `tick()`'s bank step opens the bank and caches its contents before a module's `doBank` runs — that cache is what `isBankMissingMaterials` and the module's own bank queries read. `Rs2Bank.openBank()` can only interact with a bank object **in the loaded scene**, so a module that starts far away must say so:
