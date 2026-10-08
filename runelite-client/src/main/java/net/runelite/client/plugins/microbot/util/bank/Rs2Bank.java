@@ -106,6 +106,23 @@ public class Rs2Bank {
         return BANK_LIVE_EPOCH.get();
     }
 
+    /**
+     * Why the most recent bank withdraw dispatch had nothing to click — {@code null} once one
+     * resolves cleanly. Callers that log their own withdraw failure append this, so the reason
+     * lands next to the item name instead of being lost to a silent {@code return false}.
+     */
+    private static volatile String lastWithdrawMiss;
+
+    /** @see #lastWithdrawMiss */
+    public static String getLastWithdrawMiss() {
+        return lastWithdrawMiss;
+    }
+
+    private static void noteWithdrawMiss(String miss) {
+        lastWithdrawMiss = miss;
+        log.debug("[Rs2Bank] {}", miss);
+    }
+
     /** Time of the last observed bank opening, in epoch milliseconds; zero if unknown. */
     public static long getBankLastOpenedAt() {
         return bankLastOpenedAt;
@@ -375,6 +392,14 @@ public class Rs2Bank {
                 openTab(itemTab);
             scrollBankToSlot(rs2Item.getSlot());
             itemBoundingBox = itemBounds(rs2Item);
+        }
+
+        if (itemBoundingBox == null) {
+            noteWithdrawMiss("no item widget for '" + rs2Item.getName() + "' at bank slot "
+                    + rs2Item.getSlot() + " — sending a 1x1 fallback click (tab closed, list scrolled,"
+                    + " or the slot re-sorted under a stale mirror)");
+        } else {
+            lastWithdrawMiss = null;
         }
 
         Microbot.doInvoke(new NewMenuEntry()
@@ -1301,7 +1326,11 @@ public class Rs2Bank {
             Widget widget = Rs2Widget.getWidget(InterfaceID.Chatbox.MES_TEXT);
             return widget != null && widget.getText().equalsIgnoreCase("Enter amount:");
         }, 5000);
-        if (!foundEnterAmount) return false;
+        if (!foundEnterAmount) {
+            noteWithdrawMiss("the 'Enter amount:' prompt never appeared for '" + rs2Item.getName()
+                    + "' — the prompt click was swallowed (leftover prompt or stale slot geometry)");
+            return false;
+        }
         Rs2Random.waitEx(1200, 100);
         Rs2Keyboard.typeString(String.valueOf(amount));
         Rs2Keyboard.enter();
