@@ -2,8 +2,11 @@ package net.runelite.client.plugins.microbot.ascript.util;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ItemID;
+import net.runelite.api.TileObject;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
+import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
@@ -411,6 +414,34 @@ public final class AScriptBank {
             return stray.getId() == Integer.parseInt(toolName);
         }
         return stray.getName() != null && stray.getName().toLowerCase().contains(toolNameLc);
+    }
+
+    // ── Bank readiness (the readyForBank gate) ────────────────
+
+    /**
+     * The nearest bank object the orchestrator could open from where the player stands —
+     * the same candidates {@link Rs2Bank#openBank()} uses (a bank booth/chest or a Grand
+     * Exchange booth, both searched within 20 tiles). {@code null} means no bank is loaded
+     * in the scene at all, which is the only case that justifies walking.
+     */
+    public static TileObject findBankObject() {
+        TileObject bank = Rs2GameObject.findBank();
+        return bank != null ? bank : Rs2GameObject.findGrandExchangeBooth();
+    }
+
+    /**
+     * Whether a bank the orchestrator can actually open is in the loaded scene and on
+     * camera. This is the standard body for
+     * {@link net.runelite.client.plugins.microbot.ascript.AModule#readyForBank}: judge
+     * readiness on the OBJECT, never on a distance to a coordinate — a distance proxy
+     * reports not-ready while the bank is in plain sight, and the module then walks to a
+     * hardcoded point instead of clicking the booth beside it. Clicking a visible bank IS
+     * the human pattern: the game walks the last few tiles as part of the interaction, so
+     * only a bank that is not loaded at all warrants the walker.
+     */
+    public static boolean bankVisible() {
+        TileObject bank = findBankObject();
+        return bank != null && Rs2Camera.isTileOnScreen(bank);
     }
 
     /**
