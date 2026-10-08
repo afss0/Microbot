@@ -83,6 +83,13 @@ public class AScript extends Script {
     /** Consecutive doBank failures — stops script after threshold. */
     private int consecutiveBankFailures = 0;
     private static final int MAX_BANK_FAILURES = 3;
+    /**
+     * Consecutive failed bank opens. The bank phase is only entered for a module that
+     * reports {@link AModule#readyForBank}, so a run of failures means the bank is not
+     * actually reachable — stop instead of returning forever.
+     */
+    private int consecutiveBankOpenFailures = 0;
+    private static final int MAX_BANK_OPEN_FAILURES = 10;
     /** Track if the player was logged in at least once — triggers the logout watcher. */
     private boolean playerWasLoggedIn = false;
     /** Prevent repeated logout notifications. */
@@ -133,6 +140,7 @@ public class AScript extends Script {
             currentPhase = Phase.DISABLED;
             stopRequested = false;
             consecutiveBankFailures = 0;
+            consecutiveBankOpenFailures = 0;
             consecutiveEatFailures = 0;
             eatThreshold = 0;
             return;
@@ -196,10 +204,14 @@ public class AScript extends Script {
             return;
         }
 
-        // 4. Find the active module that needs the bank (at most one)
+        // 4. Find the active module that needs the bank (at most one). A module may
+        //    report that it is not ready for the bank cycle yet (readyForBank): it still
+        //    has preparation to do, e.g. walk to the bank area. The tick then falls
+        //    through to its doAction() so the module can prepare, and the open/cache
+        //    cycle runs on a later tick, once the module reports ready.
         AModule bankModule = null;
         for (AModule mod : MODULES) {
-            if (mod.isActive() && mod.needsBank(config)) {
+            if (mod.isActive() && mod.needsBank(config) && mod.readyForBank(config)) {
                 bankModule = mod;
                 break;
             }
@@ -214,11 +226,22 @@ public class AScript extends Script {
                 return;
             }
 
-            // Open bank to check stock; if opening fails, wait for the next tick.
+            // Open bank to check stock. Retried next tick — but not forever: without a
+            // bound, a bank the module cannot reach would freeze the tick before its
+            // doAction() is ever dispatched again (the silent hang). Stop loudly.
             if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
                 currentPhase = Phase.BANKING;
+                consecutiveBankOpenFailures++;
+                log.debug("[AScript] Bank did not open ({}/{})",
+                        consecutiveBankOpenFailures, MAX_BANK_OPEN_FAILURES);
+                if (consecutiveBankOpenFailures >= MAX_BANK_OPEN_FAILURES) {
+                    stopWithMessage("aScript Stopped — Bank Unreachable",
+                            "the bank did not open " + consecutiveBankOpenFailures
+                                    + " times in a row — check that it is reachable");
+                }
                 return;
             }
+            consecutiveBankOpenFailures = 0;
 
             if (bankModule.isBankMissingMaterials(config)) {
                 stopWithMessage("aScript Stopped — No Materials",
@@ -240,6 +263,7 @@ public class AScript extends Script {
             boolean banked = bankModule.doBank(config);
             if (banked) {
                 consecutiveBankFailures = 0;
+                consecutiveBankOpenFailures = 0;
             } else {
                 consecutiveBankFailures++;
                 if (consecutiveBankFailures >= MAX_BANK_FAILURES) {
@@ -445,6 +469,7 @@ public class AScript extends Script {
         if (stopRequested) return; // already stopping
         stopRequested = true;
         consecutiveBankFailures = 0;
+        consecutiveBankOpenFailures = 0;
         Microbot.status = "STOPPED — " + message;
         log.warn("[AScript] {}: {}", title, message);
         AScriptNotify.notify(title, message);
@@ -463,6 +488,7 @@ public class AScript extends Script {
     public void shutdown() {
         stopRequested = false;
         consecutiveBankFailures = 0;
+        consecutiveBankOpenFailures = 0;
         consecutiveEatFailures = 0;
         eatThreshold = 0;
         playerWasLoggedIn = false;
