@@ -87,6 +87,8 @@ public class MotherloadMineScript implements AModule {
     private int idleThreshold = 0;
     /** Set once per doMine() call; used for weather-modulated timing. */
     private double weatherMultiplier = 1.0;
+    /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
+    private long lastAfkTime = 0L;
 
     // ── Phase enum ─────────────────────────────────────────────
 
@@ -102,6 +104,7 @@ public class MotherloadMineScript implements AModule {
         pickedUpHammer = false;
         idleSince = 0;
         idleThreshold = 0;
+        lastAfkTime = 0L;
     }
 
     // ── Phase resolution ───────────────────────────────────────
@@ -212,6 +215,7 @@ public class MotherloadMineScript implements AModule {
         }
 
         boolean success = true;
+        boolean wasEmptyingSack = shouldEmptySack;
 
         // Drop gems if configured
         if (config.mlmDropGems() && hasGemsInInventory()) {
@@ -253,6 +257,13 @@ public class MotherloadMineScript implements AModule {
             }
         }
 
+        // A trip ends when the sack-empty cycle completes (shouldEmptySack falls back to
+        // false) — run the post-trip randomness layer once, with no bank involved (the
+        // trip ends at the deposit box).
+        if (wasEmptyingSack && !shouldEmptySack && success) {
+            postTripBreak(config);
+        }
+
         // Track consecutive failures — exit after persistent failures
         if (success) {
             consecutiveMineFailures = 0;
@@ -271,6 +282,22 @@ public class MotherloadMineScript implements AModule {
     }
 
     // ── Mining sub-routines ────────────────────────────────────
+
+    /**
+     * Post-trip break — the Jewelry/Crafting randomness layer: a short randomized pause
+     * after every completed mining trip (sack emptied, ore deposited), then the optional
+     * random AFK (log-normal, weather-modulated, interruptible so blocking events still
+     * fire). Runs with no bank involved — the trip ends at the deposit box.
+     */
+    private void postTripBreak(AScriptConfig config) {
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
+        if (config.mlmAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
+            int afkMs = Rs2Random.logNormalBounded(3_000, 120_000, weatherMultiplier);
+            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+            AScriptSleep.sleepInterruptibly(afkMs);
+            lastAfkTime = System.currentTimeMillis();
+        }
+    }
 
     private boolean mineVeins(AScriptConfig config) {
         Microbot.status = "MINING";
@@ -651,7 +678,4 @@ public class MotherloadMineScript implements AModule {
 
     @Override
     public boolean isActive() { return currentPhase != Phase.NONE; }
-
-    @Override
-    public boolean isPrecisionModule() { return false; }
 }

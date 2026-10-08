@@ -20,9 +20,7 @@ import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantSc
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
-import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
-import net.runelite.client.plugins.microbot.util.antiban.enums.ActivityIntensity;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -82,8 +80,6 @@ public class AScript extends Script {
     /** Consecutive auto-eat attempts that did not consume food — stops the script after the threshold. */
     private int consecutiveEatFailures = 0;
     private static final int MAX_EAT_FAILURES = 3;
-    /** True while we've forced VERY_LOW for a precision module. */
-    private boolean precisionMouseSpeedApplied;
     /** Consecutive doBank failures — stops script after threshold. */
     private int consecutiveBankFailures = 0;
     private static final int MAX_BANK_FAILURES = 3;
@@ -238,10 +234,7 @@ public class AScript extends Script {
             }
         }
 
-        // 5. Manage precision mouse speed (after phase resolution)
-        managePrecisionMouseSpeed();
-
-        // 6. Dispatch
+        // 5. Dispatch
         if (bankModule != null) {
             currentPhase = Phase.BANKING;
             boolean banked = bankModule.doBank(config);
@@ -445,41 +438,6 @@ public class AScript extends Script {
         }
     }
 
-    // ── Precision mouse speed ────────────────────────────────
-
-    /**
-     * Forces {@link ActivityIntensity#VERY_LOW} mouse speed while a precision
-     * module is active and restores the previous intensity when it stops.
-     * <p>
-     * Delegates to each module's {@link AModule#isPrecisionModule()} — no
-     * hardcoded ScriptType checks needed.
-     */
-    private void managePrecisionMouseSpeed() {
-        boolean anyPrecisionActive = false;
-        for (AModule mod : MODULES) {
-            if (mod.isActive() && mod.isPrecisionModule()) {
-                anyPrecisionActive = true;
-                break;
-            }
-        }
-
-        if (anyPrecisionActive && !precisionMouseSpeedApplied) {
-            Rs2Antiban.setActivityIntensity(ActivityIntensity.VERY_LOW);
-            precisionMouseSpeedApplied = true;
-            log.debug("[AScript] Mouse speed -> VERY_LOW (precision module active)");
-        } else if (!anyPrecisionActive && precisionMouseSpeedApplied) {
-            ActivityIntensity current = Rs2Antiban.getActivityIntensity();
-            if (current != null && current != ActivityIntensity.VERY_LOW) {
-                Rs2Antiban.setActivityIntensity(current);
-                log.debug("[AScript] Mouse speed restored to {} (was VERY_LOW)", current);
-            } else {
-                Rs2Antiban.setActivityIntensity(ActivityIntensity.MODERATE);
-                log.debug("[AScript] Mouse speed restored to MODERATE (previous was VERY_LOW or null)");
-            }
-            precisionMouseSpeedApplied = false;
-        }
-    }
-
     // ── Lifecycle ───────────────────────────────────────────
 
     /** Stop script, notify Discord, and reset config. */
@@ -503,17 +461,6 @@ public class AScript extends Script {
 
     @Override
     public void shutdown() {
-        // Restore the global antiban intensity if the loop is cancelled while a
-        // precision module is active — tick() can no longer do it.
-        if (precisionMouseSpeedApplied) {
-            ActivityIntensity current = Rs2Antiban.getActivityIntensity();
-            if (current != null && current != ActivityIntensity.VERY_LOW) {
-                Rs2Antiban.setActivityIntensity(current);
-            } else {
-                Rs2Antiban.setActivityIntensity(ActivityIntensity.MODERATE);
-            }
-            precisionMouseSpeedApplied = false;
-        }
         stopRequested = false;
         consecutiveBankFailures = 0;
         consecutiveEatFailures = 0;

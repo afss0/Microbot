@@ -96,7 +96,7 @@ public class BarbarianFishingScript implements AModule {
 
     /** Randomized window defining "still fishing" between catch animations (hub parity). */
     private int animationWindowMs = FISHING_ANIMATION_DEFAULT_MS;
-    /** Transient retry counter for spot clicks that did not land. */
+    /** Transient retry counter for spot clicks that produced no catch. */
     private int spotClickRetries = 0;
 
     /** A drop batch (inventory full -> all droppables gone) is in progress. */
@@ -263,11 +263,6 @@ public class BarbarianFishingScript implements AModule {
         }
     }
 
-    @Override
-    public boolean isPrecisionModule() {
-        return false; // inventory-slot dropping tolerates imprecision
-    }
-
     // ── Dynamic phase resolution ─────────────────────────────────
 
     private void resolveDynamicPhase() {
@@ -322,7 +317,7 @@ public class BarbarianFishingScript implements AModule {
         if (!clickFishingSpot(spot)) {
             spotClickRetries++;
             if (spotClickRetries >= SPOT_CLICK_RETRIES) {
-                fail("fishing spot click never landed after " + SPOT_CLICK_RETRIES + " retries");
+                fail("fishing spot click produced no catch after " + SPOT_CLICK_RETRIES + " retries");
                 return;
             }
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(
@@ -337,7 +332,11 @@ public class BarbarianFishingScript implements AModule {
 
     /**
      * Clicks the fishing spot through the client mouse ("Use-rod" entry) and waits
-     * (bounded) for the fishing action to start. The caller has already ensured the
+     * (bounded) for the session's first catch — a free inventory-slot count change
+     * is the pass signal. Do NOT wait on animating/interacting here: the interaction
+     * engages (and the spot keeps churning) seconds before any catch, so either
+     * signal returns immediately and the caller re-clicks the spot every ~3 s until
+     * fishing starts (observed spam clicks). The caller has already ensured the
      * spot is on screen.
      */
     private boolean clickFishingSpot(Rs2NpcModel spot) {
@@ -357,9 +356,12 @@ public class BarbarianFishingScript implements AModule {
         });
         if (clickbox == null) return false;
 
+        final int freeSlotsBefore = Rs2Inventory.emptySlotCount();
         Microbot.getMouse().click(clickbox);
-        return sleepUntil(() -> Rs2Player.isAnimating() || Rs2Player.isInteracting(),
-                (int) Rs2Random.logNormalBounded(5000, 10000, weatherMultiplier));
+        // The bound covers the whole start: walk to the spot + engage + first catch.
+        // A timeout means the click did not produce a live session (caller retries).
+        return sleepUntil(() -> Rs2Inventory.emptySlotCount() != freeSlotsBefore,
+                (int) Rs2Random.logNormalBounded(16000, 30000, weatherMultiplier));
     }
 
     private void handleDropping(AScriptConfig config) {

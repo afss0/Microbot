@@ -414,7 +414,4 @@ public class GemCrabKillerScript implements AModule {
 
     @Override
     public boolean isActive() { return currentPhase != Phase.NONE; }
-
-    @Override
-    public boolean isPrecisionModule() { return false; }
 }

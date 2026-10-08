@@ -60,6 +60,10 @@ public class JewelEnchantScript implements AModule {
     private boolean exitRequested = false;
     private double weatherMultiplier = 1.0;
     private int consecutiveEnchantFailures = 0;
+    /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
+    private long lastAfkTime = 0L;
+    /** Set while the post-batch break is pending/done — see {@link #needsBank}. */
+    private boolean jewelEnchantPostBatchBreakDone = false;
 
     public enum Phase {
         NONE, ENCHANT
@@ -71,6 +75,8 @@ public class JewelEnchantScript implements AModule {
     public void resetExitFlag() {
         exitRequested = false;
         consecutiveEnchantFailures = 0;
+        lastAfkTime = 0L;
+        jewelEnchantPostBatchBreakDone = false;
     }
 
     // ── Phase resolution ──────────────────────────────────
@@ -126,8 +132,12 @@ public class JewelEnchantScript implements AModule {
         JewelEnchantItem item = config.jewelEnchantItem();
         if (item == null || item == JewelEnchantItem.NONE) return false;
 
-        // Need the unenchanted jewellery
-        if (!Rs2Inventory.hasItem(item.getUnenchantedId())) return true;
+        // Need the unenchanted jewellery. When the batch just ran out, yield one tick so
+        // the post-batch break runs with the bank still closed (crafting-jewelry pattern):
+        // needsBank returns the break flag until the break has run.
+        if (!Rs2Inventory.hasItem(item.getUnenchantedId())) {
+            return jewelEnchantPostBatchBreakDone;
+        }
 
         // Need cosmic runes — no staff supplies them
         if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId())) return true;
@@ -306,12 +316,15 @@ public class JewelEnchantScript implements AModule {
             return;
         }
 
-        // Nothing to enchant — bail before spending a spell selection on an empty
-        // stack; the orchestrator banks for more.
+        // Nothing to enchant — the batch ran out: run the post-batch break once (the
+        // orchestrator banks on a later tick; needsBank yields while the break is
+        // pending), then let the bank cycle fetch more jewellery.
         if (Rs2Inventory.getLast(item.getUnenchantedId()) == null) {
             consecutiveEnchantFailures = 0;
+            postBatchBreak(config);
             return;
         }
+        jewelEnchantPostBatchBreakDone = false; // jewellery present again — the next empty state is a new batch end
         int remaining = Rs2Inventory.itemQuantity(item.getUnenchantedId());
 
         // 1. Select the enchant spell by clicking its spellbook icon with the
@@ -366,12 +379,25 @@ public class JewelEnchantScript implements AModule {
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(300, 700, weatherMultiplier));
     }
 
-    @Override
-    public boolean isPrecisionModule() {
-        return false; // enchanting uses spellbook + inventory clicks, not precise widget positioning
-    }
-
     // ── Internal helpers ──────────────────────────────────
+
+    /**
+     * Post-batch break — the house randomness layer (crafting-jewelry parity): a short
+     * randomized pause after every completed batch, then the optional random AFK
+     * (log-normal, weather-modulated, interruptible so blocking events still fire).
+     * Runs while {@link #needsBank} yields, i.e. with the bank still closed.
+     */
+    private void postBatchBreak(AScriptConfig config) {
+        if (jewelEnchantPostBatchBreakDone) return;
+        jewelEnchantPostBatchBreakDone = true;
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
+        if (config.jewelEnchantAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
+            int afkMs = Rs2Random.logNormalBounded(3_000, 120_000, weatherMultiplier);
+            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+            AScriptSleep.sleepInterruptibly(afkMs);
+            lastAfkTime = System.currentTimeMillis();
+        }
+    }
 
     /**
      * Select the enchant spell by clicking its icon in the spellbook with the
