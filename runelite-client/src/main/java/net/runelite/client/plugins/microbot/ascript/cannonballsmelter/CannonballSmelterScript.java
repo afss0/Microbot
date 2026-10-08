@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript.cannonballsmelter;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
+import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -15,6 +16,7 @@ import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
+import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
@@ -56,12 +58,10 @@ public class CannonballSmelterScript implements AModule {
     private static final int MAX_ACTION_FAILURES = 3;
     /** No bar consumed and no animation for this long = the batch is not running anymore. */
     private static final long STALL_WINDOW_MS = 12_000L;
-    /** Within this many tiles of the site's bank the orchestrator may run the bank cycle. */
-    private static final int BANK_READY_DISTANCE = 10;
     /**
-     * Walk target radius. Must stay inside {@link #BANK_READY_DISTANCE}: the orchestrator
-     * only takes the bank phase once {@link #readyForBank} is true, so a walk that stops
-     * outside that ring would loop between "walked there" and "not ready yet".
+     * Walk target radius for a bank that is not loaded at all. Readiness is judged on the
+     * bank object being in the scene ({@link #readyForBank}), so the walk hands off to the
+     * orchestrator the moment the bank loads — long before this radius is reached.
      */
     private static final int BANK_TRAVEL_RADIUS = 4;
     /** No movement at all for this long while travelling = the site is unreachable. */
@@ -151,16 +151,17 @@ public class CannonballSmelterScript implements AModule {
     }
 
     /**
-     * The bank cycle is only allowed from the site. Its first tick exists to open the
-     * bank and populate the cached contents, and {@code Rs2Bank.openBank()} can only
-     * reach a bank object in the loaded scene — so away from the site this returns
-     * {@code false} and the tick falls through to {@link #doAction(AScriptConfig)},
-     * where the module walks itself there (the fisher/ammonite rule, made explicit).
+     * The bank cycle is allowed as soon as a bank the orchestrator can actually open is in
+     * the scene and on camera — the same candidates {@code Rs2Bank.openBank()} uses. A
+     * visible bank is used directly: clicking it is the human pattern, and the game walks
+     * the last few tiles as part of the interaction. Only a bank that is not loaded at all
+     * makes this false, and the tick then falls through to {@link #doAction(AScriptConfig)},
+     * which walks to the site anchor (the fisher/ammonite rule, made explicit).
      */
     @Override
     public boolean readyForBank(AScriptConfig config) {
-        CannonballSmelterFurnace site = config.cannonballFurnace();
-        return site != null && atSite(site);
+        TileObject bank = nearestBankObject();
+        return bank != null && Rs2Camera.isTileOnScreen(bank);
     }
 
     @Override
@@ -251,7 +252,7 @@ public class CannonballSmelterScript implements AModule {
                 postBatchBreak(config);
             }
             if (!readyForBank(config)) {
-                walkToSite(site, "BANK");
+                approachBank(site);
             }
             return;
         }
@@ -261,7 +262,7 @@ public class CannonballSmelterScript implements AModule {
         // bank trip, and a furnace outside the loaded scene means we are not at the site.
         if (!hasMould()) {
             if (!readyForBank(config)) {
-                walkToSite(site, "BANK");
+                approachBank(site);
             }
             return;
         }
@@ -395,13 +396,33 @@ public class CannonballSmelterScript implements AModule {
         return rect == null || rect.getWidth() >= Microbot.getClient().getCanvasWidth() - 2;
     }
 
-    /** Whether the player is at the configured site — bank and furnace share a region. */
-    private boolean atSite(CannonballSmelterFurnace site) {
-        WorldPoint here = Rs2Player.getWorldLocation();
-        WorldPoint anchor = site.getBankLocation().getWorldPoint();
-        return here != null
-                && here.getPlane() == anchor.getPlane()
-                && here.distanceTo(anchor) <= BANK_READY_DISTANCE;
+    /**
+     * The nearest bank object the orchestrator could open from where the player stands —
+     * the same query {@code Rs2Bank.openBank()} runs (a bank booth/chest or a Grand
+     * Exchange booth, both searched within 20 tiles). Null means no bank is loaded in the
+     * scene at all, which is the only case that justifies walking.
+     */
+    private TileObject nearestBankObject() {
+        TileObject bank = Rs2GameObject.findBank();
+        return bank != null ? bank : Rs2GameObject.findGrandExchangeBooth();
+    }
+
+    /**
+     * Gets the player into a position to bank without inventing movement: a bank already in
+     * the scene but off camera needs one glance ({@link Rs2Camera#turnTo}) — the
+     * orchestrator then clicks it and the game walks the last few tiles as part of the
+     * interaction, exactly as a human does. Only a bank that is not loaded at all falls
+     * through to the walker.
+     */
+    private void approachBank(CannonballSmelterFurnace site) {
+        currentPhase = Phase.WALK_TO_BANK;
+        TileObject bank = nearestBankObject();
+        if (bank != null) {
+            Microbot.status = "BANKING — " + site.getName();
+            Rs2Camera.turnTo(bank);
+            return;
+        }
+        walkToSite(site, "BANK");
     }
 
     /** Whether the configured furnace object is in the loaded scene right now. */
