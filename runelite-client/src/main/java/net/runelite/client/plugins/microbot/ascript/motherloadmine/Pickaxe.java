@@ -64,7 +64,7 @@ public enum Pickaxe {
         int miningLevel = Microbot.getClient().getBoostedSkillLevel(net.runelite.api.Skill.MINING);
         Pickaxe best = null;
         for (Pickaxe p : values()) {
-            if (Rs2Bank.hasItem(p.getItemId()) && miningLevel >= p.getMiningLevel()) {
+            if (Rs2Bank.hasBankItem(p.getItemId(), 1) && miningLevel >= p.getMiningLevel()) {
                 if (best == null || p.getMiningLevel() > best.getMiningLevel()) {
                     best = p;
                 }
@@ -84,11 +84,13 @@ public enum Pickaxe {
     }
 
     /**
-     * Check if any pickaxe is available in the bank.
+     * Check if any pickaxe is available in the bank. The read is the retrying
+     * {@code Rs2Bank.hasBankItem} family: this feeds the module's missing-materials
+     * verdict, and the bare mirror read can report a pickaxe the bank no longer lists.
      */
     public static boolean hasAnyPickaxeInBank() {
         for (Pickaxe p : values()) {
-            if (Rs2Bank.hasItem(p.getItemId())) return true;
+            if (Rs2Bank.hasBankItem(p.getItemId(), 1)) return true;
         }
         return false;
     }
