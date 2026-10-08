@@ -11,6 +11,8 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 
+import java.util.function.BooleanSupplier;
+
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
 /**
@@ -116,12 +118,13 @@ public final class AScriptBank {
      * scripting behavior); the caller keeps the window open for the whole call.
      *
      * @param nameOrId item name (or numeric id as a string) to withdraw
-     * @param dispatch performs one withdraw dispatch (the retry loop owns the verification)
+     * @param dispatch performs one withdraw dispatch and reports whether it had an item to click
+     *                 (the retry loop owns the verification)
      * @param describe label for the log lines (e.g. "bow string x14", "one mould")
      * @return true once the item is verified in the inventory; false when every attempt
      *         failed or the bank lacks the item
      */
-    private static boolean withdrawWithRetry(String nameOrId, Runnable dispatch, String describe) {
+    private static boolean withdrawWithRetry(String nameOrId, BooleanSupplier dispatch, String describe) {
         if (!hasBankItem(nameOrId)) {
             return false; // bank lacks it — nothing to dispatch (silent, as before)
         }
@@ -136,7 +139,14 @@ public final class AScriptBank {
                     return true;
                 }
             }
-            dispatch.run();
+            // Re-resolve per attempt. The dispatch resolves the item to click from the bank
+            // mirror and the click geometry from the live widget at that slot, so a bank list
+            // that re-sorted (a deposit) or a mirror that never refreshed leaves the click with
+            // nothing to land on. Record both: whether the dispatch had anything to click, and
+            // whether the mirror advanced during the attempt (a mirror that never advanced
+            // cannot have changed its answer — retrying it is futile, and that is worth saying).
+            int epochBefore = Rs2Bank.getBankLiveEpoch();
+            boolean dispatched = dispatch.getAsBoolean();
             if (sleepUntil(() -> hasInventoryItem(nameOrId), WITHDRAW_VERIFY_TIMEOUT_MS)) {
                 return true;
             }
@@ -147,12 +157,37 @@ public final class AScriptBank {
                 return true;
             }
             if (attempt < WITHDRAW_MAX_ATTEMPTS) {
-                log.debug("[AScriptBank] Withdraw {} not confirmed (attempt {}/{}) — backing off to retry",
-                        describe, attempt, WITHDRAW_MAX_ATTEMPTS);
+                log.debug("[AScriptBank] Withdraw {} not confirmed (attempt {}/{}): hadItemToClick={},"
+                                + " bankEpoch {}->{}, {}",
+                        describe, attempt, WITHDRAW_MAX_ATTEMPTS, dispatched, epochBefore,
+                        Rs2Bank.getBankLiveEpoch(), resolution(nameOrId));
             }
         }
-        log.warn("[AScriptBank] Failed to withdraw {} after {} attempts", describe, WITHDRAW_MAX_ATTEMPTS);
+        log.warn("[AScriptBank] Failed to withdraw {} after {} attempts [{}]{}", describe, WITHDRAW_MAX_ATTEMPTS,
+                resolution(nameOrId),
+                Rs2Bank.getLastWithdrawMiss() == null ? "" : " — " + Rs2Bank.getLastWithdrawMiss());
         return false;
+    }
+
+    /**
+     * One-line state of the item at a failed withdraw: what the bank mirror resolves, whether that
+     * slot has a clickable widget, and (via the epoch the caller logs) whether the mirror could
+     * have changed at all. Diagnostic only — never throws.
+     */
+    private static String resolution(String nameOrId) {
+        try {
+            if (isNumeric(nameOrId)) {
+                return "bank mirror has id " + nameOrId + ": " + Rs2Bank.hasItem(Integer.parseInt(nameOrId));
+            }
+            Rs2ItemModel item = Rs2Bank.findBankItem(nameOrId);
+            if (item == null) {
+                return "bank mirror resolves no '" + nameOrId + "'";
+            }
+            return "bank mirror slot " + item.getSlot() + ", clickable widget: "
+                    + (Rs2Bank.getItemWidget(item.getSlot()) != null);
+        } catch (RuntimeException ex) {
+            return "resolution unavailable (" + ex.getClass().getSimpleName() + ")";
+        }
     }
 
     /**
@@ -374,29 +409,26 @@ public final class AScriptBank {
         return Rs2Bank.hasBankItem(nameOrId, 1);
     }
 
-    private static void withdrawBankItem(String nameOrId, boolean checkInv) {
+    private static boolean withdrawBankItem(String nameOrId, boolean checkInv) {
         if (isNumeric(nameOrId)) {
-            if (checkInv && Rs2Inventory.isFull()) return;
-            Rs2Bank.withdrawAll(Integer.parseInt(nameOrId));
-        } else {
-            Rs2Bank.withdrawAll(checkInv, nameOrId);
+            if (checkInv && Rs2Inventory.isFull()) return false;
+            return Rs2Bank.withdrawAll(Integer.parseInt(nameOrId));
         }
+        return Rs2Bank.withdrawAll(checkInv, nameOrId);
     }
 
-    private static void withdrawBankItemOne(String nameOrId) {
+    private static boolean withdrawBankItemOne(String nameOrId) {
         if (isNumeric(nameOrId)) {
-            Rs2Bank.withdrawOne(Integer.parseInt(nameOrId));
-        } else {
-            Rs2Bank.withdrawOne(nameOrId);
+            return Rs2Bank.withdrawOne(Integer.parseInt(nameOrId));
         }
+        return Rs2Bank.withdrawOne(nameOrId);
     }
 
-    private static void withdrawBankItemX(String nameOrId, int quantity) {
+    private static boolean withdrawBankItemX(String nameOrId, int quantity) {
         if (isNumeric(nameOrId)) {
-            Rs2Bank.withdrawX(Integer.parseInt(nameOrId), quantity);
-        } else {
-            Rs2Bank.withdrawX(nameOrId, quantity);
+            return Rs2Bank.withdrawX(Integer.parseInt(nameOrId), quantity);
         }
+        return Rs2Bank.withdrawX(nameOrId, quantity);
     }
 
     private static boolean hasInventoryItem(String nameOrId) {
