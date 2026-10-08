@@ -65,6 +65,10 @@ public class BarbarianVillageFisherScript implements AModule {
     private int cookingRedispaches = 0;
     /** Transient retry counter for fishing spot clicks that didn't land. Reset when clicked lands. */
     private int spotClickRetries = 0;
+    /** Min-gap reference for the random-AFK layer. */
+    private long lastAfkTime = 0L;
+    /** Set when a full cycle ended in banking — the post-cycle break runs bank-closed next tick. */
+    private boolean postCycleBreakPending = false;
 
     public enum Phase {
         NONE, FISHING, WALK_TO_BANK, WALK_TO_FISHING_SPOT, BANKING, DROPPING, COOKING
@@ -115,6 +119,8 @@ public class BarbarianVillageFisherScript implements AModule {
         cookingDeadlineMs = 0;
         cookingRedispaches = 0;
         spotClickRetries = 0;
+        lastAfkTime = 0L;
+        postCycleBreakPending = false;
     }
 
     @Override
@@ -236,6 +242,9 @@ public class BarbarianVillageFisherScript implements AModule {
         }
 
         consecutiveBankFailures = 0;
+        // Run the post-cycle break bank-closed on the next tick: the orchestrator closes
+        // the bank once needsBank flips false (cannonball/crafting placement).
+        postCycleBreakPending = true;
         return true;
     }
 
@@ -249,6 +258,15 @@ public class BarbarianVillageFisherScript implements AModule {
         // Handle dialogue
         if (Rs2Dialogue.hasContinue()) {
             Rs2Dialogue.clickContinue();
+            return;
+        }
+
+        // Post-cycle break: a banking cycle completed on an earlier tick — run the
+        // randomized pause + AFK now, with the bank already closed again (the
+        // orchestrator closes it once needsBank flips back to false).
+        if (postCycleBreakPending) {
+            postCycleBreakPending = false;
+            postCycleBreak(config);
             return;
         }
 
@@ -277,11 +295,6 @@ public class BarbarianVillageFisherScript implements AModule {
             default:
                 break;
         }
-    }
-
-    @Override
-    public boolean isPrecisionModule() {
-        return false;
     }
 
     // ── Dynamic phase resolution ─────────────────────────────
@@ -407,7 +420,7 @@ public class BarbarianVillageFisherScript implements AModule {
             return;
         }
         consecutiveFailures = 0;
-        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(235, 798, weatherMultiplier));
+        postCycleBreak(config);
     }
 
     private void doCooking(AScriptConfig config) {
@@ -492,6 +505,21 @@ public class BarbarianVillageFisherScript implements AModule {
                         AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             }
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1100, weatherMultiplier));
+        }
+    }
+
+    /**
+     * Post-cycle break — the house randomness layer: a short randomized pause after every
+     * completed cycle, then the optional random AFK (log-normal, weather-modulated,
+     * interruptible so blocking events still fire). Always runs with the bank closed.
+     */
+    private void postCycleBreak(AScriptConfig config) {
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
+        if (config.barbarianVillageFisherAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
+            int afkMs = Rs2Random.logNormalBounded(3_000, 120_000, weatherMultiplier);
+            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+            AScriptSleep.sleepInterruptibly(afkMs);
+            lastAfkTime = System.currentTimeMillis();
         }
     }
 
