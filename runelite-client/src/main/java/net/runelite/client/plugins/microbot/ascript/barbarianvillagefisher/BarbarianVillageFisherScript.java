@@ -172,9 +172,10 @@ public class BarbarianVillageFisherScript implements AModule {
         if (!needsBank(config)) return false;
         String rodName = getRodName(config);
         String baitName = getBaitName(config);
-        // Missing from BOTH inventory and bank
-        if (!Rs2Inventory.hasItem(rodName) && !Rs2Bank.hasItem(rodName)) return true;
-        if (!Rs2Inventory.hasItem(baitName) && !Rs2Bank.hasItem(baitName)) return true;
+        // Missing from BOTH inventory and bank. The bank reads are the retrying hasBankItem
+        // family — the bare mirror read can report an item the bank no longer lists.
+        if (!Rs2Inventory.hasItem(rodName) && !Rs2Bank.hasBankItem(rodName, 1)) return true;
+        if (!Rs2Inventory.hasItem(baitName) && !Rs2Bank.hasBankItem(baitName, 1)) return true;
         return false;
     }
 
@@ -183,9 +184,9 @@ public class BarbarianVillageFisherScript implements AModule {
         String rodName = getRodName(config);
         String baitName = getBaitName(config);
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(rodName) && !Rs2Bank.hasItem(rodName))
+        if (!Rs2Inventory.hasItem(rodName) && !Rs2Bank.hasBankItem(rodName, 1))
             sb.append(rodName);
-        if (!Rs2Inventory.hasItem(baitName) && !Rs2Bank.hasItem(baitName)) {
+        if (!Rs2Inventory.hasItem(baitName) && !Rs2Bank.hasBankItem(baitName, 1)) {
             if (sb.length() > 0) sb.append(", ");
             sb.append(baitName);
         }

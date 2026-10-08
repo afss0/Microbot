@@ -90,6 +90,17 @@ public class AScript extends Script {
      */
     private int consecutiveBankOpenFailures = 0;
     private static final int MAX_BANK_OPEN_FAILURES = 10;
+    /**
+     * Consecutive "materials missing" verdicts. A missing verdict ends the run and is read
+     * from the cached bank mirror (refreshed only by bank container events), so it is
+     * confirmed across ticks and trusted only on a live mirror — see the bank step in
+     * {@link #tick()}.
+     */
+    private int consecutiveMissingVerdicts = 0;
+    /** Consecutive missing verdicts required before the run stops. */
+    private static final int MISSING_CONFIRMATION_TICKS = 3;
+    /** Hard bound on the confirmation wait — an unreadable mirror must not hold the tick. */
+    private static final int MISSING_MAX_TICKS = 12;
     /** Track if the player was logged in at least once — triggers the logout watcher. */
     private boolean playerWasLoggedIn = false;
     /** Prevent repeated logout notifications. */
@@ -141,6 +152,7 @@ public class AScript extends Script {
             stopRequested = false;
             consecutiveBankFailures = 0;
             consecutiveBankOpenFailures = 0;
+            consecutiveMissingVerdicts = 0;
             consecutiveEatFailures = 0;
             eatThreshold = 0;
             return;
@@ -244,10 +256,33 @@ public class AScript extends Script {
             consecutiveBankOpenFailures = 0;
 
             if (bankModule.isBankMissingMaterials(config)) {
-                stopWithMessage("aScript Stopped — No Materials",
+                // A "missing" verdict ends the run, and it is read from the cached bank
+                // mirror (refreshed only by bank container events). Confirm it before
+                // stopping: the verdict must hold MISSING_CONFIRMATION_TICKS times in a row
+                // on a LIVE mirror — the retrying hasBankItem reads inside the modules get
+                // that window to correct a stale read, and a restored (non-live) snapshot is
+                // never trusted as "empty". Bounded by MISSING_MAX_TICKS so an unreadable
+                // mirror cannot hold the tick forever.
+                consecutiveMissingVerdicts++;
+                int epoch = Rs2Bank.getBankLiveEpoch();
+                boolean mirrorLive = epoch > 0;
+                log.debug("[AScript] Missing-materials verdict {}/{} from {} (bank epoch {}, live={}): {}",
+                        consecutiveMissingVerdicts, MISSING_CONFIRMATION_TICKS,
+                        bankModule.getClass().getSimpleName(), epoch, mirrorLive,
                         bankModule.describeMissing(config));
+                if (consecutiveMissingVerdicts >= MISSING_MAX_TICKS) {
+                    stopWithMessage("aScript Stopped — Bank State Unreadable ("
+                                    + bankModule.getClass().getSimpleName() + ")",
+                            bankModule.describeMissing(config)
+                                    + " — the bank mirror never went live, so it cannot be trusted");
+                } else if (mirrorLive && consecutiveMissingVerdicts >= MISSING_CONFIRMATION_TICKS) {
+                    stopWithMessage("aScript Stopped — No Materials ("
+                                    + bankModule.getClass().getSimpleName() + ")",
+                            bankModule.describeMissing(config));
+                }
                 return;
             }
+            consecutiveMissingVerdicts = 0;
             // Bank HAS materials — fall through to BANKING
         } else {
             // No module needs bank — close bank if open
@@ -267,8 +302,14 @@ public class AScript extends Script {
             } else {
                 consecutiveBankFailures++;
                 if (consecutiveBankFailures >= MAX_BANK_FAILURES) {
-                    stopWithMessage("aScript Stopped — No Materials",
-                            "Bank failed " + consecutiveBankFailures + " times in a row");
+                    // Deliberately distinct from the "No Materials" verdict: here the bank
+                    // opened, the module believes it has materials, and the deposit/withdraw
+                    // still did not land. The module's own WARN lines name the item and step.
+                    stopWithMessage("aScript Stopped — Bank Cycle Failed ("
+                                    + bankModule.getClass().getSimpleName() + ")",
+                            "doBank failed " + consecutiveBankFailures
+                                    + " times in a row — the bank opened but the deposit/withdraw did not land"
+                                    + " (see the AScriptBank WARN lines for the item)");
                 }
             }
         } else {
