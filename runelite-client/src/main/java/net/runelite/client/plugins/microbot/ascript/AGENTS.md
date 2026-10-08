@@ -430,6 +430,19 @@ Modules must call these instead of re-implementing them.
 - **Every withdraw must be verified** with `AScriptBank.withdrawVerified(name)` so a failed withdraw never advances to CRAFTING with an empty inventory.
 - **Mouse speed is global and pinned (fork customization).** `Rs2Antiban.activityIntensity` is locked to `VERY_LOW` and `setActivityIntensity` is a no-op (`Rs2AntibanIntensityLockTest`); `NaturalMouse` speed is hardcoded to the slow tier. Modules carry no mouse-speed code — the old `managePrecisionMouseSpeed()`/`isPrecisionModule()` machinery was removed.
 - **Missing-materials / invalid-selection stops** must call `Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE)` with a `stopRequested`/`exitRequested` guard and a one-shot Discord notify (see "Stopping the script"). Fletching also self-escalates after 3 consecutive craft failures.
+- **Missing-materials checks must use the retrying bank reads**: `Rs2Bank.hasBankItem(name|id, amount)` (2-tick retry + miss debug), never the bare `Rs2Bank.hasItem(...)` mirror read. The mirror is refreshed only by bank container events, so one stale read used to decide a stop — and the same trap sat inside `AScriptBank.hasBankItem`, the withdraw pre-check, despite its name. Check *amounts* for anything consumed per action, and keep a stop message's own conditions identical to the check's: an inventory-only `describeMissing` can name an item that IS in the bank.
+
+### Missing-materials verdicts are confirmed before they stop
+
+`tick()` does not stop on the first `isBankMissingMaterials` verdict: it must hold `MISSING_CONFIRMATION_TICKS` (3) times in a row **and** the bank mirror must be live (`Rs2Bank.getBankLiveEpoch() > 0`) — a restored, never-live snapshot is not trusted as "empty". `MISSING_MAX_TICKS` (12) bounds the wait so an unreadable mirror cannot hold the tick. The counter resets when the verdict is false and on the disabled branch; deliberately **not** on the successful-open path, which runs every tick and would zero it before the threshold could ever be reached.
+
+Three stop titles, deliberately distinct — the operator must be able to tell them apart:
+
+| title | meaning |
+|---|---|
+| `No Materials (<Module>)` | confirmed empty on a live mirror |
+| `Bank Cycle Failed (<Module>)` | the bank opened, but `doBank` failed N times — the deposit/withdraw did not land (the `AScriptBank` WARN lines name the item) |
+| `Bank State Unreadable (<Module>)` | no live mirror within the confirmation bound |
 
 ### The bank phase gate (`readyForBank`)
 
@@ -485,6 +498,6 @@ QOL features don't run as automation scripts. Add config items under the QOL `@C
 - [ ] Tick logic is clear: config check → phase resolve → validation → bank check (`readyForBank` gate) → dispatch
 - [ ] A module whose bank needs travelling gates the bank phase with `readyForBank()`, keeps its walk radius inside the readiness distance, and stops loudly when the trip stalls
 - [ ] Module clicks use the client mouse — no `doInvoke` / `NewMenuEntry` / `interact(...)`
-- [ ] `isBankMissingMaterials()` checks bank *amounts* for anything consumed per action
+- [ ] `isBankMissingMaterials()` checks bank *amounts* for anything consumed per action, and every bank read in it is the retrying `Rs2Bank.hasBankItem(...)` family — never the bare `Rs2Bank.hasItem(...)` mirror read
 - [ ] Every stop path notifies (status + log + `AScriptNotify` + config reset), and repeated action failures escalate to a stop
 - [ ] This AGENTS.md is updated with new modules, states, or config items
