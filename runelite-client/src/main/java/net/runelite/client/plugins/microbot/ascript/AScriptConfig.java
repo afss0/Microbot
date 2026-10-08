@@ -332,6 +332,17 @@ public interface AScriptConfig extends Config {
         return false;
     }
 
+    @ConfigItem(
+            keyName = "mlmAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds after a completed mining trip",
+            position = 4,
+            section = motherloadMineSection
+    )
+    default boolean mlmAfk() {
+        return true;
+    }
+
     // ── Gem Crab Killer ──────────────────────────────────────
 
     @ConfigSection(
@@ -429,6 +440,17 @@ public interface AScriptConfig extends Config {
         return false;
     }
 
+    @ConfigItem(
+            keyName = "jewelEnchantAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds between batches",
+            position = 3,
+            section = jewelEnchantSection
+    )
+    default boolean jewelEnchantAfk() {
+        return true;
+    }
+
     // ── Cannonball Smelter ─────────────────────────────────────
 
     @ConfigSection(
@@ -491,6 +513,17 @@ public interface AScriptConfig extends Config {
     )
     default BarbarianFishingFunctions barbarianVillageFisherFunction() {
         return BarbarianFishingFunctions.DROP_RAW;
+    }
+
+    @ConfigItem(
+            keyName = "barbarianVillageFisherAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds after a completed fishing cycle",
+            position = 2,
+            section = barbarianVillageFisherSection
+    )
+    default boolean barbarianVillageFisherAfk() {
+        return true;
     }
 
     // ── Ammonite Crabs ──────────────────────────────────────────

@@ -148,6 +148,11 @@ Used during merges to verify nothing is lost.
   - Powerdrop with rod + feathers as locked anchors; drops slice 5–9 items per tick with count-drop verification; the post-batch break + `barbarianFishingAfk` run when a drop session completes.
   - Banking is restock-only (rod/feather missing): walk-gated to the Barbarian Outpost chest (`BankLocation.BARBARIAN_OUTPOST`); `isBankMissingMaterials` uses the retrying `hasBankItem` so a stale bank mirror cannot stop the run.
   - Merge check: `grep "HARPOON_SPEC_MAX_ATTEMPTS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/barbarianfishing/BarbarianFishingScript.java | head -1`
+- **aScript AFK-layer rollout + precision machinery removal (Oct 2026):**
+  - `mlmAfk` / `barbarianVillageFisherAfk` / `jewelEnchantAfk` — default-on random-AFK layers (Jewelry/Crafting parity: unconditional short log-normal pause + 3–120 s log-normal AFK, weather-modulated, interruptible, 5 s min-gap). Triggers: MLM at the sack-empty trip falling edge (bank-free deposit-box flow); Barbarian Village Fisher once per completed cycle (inline after a drop session; bank-closed on the tick after `doBank` via `postCycleBreakPending`); Jewel Enchant at batch end with a bank-closed yield (`needsBank` returns the `jewelEnchantPostBatchBreakDone` flag for one tick).
+  - Removed the dead precision-mouse machinery: `AScript.managePrecisionMouseSpeed()` + `AModule.isPrecisionModule()` + all per-module overrides — `Rs2Antiban.setActivityIntensity` is a no-op (activity intensity locked to VERY_LOW), so the block could never do anything.
+  - eventdismiss QOL sleeps switched from uniform `Global.sleep(min, max)` to `Rs2Random.logNormalBounded` (lamp flow + dialogue closer).
+  - Merge check: `grep "jewelEnchantPostBatchBreakDone" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantScript.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename

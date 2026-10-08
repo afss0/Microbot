@@ -236,11 +236,6 @@ public class CannonballSmelterScript implements AModule {
         startSmelt(furnaceChoice);
     }
 
-    @Override
-    public boolean isPrecisionModule() {
-        return false; // one widget click per multi-minute batch; imprecision is tolerable
-    }
-
     // ── Internal helpers ──────────────────────────────────
 
     /**
