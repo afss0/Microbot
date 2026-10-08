@@ -515,8 +515,9 @@ public class CannonballSmelterScript implements AModule {
         return Rs2Inventory.hasItem(ItemID.AMMO_MOULD) || Rs2Inventory.hasItem(ItemID.DOUBLE_AMMO_MOULD);
     }
 
+    /** Retrying read by id: the bare mirror read can report a mould the bank no longer lists. */
     private boolean bankHasMould() {
-        return Rs2Bank.hasItem("double ammo mould") || Rs2Bank.hasItem("ammo mould");
+        return Rs2Bank.hasBankItem(ItemID.DOUBLE_AMMO_MOULD, 1) || Rs2Bank.hasBankItem(ItemID.AMMO_MOULD, 1);
     }
 
     /**
