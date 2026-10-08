@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript.cannonballsmelter;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
@@ -18,6 +19,7 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
+import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
 import java.awt.Rectangle;
@@ -54,6 +56,16 @@ public class CannonballSmelterScript implements AModule {
     private static final int MAX_ACTION_FAILURES = 3;
     /** No bar consumed and no animation for this long = the batch is not running anymore. */
     private static final long STALL_WINDOW_MS = 12_000L;
+    /** Within this many tiles of the site's bank the orchestrator may run the bank cycle. */
+    private static final int BANK_READY_DISTANCE = 10;
+    /**
+     * Walk target radius. Must stay inside {@link #BANK_READY_DISTANCE}: the orchestrator
+     * only takes the bank phase once {@link #readyForBank} is true, so a walk that stops
+     * outside that ring would loop between "walked there" and "not ready yet".
+     */
+    private static final int BANK_TRAVEL_RADIUS = 4;
+    /** No movement at all for this long while travelling = the site is unreachable. */
+    private static final long TRAVEL_STAGNATION_MS = 120_000L;
 
     private Phase currentPhase = Phase.NONE;
     private boolean exitRequested = false;
@@ -65,9 +77,14 @@ public class CannonballSmelterScript implements AModule {
     private long lastAfkTime = 0L;
     /** Set while the post-batch break is pending/done — see {@link #needsBank(AScriptConfig)}. */
     private boolean postBatchBreakDone = false;
+    /** Travel watchdog: the last position seen while walking to the site. */
+    private int lastTravelX = Integer.MIN_VALUE;
+    private int lastTravelY = Integer.MIN_VALUE;
+    private int lastTravelPlane = Integer.MIN_VALUE;
+    private long lastTravelMoveAt = 0L;
 
     public enum Phase {
-        NONE, SMELTING
+        NONE, WALK_TO_BANK, WALK_TO_FURNACE, SMELTING
     }
 
     // ── Lifecycle ─────────────────────────────────────────
@@ -80,6 +97,7 @@ public class CannonballSmelterScript implements AModule {
         lastProgressAt = 0L;
         lastAfkTime = 0L;
         postBatchBreakDone = false;
+        resetTravelWatchdog();
     }
 
     // ── Phase resolution ──────────────────────────────────
@@ -107,7 +125,7 @@ public class CannonballSmelterScript implements AModule {
         if (currentPhase == Phase.NONE && config.scriptSelection() == ScriptType.CANNONBALL_SMELTER) {
             return "no furnace selected";
         }
-        if (currentPhase == Phase.SMELTING) {
+        if (currentPhase != Phase.NONE) {
             // Capability guard: a sub-35 Smithing account cannot smelt steel bars. The
             // level reads 0 while skill data is still loading — treat that as "retry",
             // not as a stop.
@@ -130,6 +148,19 @@ public class CannonballSmelterScript implements AModule {
             return postBatchBreakDone;
         }
         return !hasMould();            // mould lost mid-run
+    }
+
+    /**
+     * The bank cycle is only allowed from the site. Its first tick exists to open the
+     * bank and populate the cached contents, and {@code Rs2Bank.openBank()} can only
+     * reach a bank object in the loaded scene — so away from the site this returns
+     * {@code false} and the tick falls through to {@link #doAction(AScriptConfig)},
+     * where the module walks itself there (the fisher/ammonite rule, made explicit).
+     */
+    @Override
+    public boolean readyForBank(AScriptConfig config) {
+        CannonballSmelterFurnace site = config.cannonballFurnace();
+        return site != null && atSite(site);
     }
 
     @Override
@@ -205,18 +236,40 @@ public class CannonballSmelterScript implements AModule {
     public void doAction(AScriptConfig config) {
         if (!Microbot.isLoggedIn() || exitRequested) return;
 
-        CannonballSmelterFurnace furnaceChoice = config.cannonballFurnace();
-        if (furnaceChoice == null) return;
+        CannonballSmelterFurnace site = config.cannonballFurnace();
+        if (site == null) return;
 
         WeatherModulation.ensureFresh();
         weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
 
         int bars = barCount();
         if (bars <= 0) {
-            postBatchBreak(config);
-            return; // batch finished — the orchestrator banks on the next tick
+            // Batch end. The randomness break runs ONCE per batch — never once per tick
+            // while walking away with no bars. The orchestrator takes the bank cycle as
+            // soon as readyForBank() allows it; until then, walk to the site.
+            if (!postBatchBreakDone) {
+                postBatchBreak(config);
+            }
+            if (!readyForBank(config)) {
+                walkToSite(site, "BANK");
+            }
+            return;
         }
         postBatchBreakDone = false; // bars present again — the next empty state is a new batch end
+
+        // Bars in hand, but the module cannot work from where it is: a lost mould means a
+        // bank trip, and a furnace outside the loaded scene means we are not at the site.
+        if (!hasMould()) {
+            if (!readyForBank(config)) {
+                walkToSite(site, "BANK");
+            }
+            return;
+        }
+        if (!isFurnaceResolvable(site)) {
+            walkToSite(site, "FURNACE");
+            return;
+        }
+        resetTravelWatchdog();
 
         long now = System.currentTimeMillis();
         boolean progressed = bars < lastBarCount;
@@ -233,7 +286,7 @@ public class CannonballSmelterScript implements AModule {
             return;
         }
 
-        startSmelt(furnaceChoice);
+        startSmelt(site);
     }
 
     // ── Internal helpers ──────────────────────────────────
@@ -340,6 +393,63 @@ public class CannonballSmelterScript implements AModule {
      */
     private boolean isCanvasFallback(Rectangle rect) {
         return rect == null || rect.getWidth() >= Microbot.getClient().getCanvasWidth() - 2;
+    }
+
+    /** Whether the player is at the configured site — bank and furnace share a region. */
+    private boolean atSite(CannonballSmelterFurnace site) {
+        WorldPoint here = Rs2Player.getWorldLocation();
+        WorldPoint anchor = site.getBankLocation().getWorldPoint();
+        return here != null
+                && here.getPlane() == anchor.getPlane()
+                && here.distanceTo(anchor) <= BANK_READY_DISTANCE;
+    }
+
+    /** Whether the configured furnace object is in the loaded scene right now. */
+    private boolean isFurnaceResolvable(CannonballSmelterFurnace site) {
+        return findFurnace(site) != null;
+    }
+
+    /**
+     * Walks to the site's bank anchor — the module's single travel primitive, because the
+     * bank and the furnace share a region at every supported site. The walker handles
+     * teleports and transports, so progress is measured as "the player moved", never as
+     * "the distance shrank": a teleport may legitimately move you farther away first.
+     * A player who has not moved at all for {@link #TRAVEL_STAGNATION_MS} stops the module
+     * loudly — an unreachable site must never idle silently.
+     *
+     * @param what status label for the trip ("BANK" or "FURNACE")
+     */
+    private void walkToSite(CannonballSmelterFurnace site, String what) {
+        Microbot.status = "WALKING TO " + what + " — " + site.getName();
+        currentPhase = "BANK".equals(what) ? Phase.WALK_TO_BANK : Phase.WALK_TO_FURNACE;
+
+        WorldPoint here = Rs2Player.getWorldLocation();
+        if (here == null) return;
+        long now = System.currentTimeMillis();
+        boolean moved = here.getX() != lastTravelX
+                || here.getY() != lastTravelY
+                || here.getPlane() != lastTravelPlane;
+        if (moved) {
+            lastTravelX = here.getX();
+            lastTravelY = here.getY();
+            lastTravelPlane = here.getPlane();
+            lastTravelMoveAt = now;
+        } else if (now - lastTravelMoveAt > TRAVEL_STAGNATION_MS) {
+            exitRequested = true;
+            stopWithMessage("could not reach " + site.getName() + " — no movement for "
+                    + (TRAVEL_STAGNATION_MS / 1000) + "s at " + here.getX() + "," + here.getY());
+            return;
+        }
+        if (!Rs2Player.isMoving()) {
+            Rs2Walker.walkTo(site.getBankLocation().getWorldPoint(), BANK_TRAVEL_RADIUS);
+        }
+    }
+
+    /** Re-arms the travel watchdog; the next travel tick counts as movement. */
+    private void resetTravelWatchdog() {
+        lastTravelX = Integer.MIN_VALUE;
+        lastTravelY = Integer.MIN_VALUE;
+        lastTravelPlane = Integer.MIN_VALUE;
     }
 
     /**

@@ -153,6 +153,11 @@ Used during merges to verify nothing is lost.
   - Removed the dead precision-mouse machinery: `AScript.managePrecisionMouseSpeed()` + `AModule.isPrecisionModule()` + all per-module overrides — `Rs2Antiban.setActivityIntensity` is a no-op (activity intensity locked to VERY_LOW), so the block could never do anything.
   - eventdismiss QOL sleeps switched from uniform `Global.sleep(min, max)` to `Rs2Random.logNormalBounded` (lamp flow + dialogue closer).
   - Merge check: `grep "jewelEnchantPostBatchBreakDone" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantScript.java | head -1`
+- **aScript bank-phase gate + cannonball travel (Oct 2026):**
+  - `AModule.readyForBank(config)` (default `true`) gates the orchestrator's bank open/cache cycle. A module that must prepare first — walk to the bank area — returns `false`, so `AScript.tick` skips the bank phase and dispatches `doAction()` instead. Without it, a bank the module could not reach froze the tick **before** `doAction()` was ever dispatched again: the cannonball smelter hung forever when started away from Edgeville (status stuck on "Opening bank", no log line, no stop).
+  - `AScript` now bounds consecutive failed opens (`MAX_BANK_OPEN_FAILURES = 10`) and stops loudly ("Bank Unreachable") instead of returning forever; the counter resets on the disabled branch, a successful open, `stopWithMessage` and `shutdown`.
+  - Cannonball: `CannonballSmelterFurnace` carries each site's `BankLocation` (the walk anchor — bank and furnace share a region, so no furnace coordinates are needed); `readyForBank` = within 10 tiles of it (plane-checked); `doAction` walks there via `Rs2Walker.walkTo(anchor, 4)` with a 120 s **no-movement** watchdog (progress = "the player moved", because a teleport can move you farther first) that stops the module loudly; the post-batch break now runs once per batch instead of every tick while walking with no bars.
+  - Merge check: `grep "readyForBank" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename

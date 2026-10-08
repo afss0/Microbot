@@ -57,4 +57,26 @@ public interface AModule {
 
     /** Clear self-stop flags on NONE → active transition. */
     void resetExitFlag();
+
+    /**
+     * Whether the orchestrator may run the bank open/cache cycle for this module on
+     * this tick.
+     * <p>
+     * The first bank phase exists to open the bank and populate the cached contents
+     * that {@link #isBankMissingMaterials} and the module's own bank queries read.
+     * A module that must prepare first — walk to the bank area, let a blocking event
+     * finish — returns {@code false} until it is ready; the orchestrator then skips
+     * the bank phase and dispatches {@link #doAction(AScriptConfig)} instead, so the
+     * module can do that preparation.
+     * <p>
+     * A module returning {@code false} while {@link #needsBank} is true owns that
+     * preparation: it must keep it bounded and stop loudly on stagnation — it must
+     * never idle silently. Returning {@code false} forever is the same defect class as
+     * {@link #needsBank} being wrong.
+     * <p>
+     * Default {@code true}: open the bank on the first tick (historic behaviour).
+     */
+    default boolean readyForBank(AScriptConfig config) {
+        return true;
+    }
 }
