@@ -174,7 +174,7 @@ public class DismissNpcEvent implements BlockingEvent {
 
         if (countLamps() > lampsBefore) {
             log.info("Lamp received — using on {}", config.eventDismissLampSkill());
-            Global.sleep(600, 1200);
+            Global.sleep(Rs2Random.logNormalBounded(600, 1200));
             if (LampUtility.useLamp(config.eventDismissLampSkill())) {
                 return true;
             }
@@ -197,7 +197,7 @@ public class DismissNpcEvent implements BlockingEvent {
         lampsBeforeWait.set(lampsBefore);
         lampWaitDeadline = System.currentTimeMillis() + rollLampWaitWindow();
 
-        Global.sleep(600, 1200);
+        Global.sleep(Rs2Random.logNormalBounded(600, 1200));
 
         if (countLamps() > lampsBefore) {
             if (LampUtility.useLamp(config.eventDismissLampSkill())) {
@@ -220,9 +220,9 @@ public class DismissNpcEvent implements BlockingEvent {
         while (Rs2Dialogue.isInDialogue() && System.currentTimeMillis() < deadline) {
             if (Rs2Dialogue.hasContinue()) {
                 Rs2Dialogue.clickContinue();
-                Global.sleep(600, 1200);
+                Global.sleep(Rs2Random.logNormalBounded(600, 1200));
             } else {
-                Global.sleep(300, 600);
+                Global.sleep(Rs2Random.logNormalBounded(300, 600));
             }
         }
 

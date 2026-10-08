@@ -217,11 +217,6 @@ public class AmmoniteCrabsScript implements AModule {
         }
     }
 
-    @Override
-    public boolean isPrecisionModule() {
-        return false;
-    }
-
     // -- Handlers ---------------------------------------------
 
     private void handleTraveling(AScriptConfig config) {

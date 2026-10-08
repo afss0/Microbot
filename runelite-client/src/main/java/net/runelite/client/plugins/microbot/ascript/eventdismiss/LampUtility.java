@@ -99,7 +99,7 @@ public class LampUtility {
             if (isIdleWindowElapsed()) {
                 return true;
             }
-            Global.sleep(Rs2Random.between(300, 700));
+            Global.sleep(Rs2Random.logNormalBounded(300, 700));
         }
         log.info("Idle window not reached within {} ms — skipping lamp use for now", timeoutMs);
         return false;
@@ -157,7 +157,7 @@ public class LampUtility {
         }
 
         Rs2Widget.clickWidget(LAMP_WIDGET_GROUP, skillWidgetId);
-        Global.sleep(600, 1200);
+        Global.sleep(Rs2Random.logNormalBounded(600, 1200));
 
         Rs2Widget.clickWidget(LAMP_WIDGET_GROUP, LAMP_CONFIRM_BUTTON);
 
@@ -167,7 +167,7 @@ public class LampUtility {
         Global.sleepUntil(() -> Rs2Dialogue.hasContinue() || !Rs2Inventory.contains(ItemID.LAMP), 2000);
         for (int i = 0; i < 5 && Rs2Dialogue.hasContinue(); i++) {
             Rs2Dialogue.clickContinue();
-            Global.sleep(600, 1200);
+            Global.sleep(Rs2Random.logNormalBounded(600, 1200));
         }
 
         if (!Global.sleepUntil(() -> !Rs2Inventory.contains(ItemID.LAMP), 3000)) {
