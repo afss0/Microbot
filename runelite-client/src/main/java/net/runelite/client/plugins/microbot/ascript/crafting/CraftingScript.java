@@ -887,7 +887,4 @@ public class CraftingScript implements AModule {
 
     @Override
     public boolean isActive() { return currentPhase != Phase.NONE; }
-
-    @Override
-    public boolean isPrecisionModule() { return true; }
 }

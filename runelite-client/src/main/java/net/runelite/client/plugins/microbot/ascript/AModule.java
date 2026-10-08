@@ -57,13 +57,4 @@ public interface AModule {
 
     /** Clear self-stop flags on NONE → active transition. */
     void resetExitFlag();
-
-    /**
-     * Whether this module needs VERY_LOW mouse speed for precise widget
-     * interactions (jewelry, darts, bolts, etc.).
-     * <p>
-     * The orchestrator calls {@link net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban#setActivityIntensity}
-     * with {@code ActivityIntensity.VERY_LOW} while any precision module is active.
-     */
-    boolean isPrecisionModule();
 }
