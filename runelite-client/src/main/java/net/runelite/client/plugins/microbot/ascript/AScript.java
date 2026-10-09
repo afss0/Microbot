@@ -11,6 +11,7 @@ import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabsS
 import net.runelite.client.plugins.microbot.ascript.barbarianfishing.BarbarianFishingScript;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianVillageFisherScript;
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterScript;
+import net.runelite.client.plugins.microbot.ascript.cannoning.CannoningScript;
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
 import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingScript;
@@ -59,6 +60,7 @@ public class AScript extends Script {
             new BarbarianVillageFisherScript(),
             new JewelEnchantScript(),
             new CannonballSmelterScript(),
+            new CannoningScript(),
             new AmmoniteCrabsScript(),
             new FiremakingScript(),
             new BarbarianFishingScript()
