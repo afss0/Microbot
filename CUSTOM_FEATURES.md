@@ -108,6 +108,7 @@ Used during merges to verify nothing is lost.
   - **Cannonball Smelter** (`ascript/cannonballsmelter/`) — smelt steel bars into cannonballs (Edgeville, Shilo Village, Prifddinas, Port Phasmatys); mould as a locked slot; Jewelry-style random-AFK layer (`cannonballAfk`)
   - **Firemaking** (`ascript/firemaking/`) — burn logs on fires / forester's campfires (GE corners, Castle Wars); deadlock-free tick-driven burn tracking (stall re-engage + relight), ID-only fire lookup, locked tinderbox slot; Jewelry-style random-AFK layer (`firemakingAfk`)
   - **Barbarian Fishing** (`ascript/barbarianfishing/`) — powerfish leaping fish at Otto's Grotto (drop-only); rod + feather locked slots, walk-gated bank at the Barbarian Outpost chest, spec actuation verified before latching, sliced humanized mouse drops; Jewelry-style random-AFK layer (`barbarianFishingAfk`)
+  - **Cannoning** (`ascript/cannoning/`) — maintain a placed dwarf multicannon: repairs it when it breaks (broken object id + `MCANNON_DECAYED` varbit, both verified before it counts) and reloads it from the inventory when `CANNON_AMMO` drops to the configured threshold (≥ 15 balls); latches only the player's own cannon from the `OWNEDMCANNON` varp (a stranger's cannon at a shared spot is never clicked), client-mouse clicks behind a render-race budget, loud actionable stop when the cannonballs run out (never banks); Jewelry-style random-AFK layer (`cannonAfk`, hard-capped at 50 s)
 - **Anti-detection:**
   - All timing uses `Rs2Random.logNormalBounded()` with log-normal distributions (not uniform)
   - AFK timing: `Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier)`
@@ -216,6 +217,7 @@ ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AG
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/eventdismiss/
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/cannonballsmelter/
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/cannoning/
 grep "yieldBankingToLamp" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/eventdismiss/LampUtility.java | head -1
 grep "weatherAdjustedOvershoots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/naturalmouse/util/FactoryTemplates.java | head -1
 grep "mistakeProbabilityOffset" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/VirtualMouse.java | head -1
