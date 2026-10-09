@@ -13,6 +13,7 @@ import net.runelite.client.plugins.microbot.ascript.barbarianfishing.BarbarianFi
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingFunctions;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingType;
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterFurnace;
+import net.runelite.client.plugins.microbot.ascript.cannoning.CannonBallType;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.EventAction;
 import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingLocation;
@@ -480,6 +481,47 @@ public interface AScriptConfig extends Config {
             section = cannonballSmelterSection
     )
     default boolean cannonballAfk() {
+        return true;
+    }
+
+    @ConfigSection(
+            name = "Cannoning",
+            description = "Dwarf multicannon maintenance — place the cannon before starting and keep cannonballs in the inventory",
+            position = 10,
+            closedByDefault = true
+    )
+    String cannoningSection = "cannoning";
+
+    @ConfigItem(
+            keyName = "cannonBallType",
+            name = "Cannonballs",
+            description = "Which cannonballs to load",
+            position = 0,
+            section = cannoningSection
+    )
+    default CannonBallType cannonBallType() {
+        return CannonBallType.CANNONBALL;
+    }
+
+    @ConfigItem(
+            keyName = "cannonRefillBelow",
+            name = "Reload below",
+            description = "Load the cannon when it has this many balls or fewer (the cannon holds 30)",
+            position = 1,
+            section = cannoningSection
+    )
+    default int cannonRefillBelow() {
+        return 15;
+    }
+
+    @ConfigItem(
+            keyName = "cannonAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 50 seconds after each cannon action",
+            position = 2,
+            section = cannoningSection
+    )
+    default boolean cannonAfk() {
         return true;
     }
 

@@ -14,6 +14,7 @@ public enum ScriptType {
     BARBARIAN_VILLAGE_FISHER("Barbarian Village Fisher"),
     JEWEL_ENCHANT("Jewel Enchant"),
     CANNONBALL_SMELTER("Cannonball Smelter"),
+    CANNONING("Cannoning"),
     AMMONITE_CRABS("Ammonite Crabs"),
     FIREMAKING("Firemaking"),
     BARBARIAN_FISHING("Barbarian Fishing");
