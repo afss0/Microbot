@@ -26,6 +26,8 @@ import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 
 import java.awt.event.KeyEvent;
+import java.util.Arrays;
+import java.util.List;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -225,8 +227,12 @@ public class BarbarianVillageFisherScript implements AModule {
         // removes them — banking re-withdraws otherwise (churn each cycle).
         // Bait is a stackable consumable, so use ensureStackLocked (whole-stack
         // withdraw) — locking one bait would be pointless.
-        if (!AScriptBank.ensureToolLocked(rodName)
-                || !AScriptBank.ensureStackLocked(baitName)) {
+        // Both ride in one keep-list: without it the second ensure treats the lock
+        // the first just set as another module's stray and unlocks + deposits it
+        // (the rod deposit/re-withdraw ping-pong, observed live 2026-10-10).
+        List<String> keepLocked = Arrays.asList(rodName, baitName);
+        if (!AScriptBank.ensureToolLocked(rodName, keepLocked)
+                || !AScriptBank.ensureStackLocked(baitName, keepLocked)) {
             consecutiveBankFailures++;
             return false;
         }
@@ -237,9 +243,10 @@ public class BarbarianVillageFisherScript implements AModule {
             return false;
         }
 
-        // Withdraw rod if missing
+        // Withdraw rod if missing — via ensure so it comes back LOCKED, never bare:
+        // a bare re-withdraw left it unlocked in the inventory for the whole cycle.
         if (!Rs2Inventory.hasItem(rodName)) {
-            if (!AScriptBank.withdrawOneVerified(rodName)) {
+            if (!AScriptBank.ensureToolLocked(rodName, keepLocked)) {
                 AScriptNotify.notify("Banking Failed", "No " + rodName + " in bank");
                 consecutiveBankFailures++;
                 return false;
@@ -249,7 +256,7 @@ public class BarbarianVillageFisherScript implements AModule {
         // No bait left: locked stack consumed entirely — withdraw a fresh full
         // stack ("withdraw all" drains the bank pile in one interaction).
         if (!Rs2Inventory.hasItem(baitName)
-                && !AScriptBank.ensureStackLocked(baitName)) {
+                && !AScriptBank.ensureStackLocked(baitName, keepLocked)) {
             AScriptNotify.notify("Banking Failed", "No " + baitName + " in bank");
             consecutiveBankFailures++;
             return false;

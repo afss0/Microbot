@@ -11,6 +11,8 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.function.BooleanSupplier;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -195,8 +197,9 @@ public final class AScriptBank {
      * its inventory slot is LOCKED, so future blanket deposits never remove it.
      * <p>
      * Handles tool switching between modules (e.g. Crafting mould -> Fletching knife):
-     * any currently locked slot that does NOT contain {@code toolName} is unlocked,
-     * its item deposited, and then one {@code toolName} is withdrawn and its slot locked.
+     * any currently locked slot that does NOT contain {@code toolName} and is not in
+     * {@code keepLocked} is unlocked, its item deposited, and then one {@code toolName}
+     * is withdrawn and its slot locked.
      * If the tool is already in the inventory, only the lock is (re)applied — no
      * extra withdraw, no deposit of unrelated items.
      * <p>
@@ -207,7 +210,22 @@ public final class AScriptBank {
      * @return true if the tool is now in the inventory with its slot locked
      */
     public static boolean ensureToolLocked(String toolName) {
-        return ensureLocked(toolName, false);
+        return ensureLocked(toolName, false, Collections.emptyList());
+    }
+
+    /**
+     * {@link #ensureToolLocked(String)} with a keep-list: locked slots matching any entry
+     * of {@code keepLocked} are owned by the caller's current bank cycle and are never
+     * released as strays. Pass every item the cycle is acquiring — without it, the second
+     * ensure call sees the lock the first one just established as a "different item" and
+     * unlocks + deposits it (the rod/feathers ping-pong observed live 2026-10-10).
+     *
+     * @param toolName the tool to keep locked in inventory
+     * @param keepLocked items never treated as strays (same match rules as the call itself)
+     * @return true if the tool is now in the inventory with its slot locked
+     */
+    public static boolean ensureToolLocked(String toolName, Collection<String> keepLocked) {
+        return ensureLocked(toolName, false, keepLocked);
     }
 
     /**
@@ -221,7 +239,8 @@ public final class AScriptBank {
      * single one would be useless there — every cast consumes one, so the module
      * would bank again immediately. Tool switching is identical to
      * {@link #ensureToolLocked(String)}: a locked slot holding a DIFFERENT item
-     * is unlocked so the toolbar deposit returns that stray to the bank.
+     * (and not in the caller's keep-list) is unlocked so the toolbar deposit
+     * returns that stray to the bank.
      * <p>
      * A locked stack is still consumed by use: once the stack empties the slot
      * (and with it the lock) is gone, and the next bank cycle withdraws and locks
@@ -231,10 +250,23 @@ public final class AScriptBank {
      * @return true if the item is now in the inventory with its slot locked
      */
     public static boolean ensureStackLocked(String nameOrId) {
-        return ensureLocked(nameOrId, true);
+        return ensureLocked(nameOrId, true, Collections.emptyList());
     }
 
-    private static boolean ensureLocked(String nameOrId, boolean withdrawWholeStack) {
+    /**
+     * {@link #ensureStackLocked(String)} with the caller-owned keep-list — see
+     * {@link #ensureToolLocked(String, Collection)}.
+     *
+     * @param nameOrId the item to keep locked in inventory (name or numeric id as string)
+     * @param keepLocked items never treated as strays (same match rules as the call itself)
+     * @return true if the item is now in the inventory with its slot locked
+     */
+    public static boolean ensureStackLocked(String nameOrId, Collection<String> keepLocked) {
+        return ensureLocked(nameOrId, true, keepLocked);
+    }
+
+    private static boolean ensureLocked(String nameOrId, boolean withdrawWholeStack,
+            Collection<String> keepLocked) {
         // Already holding the item — make sure its slot is locked.
         Rs2ItemModel held = getInventoryItem(nameOrId);
         if (held != null) {
@@ -244,7 +276,8 @@ public final class AScriptBank {
             return true;
         }
 
-        // Item not in inventory: release any locked slot that holds a DIFFERENT item,
+        // Item not in inventory: release any locked slot that holds a DIFFERENT item
+        // (and is not in the caller's keep-list — those belong to this same bank cycle),
         // then blanket-deposit via the toolbar button (which ignores still-locked
         // slots, so the just-unlocked stray goes back to the bank), withdraw the
         // item, and lock its slot.
@@ -254,6 +287,7 @@ public final class AScriptBank {
             if (stray == null) continue;
             if (stray.getId() == ItemID.LAMP) continue; // never release the lamp — it must survive deposits
             if (isToolMatch(stray, nameOrId, nameLc)) continue; // already the item (race) — leave it
+            if (isKeptLocked(stray, keepLocked)) continue; // owned by the caller's cycle — never a stray
             Rs2Bank.toggleItemLock(stray.getName(), false); // unlock so the toolbar deposit removes it
         }
         if (!depositAll()) return false; // depositAll() button ignores locked slots; stray is now gone
@@ -454,6 +488,17 @@ public final class AScriptBank {
             return stray.getId() == Integer.parseInt(toolName);
         }
         return stray.getName() != null && stray.getName().toLowerCase().contains(toolNameLc);
+    }
+
+    /**
+     * True when {@code item} matches any entry of the caller's keep-list — a locked slot
+     * this bank cycle established itself, which must never be released as a stray.
+     */
+    private static boolean isKeptLocked(Rs2ItemModel item, Collection<String> keepLocked) {
+        for (String kept : keepLocked) {
+            if (isToolMatch(item, kept, kept.toLowerCase())) return true;
+        }
+        return false;
     }
 
     // ── Bank readiness (the readyForBank gate) ────────────────
