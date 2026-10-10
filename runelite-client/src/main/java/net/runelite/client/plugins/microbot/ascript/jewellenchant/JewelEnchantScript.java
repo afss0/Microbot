@@ -64,6 +64,13 @@ public class JewelEnchantScript implements AModule {
     private long lastAfkTime = 0L;
     /** Set while the post-batch break is pending/done — see {@link #needsBank}. */
     private boolean jewelEnchantPostBatchBreakDone = false;
+    /**
+     * True once a batch has actually run since the last bank cycle (set in {@link #doAction} when
+     * jewellery is in hand, cleared by a completed bank cycle and on reset). Gates the
+     * bank-closed yield in {@link #needsBank}: with nothing yet worked, the first bank trip
+     * happens immediately — never a post-batch break (or a stop) before it.
+     */
+    private boolean batchRanSinceBank = false;
 
     public enum Phase {
         NONE, ENCHANT
@@ -77,6 +84,7 @@ public class JewelEnchantScript implements AModule {
         consecutiveEnchantFailures = 0;
         lastAfkTime = 0L;
         jewelEnchantPostBatchBreakDone = false;
+        batchRanSinceBank = false;
     }
 
     // ── Phase resolution ──────────────────────────────────
@@ -132,11 +140,11 @@ public class JewelEnchantScript implements AModule {
         JewelEnchantItem item = config.jewelEnchantItem();
         if (item == null || item == JewelEnchantItem.NONE) return false;
 
-        // Need the unenchanted jewellery. When the batch just ran out, yield one tick so
-        // the post-batch break runs with the bank still closed (crafting-jewelry pattern):
-        // needsBank returns the break flag until the break has run.
+        // Need the unenchanted jewellery. When a batch just ran out, yield one tick so
+        // the post-batch break runs with the bank still closed; only a batch that actually
+        // ran earns that break — a fresh empty state banks immediately.
         if (!Rs2Inventory.hasItem(item.getUnenchantedId())) {
-            return jewelEnchantPostBatchBreakDone;
+            return !batchRanSinceBank || jewelEnchantPostBatchBreakDone;
         }
 
         // Need cosmic runes — no staff supplies them
@@ -289,6 +297,9 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
+        // Fresh batch scope — the next empty state only earns its closing break after a
+        // batch runs on these materials.
+        batchRanSinceBank = false;
         return true;
     }
 
@@ -309,14 +320,6 @@ public class JewelEnchantScript implements AModule {
         WeatherModulation.ensureFresh();
         weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
 
-        // Verify we have runes and jewellery
-        if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId())) {
-            log.warn("[JewelEnchant] No cosmic runes in inventory");
-            exitRequested = true;
-            stopWithMessage("No cosmic runes");
-            return;
-        }
-
         // Nothing to enchant — the batch ran out: run the post-batch break once (the
         // orchestrator banks on a later tick; needsBank yields while the break is
         // pending), then let the bank cycle fetch more jewellery.
@@ -326,6 +329,16 @@ public class JewelEnchantScript implements AModule {
             return;
         }
         jewelEnchantPostBatchBreakDone = false; // jewellery present again — the next empty state is a new batch end
+        batchRanSinceBank = true;               // a batch is being worked — its end earns the closing break
+
+        // Cosmics ran out while jewellery remains — needsBank routes this state to the
+        // bank cycle on the next tick. Never stop the run from here: the old hard stop
+        // killed fresh starts before the first bank ever opened, and any batch that
+        // ended with the cosmic stack empty.
+        if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId())) {
+            log.debug("[JewelEnchant] Cosmics missing with jewellery in hand — waiting for the bank cycle");
+            return;
+        }
         int remaining = Rs2Inventory.itemQuantity(item.getUnenchantedId());
 
         // 1. Select the enchant spell by clicking its spellbook icon with the
