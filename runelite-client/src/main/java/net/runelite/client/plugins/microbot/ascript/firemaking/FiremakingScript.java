@@ -103,6 +103,13 @@ public class FiremakingScript implements AModule {
     private long lastAfkTime = 0L;
     /** Set while the post-batch break is pending/done — see {@link #needsBank(AScriptConfig)}. */
     private boolean postBatchBreakDone = false;
+    /**
+     * True once a batch has actually run since the last bank cycle (set in {@link #doAction},
+     * cleared by a completed bank cycle and on reset). Gates the bank-closed yield in
+     * {@link #needsBank}: with nothing yet worked, the first bank trip happens immediately —
+     * never a post-batch break before it.
+     */
+    private boolean batchRanSinceBank = false;
 
     public enum Phase { NONE, FIREMAKING }
 
@@ -116,6 +123,7 @@ public class FiremakingScript implements AModule {
         lastProgressAt = 0L;
         lastAfkTime = 0L;
         postBatchBreakDone = false;
+        batchRanSinceBank = false;
     }
 
     // ── Phase resolution ──────────────────────────────────
@@ -165,9 +173,10 @@ public class FiremakingScript implements AModule {
         FiremakingLog choice = config.firemakingLog();
         if (choice == null || choice == FiremakingLog.NONE) return false;
         if (!Rs2Inventory.hasItem(choice.getItemId())) {
-            // Batch finished (or nothing to burn): yield one tick so the post-batch break runs
-            // with the bank still closed (Jewelry/Crafting placement).
-            return postBatchBreakDone;
+            // Batch finished: yield one tick so the post-batch break runs with the bank still
+            // closed — but only when a batch actually ran; a fresh empty state (startup) banks
+            // immediately instead of breaking first.
+            return !batchRanSinceBank || postBatchBreakDone;
         }
         return !Rs2Inventory.hasItem(ItemID.TINDERBOX); // tinderbox lost mid-run
     }
@@ -235,6 +244,9 @@ public class FiremakingScript implements AModule {
 
         lastLogCount = -1; // fresh batch — doAction resolves the real count
         lastProgressAt = 0L;
+        // Fresh batch scope — the next empty state only earns its closing break after a
+        // batch runs on these materials.
+        batchRanSinceBank = false;
         return true;
     }
 
@@ -262,6 +274,7 @@ public class FiremakingScript implements AModule {
             return; // batch finished — the orchestrator banks on the next tick
         }
         postBatchBreakDone = false; // logs present again — the next empty state is a new batch end
+        batchRanSinceBank = true;   // a batch is being burned — its end earns the closing break
 
         long now = System.currentTimeMillis();
         if (lastLogCount >= 0 && count < lastLogCount) {
