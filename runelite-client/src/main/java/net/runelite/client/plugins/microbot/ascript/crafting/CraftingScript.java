@@ -48,6 +48,13 @@ public class CraftingScript implements AModule {
     private long jewelryLastProgressAt = 0L;
     /** Set while the post-batch break is pending/done — see {@link #needsBankJewelry}. */
     private boolean jewelryPostBatchBreakDone = false;
+    /**
+     * True once a batch has actually run since the last bank cycle (set in {@link #doAction},
+     * cleared by a completed bank cycle and on reset). Gates the bank-closed yield in
+     * {@link #needsBankJewelry}: with nothing yet worked, the first bank trip happens
+     * immediately — never a post-batch break before it.
+     */
+    private boolean batchRanSinceBank = false;
     /** No bar consumed and no animation for this long = the batch is not running anymore. */
     private static final long JEWELRY_STALL_WINDOW_MS = 8_000L;
 
@@ -68,6 +75,7 @@ public class CraftingScript implements AModule {
         jewelryLastBarCount = 0;
         jewelryLastProgressAt = 0L;
         jewelryPostBatchBreakDone = false;
+        batchRanSinceBank = false;
         lastAfkTime = 0L;
     }
 
@@ -175,11 +183,12 @@ public class CraftingScript implements AModule {
     private boolean needsBankJewelry(AScriptConfig config) {
         JewelryItem item = config.jewelryItem();
         if (item == JewelryItem.NONE) return false;
-        // Need the bar. When the bars just ran out (batch finished), yield one tick so
-        // the post-batch break runs with the bank still closed before banking
-        // (cannonball-smelter pattern), then let the bank cycle fetch more bars.
+        // Need the bar. When a batch just ran out, yield one tick so the post-batch break
+        // runs with the bank still closed before banking (cannonball-smelter pattern).
+        // Only a batch that actually ran earns that break — a fresh empty state banks
+        // immediately.
         if (!Rs2Inventory.hasItem(item.getJewelryType().getMetalBarId())) {
-            return jewelryPostBatchBreakDone;
+            return !batchRanSinceBank || jewelryPostBatchBreakDone;
         }
         // Need the mould (tool)
         if (!Rs2Inventory.hasItem(item.getToolItemID())) return true;
@@ -517,6 +526,9 @@ public class CraftingScript implements AModule {
             }
         }
 
+        // Fresh batch scope — the next empty state only earns its closing break after a
+        // batch runs on these materials.
+        batchRanSinceBank = false;
         return true;
     }
 
@@ -761,6 +773,7 @@ public class CraftingScript implements AModule {
             return true;
         }
         jewelryPostBatchBreakDone = false; // bars present again — the next empty state is a new batch end
+        batchRanSinceBank = true;          // a batch is being worked — its end earns the closing break
 
         long now = System.currentTimeMillis();
         boolean progressed = bars < jewelryLastBarCount;
