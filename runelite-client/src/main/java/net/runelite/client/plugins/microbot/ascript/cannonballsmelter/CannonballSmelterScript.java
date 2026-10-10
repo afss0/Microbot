@@ -84,6 +84,13 @@ public class CannonballSmelterScript implements AModule {
     private long lastAfkTime = 0L;
     /** Set while the post-batch break is pending/done — see {@link #needsBank(AScriptConfig)}. */
     private boolean postBatchBreakDone = false;
+    /**
+     * True once a batch has actually run since the last bank cycle (set in {@link #doAction},
+     * cleared by a completed bank cycle and on reset). Gates the bank-closed yield in
+     * {@link #needsBank} and the closing break in {@link #doAction}: with nothing yet worked,
+     * the first bank trip happens immediately — never a post-batch break before it.
+     */
+    private boolean batchRanSinceBank = false;
     /** Travel watchdog: the last position seen while walking to the site. */
     private int lastTravelX = Integer.MIN_VALUE;
     private int lastTravelY = Integer.MIN_VALUE;
@@ -106,6 +113,7 @@ public class CannonballSmelterScript implements AModule {
         lastProgressAt = 0L;
         lastAfkTime = 0L;
         postBatchBreakDone = false;
+        batchRanSinceBank = false;
         renderMisses = 0;
         resetTravelWatchdog();
     }
@@ -153,9 +161,10 @@ public class CannonballSmelterScript implements AModule {
     public boolean needsBank(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
         if (!hasBars()) {
-            // Batch finished (or nothing to smelt): yield one tick so the post-batch
-            // break runs with the bank still closed (Jewelry/Crafting placement).
-            return postBatchBreakDone;
+            // Batch finished: yield one tick so the post-batch break runs with the bank
+            // still closed — but only when a batch actually ran; a fresh empty state
+            // (startup) goes straight to the bank (or the walk to it).
+            return !batchRanSinceBank || postBatchBreakDone;
         }
         return !hasMould();            // mould lost mid-run
     }
@@ -237,6 +246,9 @@ public class CannonballSmelterScript implements AModule {
         }
 
         lastBarCount = 0; // fresh batch — doAction resolves the real count
+        // Fresh batch scope — the next empty state only earns its closing break after a
+        // batch runs on these materials.
+        batchRanSinceBank = false;
         return true;
     }
 
@@ -255,9 +267,10 @@ public class CannonballSmelterScript implements AModule {
         int bars = barCount();
         if (bars <= 0) {
             // Batch end. The randomness break runs ONCE per batch — never once per tick
-            // while walking away with no bars. The orchestrator takes the bank cycle as
-            // soon as readyForBank() allows it; until then, walk to the site.
-            if (!postBatchBreakDone) {
+            // while walking away with no bars, and never at startup (no batch has run yet).
+            // The orchestrator takes the bank cycle as soon as readyForBank() allows it;
+            // until then, walk to the site.
+            if (batchRanSinceBank && !postBatchBreakDone) {
                 postBatchBreak(config);
             }
             if (!readyForBank(config)) {
@@ -266,6 +279,7 @@ public class CannonballSmelterScript implements AModule {
             return;
         }
         postBatchBreakDone = false; // bars present again — the next empty state is a new batch end
+        batchRanSinceBank = true;   // a batch is being smelted — its end earns the closing break
 
         // Bars in hand, but the module cannot work from where it is: a lost mould means a
         // bank trip, and a furnace outside the loaded scene means we are not at the site.
