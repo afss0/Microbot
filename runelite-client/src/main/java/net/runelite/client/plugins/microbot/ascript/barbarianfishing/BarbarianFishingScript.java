@@ -29,6 +29,7 @@ import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
 import java.awt.Rectangle;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -219,9 +220,11 @@ public class BarbarianFishingScript implements AModule {
 
         // Rod (tool) + feathers (stack) are locked inventory anchors: the blanket
         // toolbar deposit never removes them, so banking keeps whichever is held
-        // and withdraws anew only what is missing.
-        if (!AScriptBank.ensureToolLocked("Barbarian rod")) return false;
-        if (!AScriptBank.ensureStackLocked("Feather")) return false;
+        // and withdraws anew only what is missing. Both ride in one keep-list so the
+        // second ensure never releases the rod's fresh lock as a stray.
+        List<String> keepLocked = Arrays.asList("Barbarian rod", "Feather");
+        if (!AScriptBank.ensureToolLocked("Barbarian rod", keepLocked)) return false;
+        if (!AScriptBank.ensureStackLocked("Feather", keepLocked)) return false;
 
         // Deposit everything else (fish caught before the trip) via the toolbar button.
         if (!AScriptBank.depositAndWaitEmpty()) return false;
