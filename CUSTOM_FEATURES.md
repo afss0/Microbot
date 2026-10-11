@@ -177,6 +177,12 @@ Used during merges to verify nothing is lost.
 - **aScript sequential bank acquires: keep-list so a cycle never releases its own locks (Oct 2026):**
   - `AScriptBank.ensureLocked` (behind `ensureToolLocked`/`ensureStackLocked`) releases locked slots holding a DIFFERENT item as "strays" from a previous module — but when one `doBank` acquires two anchors back-to-back, the second ensure saw the lock the first had just established as a stray: it unlocked the rod, the blanket deposit sent it back to the bank, and the cycle re-withdrew it bare (observed live 2026-10-10 at the GE booth, click for click: lock → unlock → deposit → re-withdraw, rod left unlocked). The ensure calls now take a `keepLocked` keep-list of the cycle's own items and never release those; both fishers (Village + Otto's Grotto, which shared the shape) pass rod+bait, and the Village Fisher's final safety re-withdraw goes through `ensureToolLocked` so the rod comes back locked.
   - Merge check: `grep "keepLocked" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1`
+- **aScript client-mouse click recipes: AScriptClick + item-on-object pilot (Oct 2026):**
+  - New `ascript/util/AScriptClick.java` — the shared client-mouse click recipes ("clicks go through the client mouse"): `clickObject`/`resolveObject` (camera first, the real clickbox, the canvas-sized fallback never clicked, optional bounded render wait) and `clickActor` (the same for an NPC hull, actor lookups on the client thread, canvas size read off the lambda so the ClientThreadGuardrailTest inference is untouched). The three module-local copies were consolidated onto it without behavior change: Cannoning (object), Ammonite Crabs (actor), Cannonball Smelter (object render gate — it keeps `RENDER_WAIT_STEPS`/`MAX_RENDER_MISSES` and its entry-click `furnace.click("Smelt")`, whose conversion is still pending).
+  - New item-on-X recipe (`useItemOnObject` / `useItemOnItem`): a physical click on the item's inventory slot → verified selection → a physical click on the target (an entity clickbox, or another inventory slot for item-on-item). Every failure path clears the selection (the `eatReady` click-at-current-position idiom — a dangling cursor item silently converts the next inventory op). This recipe did not exist anywhere in the fork before.
+  - Firemaking is the pilot: `Rs2Inventory.useItemOnObject(logId, fireId)` (logs→fire) and `use(TINDERBOX)` + `useLast(logId)` (tinderbox→logs) are gone — both dispatches are physical clicks through the recipe now. The make-X probe, the tending-animation / first-log-consumed / Firemaking-XP confirmations, the 20 s burn-stall window and the failure-counter stop are unchanged; a failed dispatch counts its strike at the click instead of at the effect wait. No menu-entry injection remains in the module.
+  - Merge check: `grep "class AScriptClick" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
+  - Merge check: `grep "AScriptClick.useItemOnItem" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/firemaking/FiremakingScript.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename
@@ -235,4 +241,7 @@ grep "logNormalBounded.*multiplier" runelite-client/src/main/java/net/runelite/c
 grep "weatherMultiplier" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/math/Rs2Random.java | head -1
 grep "intensity is locked" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/antiban/Rs2Antiban.java | head -1
 grep "effectiveMax" runelite-client/src/test/java/net/runelite/client/plugins/microbot/util/math/Rs2RandomLogNormalBoundedTest.java | head -1
+# aScript client-mouse click recipes (2026-10-11)
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java
+grep "useItemOnObject(logItem, fire)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/firemaking/FiremakingScript.java | head -1
 ```
