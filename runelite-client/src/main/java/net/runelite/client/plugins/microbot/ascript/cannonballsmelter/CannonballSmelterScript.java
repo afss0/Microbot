@@ -11,6 +11,7 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -18,12 +19,9 @@ import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
-import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
-
-import java.awt.Rectangle;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -347,23 +345,20 @@ public class CannonballSmelterScript implements AModule {
                 fail("furnace not found (" + choice + ")");
                 return;
             }
-            if (!Rs2Camera.isTileOnScreen(furnace.getLocalLocation())) {
-                Rs2Camera.turnTo(furnace.getLocalLocation());
+            // The shared house object recipe (AScriptClick): camera first, then the
+            // furnace's real clickbox, waiting a not-yet-rendered hull out behind the
+            // module's render budget. A canvas-sized clickbox means getObjectClickbox
+            // fell back: the object is in the scene but not actually rendered yet (the
+            // render-distance / fog boundary), and a click would scatter over the
+            // terrain ("Walk here" — the menu-entry override is not a substitute for a
+            // real hull). Never click blindly. The budget is deliberately generous and
+            // is NOT the action-failure counter — a render race is not a module failure,
+            // so it must not spend lives.
+            AScriptClick.Target target = AScriptClick.resolveObject(furnace, RENDER_WAIT_STEPS);
+            if (target.cameraTurned()) {
                 return; // retry next tick — not a failure
             }
-            // A canvas-sized clickbox means getObjectClickbox fell back: the object is in
-            // the scene but not actually rendered yet (the render-distance / fog boundary),
-            // and a click would scatter over the terrain ("Walk here" — the menu-entry
-            // override is not a substitute for a real hull). Never click blindly: wait
-            // briefly for the hull, then turn the camera to force a re-render and retry on a
-            // later tick. The budget is deliberately generous and is NOT the action-failure
-            // counter — a render race is not a module failure, so it must not spend lives.
-            Rectangle clickbox = Rs2UiHelper.getObjectClickbox(furnace);
-            for (int i = 0; i < RENDER_WAIT_STEPS && isCanvasFallback(clickbox); i++) {
-                AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(150, 300, weatherMultiplier));
-                clickbox = Rs2UiHelper.getObjectClickbox(furnace);
-            }
-            if (isCanvasFallback(clickbox)) {
+            if (!target.ready()) {
                 renderMisses++;
                 log.debug("[CannonballSmelter] Furnace not rendered yet ({}/{})",
                         renderMisses, MAX_RENDER_MISSES);
@@ -424,15 +419,6 @@ public class CannonballSmelterScript implements AModule {
             return Microbot.getRs2TileObjectCache().query().withName("Furnace").nearestOnClientThread();
         }
         return Microbot.getRs2TileObjectCache().query().withId(choice.getObjectId()).nearestOnClientThread();
-    }
-
-    /**
-     * The canvas-sized rectangle {@link Rs2UiHelper#getObjectClickbox} returns when the
-     * object has no hull yet (not rendered in the last frame). A real furnace clickbox
-     * is a small fraction of the canvas — never this wide.
-     */
-    private boolean isCanvasFallback(Rectangle rect) {
-        return rect == null || rect.getWidth() >= Microbot.getClient().getCanvasWidth() - 2;
     }
 
     /**

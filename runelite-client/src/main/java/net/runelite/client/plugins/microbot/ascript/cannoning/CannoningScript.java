@@ -11,17 +11,14 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
-import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
-import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
-
-import java.awt.Rectangle;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -304,21 +301,19 @@ public class CannoningScript implements AModule {
     // ── Clicks ────────────────────────────────────────────
 
     /**
-     * House click recipe for a game object: camera first, then the object's real clickbox
-     * through the client mouse. The canvas-sized clickbox {@link Rs2UiHelper#getObjectClickbox}
-     * returns for an unrendered object is never clicked — it lands on the terrain as
-     * "Walk here" — it is waited out behind its own budget so a render race cannot spend
-     * the module's action lives.
+     * The shared house object recipe ({@link AScriptClick#clickObject}): camera first,
+     * then the object's real clickbox through the client mouse — the canvas-sized
+     * fallback of an unrendered object is never clicked. The render-miss budget stays
+     * here: a render race is not a module failure and must not spend action lives.
      *
      * @return true when a click was actually issued
      */
     private boolean clickObject(TileObject object) {
-        if (!Rs2Camera.isTileOnScreen(object)) {
-            Rs2Camera.turnTo(object);
+        AScriptClick.Target target = AScriptClick.clickObject(object);
+        if (target.cameraTurned()) {
             return false;                                   // retry next tick, not a failure
         }
-        Rectangle clickbox = Rs2UiHelper.getObjectClickbox(object);
-        if (clickbox == null || clickbox.getWidth() >= Microbot.getClient().getCanvasWidth() - 2) {
+        if (!target.clicked()) {
             renderMisses++;
             log.debug("[Cannoning] object not rendered yet (miss {}/{})", renderMisses, MAX_RENDER_MISSES);
             if (renderMisses >= MAX_RENDER_MISSES) {
@@ -327,7 +322,6 @@ public class CannoningScript implements AModule {
             return false;
         }
         renderMisses = 0;
-        Microbot.getMouse().click(clickbox);
         return true;
     }
 
