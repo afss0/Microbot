@@ -9,6 +9,7 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.api.npc.models.Rs2NpcModel;
@@ -427,31 +428,12 @@ public class AmmoniteCrabsScript implements AModule {
 
     private boolean attackCrab(Rs2NpcModel crab) {
         if (crab == null || crab.getNpc() == null) return false;
-        final LocalPoint local = Microbot.getClientThread().invoke(() -> crab.getLocalLocation());
-        if (local == null) return false;
-        if (!Rs2Camera.isTileOnScreen(local)) {
-            // Off the client thread on purpose: setAngle's key-hold wait (sleepUntilTrue)
-            // no-ops on the client thread, so the camera turn must run from here to take effect.
-            Rs2Camera.turnTo(local);
-            return false;
-        }
-        // Canvas size is read off the lambda: calling Client#getCanvasWidth/Height from
-        // inside a clientThread.invoke lambda registers them with the ClientThreadGuardrailTest
-        // inference and would flag unrelated pre-existing util/api callers.
-        final int canvasWidth = Microbot.getClient().getCanvasWidth();
-        final int canvasHeight = Microbot.getClient().getCanvasHeight();
-        Rectangle clickbox = Microbot.getClientThread().invoke(() -> {
-            Rectangle box = Rs2UiHelper.getActorClickbox(crab.getNpc());
-            if (box == null || box.getWidth() <= 0 || box.getHeight() <= 0) return null;
-            // Canvas-sized fallback rectangle = no real clickbox — never click it blindly.
-            if (box.getWidth() >= canvasWidth - 2
-                    || box.getHeight() >= canvasHeight - 2) {
-                return null;
-            }
-            return box;
-        });
-        if (clickbox == null) return false;
-        Microbot.getMouse().click(clickbox);
+        // The shared house actor recipe (AScriptClick): camera first (the turn runs off
+        // the client thread — setAngle's key-hold wait no-ops on it), then the crab's
+        // real clickbox through the client mouse; the canvas-sized fallback of an
+        // unrendered actor is never clicked.
+        AScriptClick.Target target = AScriptClick.clickActor(crab.getNpc());
+        if (!target.clicked()) return false;
         sleepUntil(() -> Rs2Player.isInteracting() || Rs2Player.isInCombat(),
                 Rs2Random.logNormalBounded(1200, 2500, weatherMultiplier));
         return true;
