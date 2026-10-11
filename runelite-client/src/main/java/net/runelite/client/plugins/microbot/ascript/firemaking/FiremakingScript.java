@@ -10,12 +10,14 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
@@ -46,10 +48,14 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *   <li>using logs on a lit fire is also what CREATES a forester's campfire — with no fire in
  *       range the module lights its own at the configured spot first (tinderbox required).</li>
  * </ul>
- * Fire interaction follows the hub AutoWoodcutting campfire flow (Sep 2026): {@code
- * useItemOnObject} → brief make-X probe → SPACE if it shows (post-12-Aug-2026 it only appears
- * with 2+ log types; a single log type auto-burns) → confirm via tending animation or the first
- * log consumed. Banking/AFK/failure handling follow CannonballSmelter.
+ * Fire interaction follows the hub AutoWoodcutting campfire flow, through the client-mouse
+ * item-on-object recipe ({@link AScriptClick}): a physical click on a log slot selects it, a
+ * physical click on the fire's real clickbox applies it → brief make-X probe → SPACE if it
+ * shows (post-12-Aug-2026 it only appears with 2+ log types; a single log type auto-burns) →
+ * confirm via tending animation or the first log consumed. Lighting a fresh fire is the same
+ * recipe item-on-item (tinderbox slot → last log slot), confirmed by the Firemaking XP drop.
+ * No menu-entry injection anywhere in the module. Banking/AFK/failure handling follow
+ * CannonballSmelter.
  */
 @Slf4j
 public class FiremakingScript implements AModule {
@@ -314,9 +320,14 @@ public class FiremakingScript implements AModule {
         }
 
         Microbot.status = "FIREMAKING — adding logs to fire";
-        // Hub AutoWoodcutter campfire precedent (documented injection exception — the aScript
-        // client-mouse refactor for item-on-object is pending, see AGENTS.md / Fisher notes).
-        Rs2Inventory.useItemOnObject(logId, fire.getId());
+        // Client-mouse item-on-object — the AScriptClick recipe (the aScript mouse-refactor
+        // pilot, see AGENTS.md): a physical click on a log slot selects it, a physical click
+        // on the fire's real clickbox applies it. No menu-entry injection.
+        Rs2ItemModel logItem = Rs2Inventory.get(logId);
+        if (!AScriptClick.useItemOnObject(logItem, fire)) {
+            fail("could not use the logs on the fire");
+            return;
+        }
 
         // Post-12-Aug-2026 the make-X prompt only appears with 2+ log types in the inventory
         // (a single log type auto-burns). Probe briefly; confirm with SPACE if it shows.
@@ -361,13 +372,15 @@ public class FiremakingScript implements AModule {
         }
 
         Microbot.status = "FIREMAKING — lighting fire";
-        Rs2Inventory.use(ItemID.TINDERBOX);
-        if (!sleepUntil(Rs2Inventory::isItemSelected,
-                Rs2Random.logNormalBounded(1500, 2500, weatherMultiplier))) {
-            fail("tinderbox did not select");
+        // Same recipe, item-on-item: a physical click on the tinderbox slot selects it and
+        // a physical click on the last log's slot applies it (the last slot mirrors the old
+        // useLast target; the selection and its cleanup are the recipe's job).
+        Rs2ItemModel tinderboxItem = Rs2Inventory.get(ItemID.TINDERBOX);
+        Rs2ItemModel logItem = Rs2Inventory.getLast(logId);
+        if (!AScriptClick.useItemOnItem(tinderboxItem, logItem)) {
+            fail("could not use the tinderbox on the logs");
             return;
         }
-        Rs2Inventory.useLast(logId);
 
         // Fire lighting gives a Firemaking XP drop; no drop in the window = did not light
         // (blocked tile / occupied spot / missed dispatch).
