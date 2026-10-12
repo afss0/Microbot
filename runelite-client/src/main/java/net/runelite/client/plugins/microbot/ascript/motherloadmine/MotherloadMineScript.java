@@ -11,6 +11,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -328,7 +329,12 @@ public class MotherloadMineScript implements AModule {
             return true; // no vein = wait state, not a failure
         }
 
-        if (!Rs2GameObject.interact(vein, "Mine")) {
+        // Client-mouse object recipe (AScriptClick — the aScript mouse refactor): camera
+        // first, then the vein's real clickbox through the client mouse; the canvas-sized
+        // fallback of a vein that has not rendered is never clicked. The recipe only
+        // reports that the click was issued — confirming the mining animation below stays
+        // this method's accounting.
+        if (!clickObject(vein).clicked()) {
             log.debug("[MotherloadMineScript] Failed to interact with vein");
             sleep(Rs2Random.logNormalBounded(400, 800, weatherMultiplier));
             return false;
@@ -410,7 +416,10 @@ public class MotherloadMineScript implements AModule {
         }
 
         int paydirtBefore = Rs2Inventory.count(ItemID.PAYDIRT);
-        if (!Rs2GameObject.interact(hopper, "Deposit")) {
+        // See mineVeins: the recipe issues the click, the paydirt-count wait below is the
+        // effect verification. The hopper's "Deposit" is its left-click default, which is
+        // all a physical click can dispatch.
+        if (!clickObject(hopper).clicked()) {
             log.warn("[MotherloadMineScript] Failed to interact with hopper");
             sleep(Rs2Random.logNormalBounded(400, 800, weatherMultiplier));
             return false;
@@ -463,8 +472,8 @@ public class MotherloadMineScript implements AModule {
                 return false;
             }
 
-            // Default left-click (matches Hub's query().interact pattern)
-            if (!Rs2GameObject.interact(sack)) {
+            // The sack's own left-click default, as a client-mouse click (see mineVeins)
+            if (!clickObject(sack).clicked()) {
                 sleep(Rs2Random.logNormalBounded(400, 800, weatherMultiplier));
                 return false;
             }
@@ -525,9 +534,12 @@ public class MotherloadMineScript implements AModule {
             // Search crate at 3752,5674
             TileObject crate = Rs2GameObject.findObjectByLocation(new WorldPoint(3752, 5674, 0));
             if (crate != null) {
-                Rs2GameObject.interact(crate, "Search");
-                sleepUntil(() -> AScriptBank.hasUnnotedItem("hammer"), 5000);
-                pickedUpHammer = true;
+                // As elsewhere: the recipe only reports that the click was issued, so the
+                // hammer check below is what verifies the search actually happened.
+                if (clickObject(crate).clicked()) {
+                    sleepUntil(() -> AScriptBank.hasUnnotedItem("hammer"), 5000);
+                    pickedUpHammer = true;
+                }
             }
 
             if (!AScriptBank.hasUnnotedItem("hammer")) {
@@ -553,7 +565,9 @@ public class MotherloadMineScript implements AModule {
                     Rs2Random.logNormalBounded(5000, 10000, weatherMultiplier));
         }
 
-        if (!Rs2GameObject.interact(strut, "Repair")) {
+        // "Repair" is the broken strut's left-click default (see mineVeins); the strut
+        // count below is what confirms the repair landed.
+        if (!clickObject(strut).clicked()) {
             log.warn("[MotherloadMineScript] Failed to interact with broken strut");
             sleep(Rs2Random.logNormalBounded(400, 800, weatherMultiplier));
             return false;
@@ -607,6 +621,33 @@ public class MotherloadMineScript implements AModule {
         return true; // dropAll is fire-and-forget; return true to not block the cycle
     }
 
+    // ── Clicks ────────────────────────────────────────────────
+
+    /**
+     * The shared house object recipe ({@link AScriptClick#clickObject}) with the camera turn
+     * absorbed inside the call: the recipe turns toward an off-camera target and returns
+     * without clicking ("retry on a later tick"), but these boolean sub-routines feed the
+     * module's consecutive-failure counter directly — so wait one frame for the turned view
+     * to render and resolve the click again here, as the pre-recipe
+     * {@code Rs2GameObject.interact} did (turn, then act). What is still not clicked after
+     * that is a render race and goes to the caller's own accounting, which is where the
+     * recipe leaves it.
+     * <p>
+     * A physical click dispatches the target's left-click default only — every object this
+     * is called on is clicked for its own default (vein "Mine", hopper "Deposit", sack,
+     * crate "Search", strut "Repair", ladder "Climb-down").
+     *
+     * @return the recipe outcome — {@link AScriptClick.Target#clicked()} is the click issued
+     */
+    private AScriptClick.Target clickObject(TileObject object) {
+        AScriptClick.Target target = AScriptClick.clickObject(object);
+        if (!target.cameraTurned()) {
+            return target;
+        }
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(200, 350));
+        return AScriptClick.clickObject(object);
+    }
+
     // ── Utility methods ────────────────────────────────────────
 
     private boolean hasOreInInventory() {
@@ -653,7 +694,9 @@ public class MotherloadMineScript implements AModule {
             ladder = Rs2GameObject.findObjectById(ObjectID.MOTHERLODE_LADDER_BOTTOM);
         }
         if (ladder != null) {
-            if (!Rs2GameObject.interact(ladder, "Climb-down")) {
+            // "Climb-down" is the down-ladder's left-click default (see mineVeins); the
+            // floor check below is what confirms the descent.
+            if (!clickObject(ladder).clicked()) {
                 sleep(Rs2Random.logNormalBounded(400, 800, weatherMultiplier));
                 return false;
             }
