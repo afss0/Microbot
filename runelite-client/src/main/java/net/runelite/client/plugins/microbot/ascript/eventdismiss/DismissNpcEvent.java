@@ -7,6 +7,7 @@ import net.runelite.client.plugins.microbot.BlockingEventPriority;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.api.npc.models.Rs2NpcModel;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
@@ -158,7 +159,18 @@ public class DismissNpcEvent implements BlockingEvent {
         // never read as this event's reward.
         int lampsBefore = countLamps();
 
-        npc.click("Talk-to");
+        // "Talk-to" is the first (left-click) op of both event NPCs — OSRS wiki
+        // infoboxes list `options = Talk-to, Dismiss` for Genie (326/327) and the
+        // Count Check random event (12551/12552), first entry = default op — so the
+        // default-op recipe (a plain left-click on the real clickbox) is what a human
+        // does here. The recipe only reports the click was issued: when it did not
+        // click (off-camera target, hull not rendered yet) this must stop, because
+        // the Count Check below would otherwise be marked talked-to with no dialogue
+        // ever starting — and a tried Count Check is only ever dismissed afterwards.
+        Microbot.status = "Talk-to " + name;
+        if (!AScriptClick.clickActor(npc.getNpc()).clicked()) {
+            return false;
+        }
         // Both the Genie and the Count Check random event are "Click here to continue"
         // dialogues (the options dialogue on the wiki belongs to the standing Lumbridge
         // Count Check, not the random event) — one bounded closer covers both.
@@ -268,7 +280,18 @@ public class DismissNpcEvent implements BlockingEvent {
     }
 
     private void dismiss(Rs2NpcModel npc) {
-        npc.click("Dismiss");
+        // "Dismiss" is a menu op (an NPC composition action), not a dialogue option:
+        // Rs2Npc.getRandomEventNPC() finds event NPCs by "Dismiss" in
+        // npcComposition.getActions(), and RuneLite's RandomEventPlugin matches the
+        // same string against MenuAction.NPC_FIRST_OPTION..FIFTH_OPTION entries. It
+        // is never the left-click default (the wiki infoboxes list it second, after
+        // "Talk-to"), so a plain left-click could never reach it — pick our row out
+        // of the open option menu instead. A click that did not happen leaves the NPC
+        // here, so there is nothing to wait for; the caller retries on a later pass.
+        Microbot.status = "Dismiss " + npc.getName();
+        if (!AScriptClick.clickActorOp(npc.getNpc(), "Dismiss").clicked()) {
+            return;
+        }
         Global.sleepUntil(() -> getRandomEventNpc() == null);
     }
 
