@@ -302,6 +302,7 @@ public final class AScriptClick {
             cancelSelectionOnOwnSlot(item, "the cursor never settled on the resolved point");
             return false;
         }
+        awaitFrames(2); // let the client process the arrival and build the hover for it
         // One client-thread snapshot per try decides both questions — is the entry
         // there, and how does it rank. Two separate reads raced in the field: the
         // first found the entry, the very next saw it gone (the hover menu rebuilds
@@ -314,9 +315,10 @@ public final class AScriptClick {
             if (attempt >= NUDGE_AFTER_ATTEMPT) {
                 nudge(point);
             }
+            awaitFrames(attempt >= NUDGE_AFTER_ATTEMPT ? 3 : 2);
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(
-                    attempt >= NUDGE_AFTER_ATTEMPT ? 150 : 80,
-                    attempt >= NUDGE_AFTER_ATTEMPT ? 350 : 200));
+                    attempt >= NUDGE_AFTER_ATTEMPT ? 60 : 20,
+                    attempt >= NUDGE_AFTER_ATTEMPT ? 150 : 80));
             rank = rankOfOwnEntry(isOurs);
         }
         if (rank == Rank.GONE) {
@@ -402,6 +404,53 @@ public final class AScriptClick {
         return 0;
     }
 
+    /**
+     * Wait roughly {@code frames} rendered client frames. The client processes input and
+     * rebuilds the hover/option menus on its own frames, so at a low FPS cap (the runtime
+     * box locks at 7 fps — one frame ≈ 143 ms) fixed millisecond waits can read state the
+     * client has not produced yet. Frame duration comes from the client's own FPS read,
+     * clamped so a stale or zero reading cannot stall the recipe. There is no ready-made
+     * "sleep until next frame" helper in the API — {@code getFPS()} / {@code getGameCycle()}
+     * are the primitives, and this wraps the former.
+     */
+    private static void awaitFrames(int frames) {
+        int fps = Microbot.getClient().getFPS();
+        long frameMs = fps > 0 ? Math.max(100L, Math.min(1_000L / fps, 500L)) : 200L;
+        AScriptSleep.sleepInterruptibly((int) (frameMs * frames));
+    }
+
+    /**
+     * Wait until the open menu's anchor stops moving between two frame-spaced reads — a
+     * freshly opened menu settles over a frame or two, and row coordinates computed
+     * mid-settle land on the wrong row.
+     */
+    private static void awaitStableMenuAnchor() {
+        int prevX = Integer.MIN_VALUE;
+        int prevY = Integer.MIN_VALUE;
+        int prevW = Integer.MIN_VALUE;
+        for (int i = 0; i < MENU_ATTEMPTS + 2; i++) {
+            awaitFrames(2);
+            int[] anchor = Microbot.getClientThread()
+                    .runOnClientThreadOptional(() -> {
+                        Client client = Microbot.getClient();
+                        if (!client.isMenuOpen()) {
+                            return null;
+                        }
+                        return new int[]{client.getMenuX(), client.getMenuY(), client.getMenuWidth()};
+                    })
+                    .orElse(null);
+            if (anchor == null) {
+                return; // menu closed mid-wait — the caller's read will fail it cleanly
+            }
+            if (anchor[0] == prevX && anchor[1] == prevY && anchor[2] == prevW) {
+                return; // stable across a frame gap
+            }
+            prevX = anchor[0];
+            prevY = anchor[1];
+            prevW = anchor[2];
+        }
+    }
+
     /** How the hover menu ranks the target's entry: gone, beaten, or the left-click default. */
     private enum Rank {
         GONE,
@@ -461,7 +510,7 @@ public final class AScriptClick {
             }
             Microbot.getMouse().click(point, true);
             int own = awaitOwnRow(isOurs);
-            if (own >= 0 && clickOwnRow(own)) {
+            if (own >= 0 && clickOwnRow(isOurs)) {
                 return RowPick.DISPATCHED;
             }
             if (!closeMenu()) {
@@ -482,48 +531,48 @@ public final class AScriptClick {
         if (!sleepUntil(AScriptClick::menuOpen, Rs2Random.logNormalBounded(400, 900))) {
             return -1;
         }
+        // The menu anchors itself over a frame or two after opening; geometry read before
+        // that lands on stale coordinates (the pilot's first attempt clicked the Cancel
+        // row off a menu that had not settled yet at 7 fps).
+        awaitStableMenuAnchor();
         return topmostIndex(isOurs);
     }
 
     /**
-     * Press the center of the target's row in the open menu and confirm the menu closed
-     * on it — an open menu closes only when one of its rows (or Cancel) is picked, so
-     * "menu gone" is the cheap observable for "a row dispatched".
+     * Press the center of the target's row in the open menu and confirm the pick really
+     * dispatched. Index and geometry come from ONE client-thread read — a split read raced
+     * in the field (index from one array state, coordinates from the next). The menu also
+     * closes on Cancel, so "closed" alone is NOT a dispatch (the pilot's first attempt
+     * counted a Cancel hit as success): a real use dispatch consumes the cursor selection,
+     * and that consumption is the confirmation.
      */
-    private static boolean clickOwnRow(int ownIndex) {
-        Point row = rowPoint(ownIndex);
-        if (row == null) {
-            return false;
-        }
-        Microbot.getMouse().click(row);
-        return sleepUntil(() -> !menuOpen(), Rs2Random.logNormalBounded(400, 900));
-    }
-
-    /**
-     * Center of entry {@code index} in the open option menu, in canvas coordinates — the
-     * questhelper hit-test geometry ({@code DetailedQuestStep.renderHoveredMenuEntryPanel}:
-     * a 15 px row under a header of row + 3), with the array ↔ display direction the sort
-     * documents: "higher-index entries appearing toward the top of the minimenu"
-     * ({@code MenuManager}), so index {@code length - 1} is the first row.
-     *
-     * @return the row center, or {@code null} when the menu is closed or the index is gone
-     */
-    private static Point rowPoint(int index) {
-        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+    private static boolean clickOwnRow(Predicate<MenuEntry> isOurs) {
+        Point row = Microbot.getClientThread().runOnClientThreadOptional(() -> {
             Client client = Microbot.getClient();
             if (!client.isMenuOpen()) {
                 return null;
             }
             MenuEntry[] entries = client.getMenuEntries();
-            if (index < 0 || index >= entries.length) {
+            int own = topmostIndex(entries, isOurs);
+            if (own < 0) {
                 return null;
             }
-            int rowFromTop = entries.length - 1 - index;
+            int rowFromTop = entries.length - 1 - own;
             int x = client.getMenuX() + client.getMenuWidth() / 2;
             int y = client.getMenuY() + MENU_HEADER_HEIGHT + rowFromTop * MENU_ROW_HEIGHT
                     + MENU_ROW_HEIGHT / 2;
             return new Point(x, y);
         }).orElse(null);
+        if (row == null) {
+            return false;
+        }
+        Microbot.getMouse().click(row);
+        if (!sleepUntil(() -> !menuOpen(), Rs2Random.logNormalBounded(400, 900))) {
+            return false;
+        }
+        awaitFrames(2);
+        return sleepUntil(() -> !Rs2Inventory.isItemSelected(),
+                Rs2Random.logNormalBounded(400, 900));
     }
 
     /** The client's option-menu open flag — live client state, read on the client thread. */
@@ -544,12 +593,24 @@ public final class AScriptClick {
         if (!menuOpen()) {
             return true;
         }
-        int cancel = topmostIndex(entry -> "Cancel".equals(entry.getOption()));
-        if (cancel >= 0) {
-            Point row = rowPoint(cancel);
-            if (row != null) {
-                Microbot.getMouse().click(row);
+        Point cancelRow = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Client client = Microbot.getClient();
+            if (!client.isMenuOpen()) {
+                return null;
             }
+            MenuEntry[] entries = client.getMenuEntries();
+            int idx = topmostIndex(entries, entry -> "Cancel".equals(entry.getOption()));
+            if (idx < 0) {
+                return null;
+            }
+            int rowFromTop = entries.length - 1 - idx;
+            int x = client.getMenuX() + client.getMenuWidth() / 2;
+            int y = client.getMenuY() + MENU_HEADER_HEIGHT + rowFromTop * MENU_ROW_HEIGHT
+                    + MENU_ROW_HEIGHT / 2;
+            return new Point(x, y);
+        }).orElse(null);
+        if (cancelRow != null) {
+            Microbot.getMouse().click(cancelRow);
             if (sleepUntil(() -> !menuOpen(), Rs2Random.logNormalBounded(400, 900))) {
                 return true;
             }
