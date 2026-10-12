@@ -22,6 +22,7 @@ import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.api.Skill;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 
@@ -595,8 +596,12 @@ public class CraftingScript implements AModule {
         Microbot.status = "CUTTING " + gem.getName().toUpperCase();
 
         if (amethyst) {
-            Rs2Inventory.use("chisel");
-            Rs2Inventory.use(21347);
+            Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
+            Rs2ItemModel amethystItem = Rs2Inventory.get(21347);
+            if (!AScriptClick.useItemOnItem(chiselItem, amethystItem)) {
+                Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+                return false;
+            }
             boolean amountDialogOpen = Rs2Widget.sleepUntilHasWidgetText(
                     "How many do you wish to make?", 270, 5, false, 5000);
             if (!amountDialogOpen) { Microbot.status = "IDLE"; return false; }
@@ -605,8 +610,12 @@ public class CraftingScript implements AModule {
             sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(21347),
                     Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
         } else {
-            Rs2Inventory.use("chisel");
-            Rs2Inventory.use(uncutGemName);
+            Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
+            Rs2ItemModel uncutGemItem = Rs2Inventory.get(uncutGemName);
+            if (!AScriptClick.useItemOnItem(chiselItem, uncutGemItem)) {
+                Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+                return false;
+            }
             boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                     Rs2Widget.isProductionWidgetOpen(), 300, 20000);
             if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
@@ -617,8 +626,13 @@ public class CraftingScript implements AModule {
             if (config.fletchIntoBoltTips() && Rs2Inventory.hasItem(gem.getName())
                     && AScriptBank.hasUnnotedItem("chisel")) {
                 Microbot.status = "FLETCHING BOLT TIPS";
-                Rs2Inventory.use("chisel");
-                Rs2Inventory.use(gem.getName());
+                // Same chisel as above (a locked tool, still in the inventory); the cut gem
+                // is the new use target.
+                Rs2ItemModel cutGemItem = Rs2Inventory.get(gem.getName());
+                if (!AScriptClick.useItemOnItem(chiselItem, cutGemItem)) {
+                    Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+                    return false;
+                }
                 boolean boltTipInterfaceOpen = sleepUntilTrue(() ->
                         Rs2Widget.isProductionWidgetOpen()
                                 || Rs2Widget.isGoldCraftingWidgetOpen()
@@ -638,8 +652,12 @@ public class CraftingScript implements AModule {
         CraftingGlass glass = config.glassType();
         Microbot.status = "BLOWING " + glass.getLabel().toUpperCase();
 
-        Rs2Inventory.use("glassblowing pipe");
-        Rs2Inventory.use("molten glass");
+        Rs2ItemModel pipeItem = Rs2Inventory.get("glassblowing pipe");
+        Rs2ItemModel moltenGlassItem = Rs2Inventory.get("molten glass");
+        if (!AScriptClick.useItemOnItem(pipeItem, moltenGlassItem)) {
+            Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+            return false;
+        }
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
         if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
@@ -653,8 +671,12 @@ public class CraftingScript implements AModule {
     private boolean craftStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
         Microbot.status = "MAKING " + staff.getLabel().toUpperCase();
-        Rs2Inventory.use(staff.getOrb());
-        Rs2Inventory.use(staff.getItemName());
+        Rs2ItemModel orbItem = Rs2Inventory.get(staff.getOrb());
+        Rs2ItemModel staffItem = Rs2Inventory.get(staff.getItemName());
+        if (!AScriptClick.useItemOnItem(orbItem, staffItem)) {
+            Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+            return false;
+        }
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
         if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
@@ -714,8 +736,15 @@ public class CraftingScript implements AModule {
             return false;
         }
 
-        // Click the wheel with Spin action
-        Rs2GameObject.interact(wheelObject, "Spin");
+        // Click the wheel for its "Spin" default op — the AScriptClick object recipe (a
+        // physical click on the wheel's real clickbox, no menu injection). The module
+        // wrapper absorbs a recipe camera-turn so it cannot spend a failure life; what is
+        // still not clicked is a render race and retries next tick, as the camera pre-check
+        // above does.
+        AScriptClick.Target wheelClick = clickObject(wheelObject);
+        if (!wheelClick.clicked()) {
+            return false;
+        }
 
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
@@ -732,8 +761,16 @@ public class CraftingScript implements AModule {
         CraftingDragonLeather armour = config.dragonLeatherType();
         Microbot.status = "CRAFTING " + armour.getName().toUpperCase();
 
-        Rs2Inventory.use(armour.getLeatherId());
-        Rs2Inventory.use(config.useCostumeNeedle() ? "costume needle" : "needle");
+        Rs2ItemModel leatherItem = Rs2Inventory.get(armour.getLeatherId());
+        // The costume-needle variant picks its own name string; resolution stays the old
+        // substring match Rs2Inventory.use(name) used, so the dispatch picks the same
+        // needle the pre-recipe code would have.
+        Rs2ItemModel needleItem = Rs2Inventory.get(
+                config.useCostumeNeedle() ? "costume needle" : "needle");
+        if (!AScriptClick.useItemOnItem(leatherItem, needleItem)) {
+            Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+            return false;
+        }
         boolean craftingInterfaceOpen = sleepUntilTrue(() ->
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
         if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
@@ -838,8 +875,15 @@ public class CraftingScript implements AModule {
                 return false; // retry next tick — transient, resolves in a tick or two
             }
 
-            // Click furnace with Smelt action
-            Rs2GameObject.interact(furnaceObject, "Smelt");
+            // Click the furnace for its "Smelt" default op — the AScriptClick object recipe
+            // (a physical click on the furnace's real clickbox, no menu injection). The
+            // module wrapper absorbs a recipe camera-turn so it cannot spend a failure life;
+            // what is still not clicked is a render race and retries next tick, as the
+            // camera pre-check above does.
+            AScriptClick.Target furnaceClick = clickObject(furnaceObject);
+            if (!furnaceClick.clicked()) {
+                return false;
+            }
 
             // Wait for the make interface — bounded; a blind long wait just delays the retry
             boolean craftingInterfaceOpen = sleepUntilTrue(this::isJewelryInterfaceOpen, 300,
@@ -907,6 +951,32 @@ public class CraftingScript implements AModule {
             AScriptSleep.sleepInterruptibly(afkMs);
             lastAfkTime = System.currentTimeMillis();
         }
+    }
+
+    // ── Clicks ────────────────────────────────────────────────
+
+    /**
+     * The shared object recipe ({@link AScriptClick#clickObject}) with the camera turn
+     * absorbed inside the call — the F1 Motherload Mine wrapper: these boolean sub-routines
+     * feed the module's consecutive-failure counter directly, so the recipe's camera-turn
+     * outcome (a retry on a later tick, not a failure) must not spend a life. Wait one
+     * frame for the turned view to render and resolve the click again here, as the
+     * pre-recipe {@code Rs2GameObject.interact} call sites behaved (turn, then act on a
+     * later tick — except these two blocks pre-check the camera themselves, so the turn
+     * here only ever covers the race between that check and this call).
+     * <p>
+     * A physical click dispatches the object's left-click default only — both callers click
+     * their own default op (wheel "Spin", furnace "Smelt").
+     *
+     * @return the recipe outcome — {@link AScriptClick.Target#clicked()} is the click issued
+     */
+    private AScriptClick.Target clickObject(TileObject object) {
+        AScriptClick.Target target = AScriptClick.clickObject(object);
+        if (!target.cameraTurned()) {
+            return target;
+        }
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(200, 350));
+        return AScriptClick.clickObject(object);
     }
 
     @Override
