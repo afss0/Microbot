@@ -2,16 +2,22 @@ package net.runelite.client.plugins.microbot.ascript.util;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Actor;
+import net.runelite.api.GameObject;
+import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
+import net.runelite.api.Point;
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
+import net.runelite.client.plugins.microbot.util.input.PointerState;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 
 import java.awt.Rectangle;
+import java.util.function.Predicate;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -49,6 +55,29 @@ public final class AScriptClick {
      * action lives, and it never justifies a blind click.
      */
     private static final int RENDER_WAIT_STEPS = 5;
+
+    /**
+     * Bounded attempts for the hover menu to expose an entry for the point the cursor has
+     * just landed on. The menu rebuilds on mouse movement, so a read taken right after
+     * arrival can still hold the previous point's menu.
+     */
+    private static final int ENTRY_ATTEMPTS = 5;
+
+    /**
+     * Attempts spent only waiting, before the cursor starts being stepped off the point
+     * and back on to re-trigger the rebuild — a stale menu never fixes itself.
+     */
+    private static final int NUDGE_AFTER_ATTEMPT = 2;
+
+    /** How far (px) the cursor steps off the point, and back on, to force a rebuild. */
+    private static final int NUDGE_PX = 2;
+
+    /**
+     * Bounded polls for a menu-priority change to show up in the menu rank. The client
+     * re-sorts the menu after the deprioritized flags are set — the same pass RuneLite's
+     * menu entry swapper rides — so the rank is re-read rather than assumed.
+     */
+    private static final int PROMOTE_ATTEMPTS = 6;
 
     private AScriptClick() {
     }
@@ -203,9 +232,9 @@ public final class AScriptClick {
 
     /**
      * Item-on-object recipe (client mouse, no injection): select {@code item} with a
-     * physical click on its inventory slot, verify the game picked it up, click the
-     * object's real clickbox (camera first, canvas fallback rejected, render waited
-     * out), and report whether the use click was issued.
+     * physical click on its inventory slot, verify the game picked it up, put the cursor
+     * on the object's real clickbox (camera first, canvas fallback rejected, render waited
+     * out), make a left-click there resolve to the OBJECT, and press at that same point.
      * <p>
      * Confirming the effect — the make-X prompt, the animation, an XP drop — stays with
      * the caller, which owns the module's tracking. On any failure path a selection this
@@ -216,6 +245,17 @@ public final class AScriptClick {
      * <p>
      * The item's default left-click op must be "Use" (true for logs, tinderbox and the
      * other supported items): a physical click cannot pick a non-default op.
+     * <p>
+     * <b>Menu priority.</b> With a cursor item selected the client ranks
+     * {@code ITEM_USE_ON_PLAYER} above {@code ITEM_USE_ON_GAME_OBJECT}, so a player
+     * standing on the fire steals the press. The recipe therefore demotes every entry the
+     * client ranked above the object's own with {@link MenuEntry#setDeprioritized(boolean)}
+     * — the flag RuneLite's menu entry swapper uses for the same job — waits until the
+     * object's entry really is the top of the minimenu (the entry a left-click dispatches
+     * to), and only then presses. Nothing is fabricated: every entry is a real one the
+     * client built for this hover, only marked, and the press is a physical click on the
+     * object's real clickbox. When the object's entry never reaches the top the recipe
+     * fails instead of pressing at a target it knows is wrong.
      *
      * @return true when the "use item on object" click was issued (effect unverified)
      */
@@ -228,8 +268,223 @@ public final class AScriptClick {
             clearSelection();
             return false;
         }
-        Microbot.getMouse().click(target.clickbox());
+
+        Predicate<MenuEntry> isOurs = entry -> isOwnObjectEntry(entry, object);
+
+        // Resolve the press point once: getClickingPoint randomizes on every call, and the
+        // press has to land on the exact point the menu was built for.
+        Point point = Rs2UiHelper.getClickingPoint(target.clickbox(), true);
+        if (!arriveAt(point)) {
+            log.warn("[AScriptClick] the cursor never settled on the resolved point — not pressing");
+            clearSelection();
+            return false;
+        }
+        if (!awaitOwnEntry(isOurs, point)) {
+            log.warn("[AScriptClick] the menu has no entry for the use target — not pressing");
+            clearSelection();
+            return false;
+        }
+        if (!promoteToPrimaryClick(isOurs)) {
+            log.warn("[AScriptClick] a higher-priority entry stayed ranked above the use target — not pressing");
+            clearSelection();
+            return false;
+        }
+        // The cursor already rests on the point, so NaturalMouse.moveTo short-circuits and
+        // VirtualMouse.handleClick skips its pre-click move: a pure press/release carrying
+        // no movement frame, and therefore no menu rebuild between the demotion and the
+        // press. The flags are never restored — they live on entries the next rebuild
+        // replaces, and a deprioritized entry is a state real swapper users run anyway.
+        Microbot.getMouse().click(point);
         return true;
+    }
+
+    // ── Menu priority (item-on-X) ─────────────────────────
+
+    /**
+     * Put the cursor on {@code point} and wait until it is really there. The approach runs
+     * through {@code NaturalMouse} so the recipe keeps the natural arc the plain
+     * {@code click(clickbox)} used to produce — a single teleported MOVED event would be an
+     * input signature no human produces. The corrective move only fires when the arc stopped
+     * short: {@code VirtualMouse.handleClick} skips its pre-click move (so the menu is not
+     * rebuilt between the demotion and the press) only when the tracked pointer already
+     * rests on the press point.
+     *
+     * @return true when the pointer rests on the point
+     */
+    private static boolean arriveAt(Point point) {
+        if (Microbot.getNaturalMouse() != null) {
+            Microbot.getNaturalMouse().moveTo(point.getX(), point.getY());
+        } else {
+            Microbot.getMouse().move(point);
+        }
+        if (!PointerState.isAt(point.getX(), point.getY())) {
+            Microbot.getMouse().move(point);
+        }
+        return sleepUntil(() -> PointerState.isAt(point.getX(), point.getY()),
+                Rs2Random.logNormalBounded(400, 900));
+    }
+
+    /**
+     * Wait for the hover menu to expose the target's own entry. The menu rebuilds only on
+     * mouse movement, so from {@code NUDGE_AFTER_ATTEMPT} on the cursor is stepped off the
+     * point and back on to re-trigger it (small budget); a stale menu never fixes itself.
+     */
+    private static boolean awaitOwnEntry(Predicate<MenuEntry> isOurs, Point point) {
+        for (int attempt = 0; attempt < ENTRY_ATTEMPTS; attempt++) {
+            if (attempt >= NUDGE_AFTER_ATTEMPT) {
+                nudge(point);
+            }
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(80, 200));
+            if (hasOwnEntry(isOurs)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Step the cursor off the point and straight back on, so the client rebuilds the menu
+     * for this hover. The step stays inside the canvas, and the move back onto the point
+     * leaves the pointer resting on it — the press still has no movement frame to skip.
+     */
+    private static void nudge(Point point) {
+        int canvasWidth = Microbot.getClient().getCanvasWidth();
+        int canvasHeight = Microbot.getClient().getCanvasHeight();
+        int dx = nudgeStep(point.getX(), canvasWidth);
+        int dy = nudgeStep(point.getY(), canvasHeight);
+        if (dx == 0 && dy == 0) {
+            return;
+        }
+        Microbot.getMouse().move(new Point(point.getX() + dx, point.getY() + dy));
+        Microbot.getMouse().move(point);
+    }
+
+    /** A {@code NUDGE_PX} px step that stays inside the canvas, or 0 when none fits. */
+    private static int nudgeStep(int coordinate, int canvasSize) {
+        if (coordinate + NUDGE_PX <= canvasSize - 2) {
+            return NUDGE_PX;
+        }
+        if (coordinate - NUDGE_PX >= 1) {
+            return -NUDGE_PX;
+        }
+        return 0;
+    }
+
+    private static boolean hasOwnEntry(Predicate<MenuEntry> isOurs) {
+        return topmostIndex(isOurs) >= 0;
+    }
+
+    /**
+     * Demote every entry the client ranked above the target's with
+     * {@link MenuEntry#setDeprioritized(boolean)}, then wait until the target's entry is
+     * the top of the minimenu. Only real, existing entries are marked — no reorder, no
+     * fabrication — and the client's own sort does the rest, so the recipe verifies the
+     * very thing the click will resolve to instead of assuming it.
+     *
+     * @return true when a left-click would now dispatch to the target's entry
+     */
+    private static boolean promoteToPrimaryClick(Predicate<MenuEntry> isOurs) {
+        for (int attempt = 0; attempt < PROMOTE_ATTEMPTS; attempt++) {
+            Pass pass = Microbot.getClientThread()
+                    .runOnClientThreadOptional(() -> demoteAbove(isOurs))
+                    .orElse(Pass.GONE);
+            if (pass == Pass.GONE) {
+                return false;
+            }
+            if (pass == Pass.TOP) {
+                return true;
+            }
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(60, 160));
+        }
+        return false;
+    }
+
+    /**
+     * One pass over the live menu, run on the client thread — the menu is live client
+     * state, and RuneLite's own swapper marks its entries there too.
+     */
+    private enum Pass {
+        /** The target's entry is gone: the menu no longer describes this hover. */
+        GONE,
+        /** Entries above the target were marked; the client's sort has not run yet. */
+        PENDING,
+        /** The target's entry is the top of the minimenu. */
+        TOP
+    }
+
+    private static Pass demoteAbove(Predicate<MenuEntry> isOurs) {
+        MenuEntry[] entries = Microbot.getClient().getMenuEntries();
+        int own = topmostIndex(entries, isOurs);
+        if (own < 0) {
+            return Pass.GONE;
+        }
+        // Higher index = higher in the minimenu (MenuManager: "higher-index entries
+        // appearing toward the top"), so everything above the last index outranks it and
+        // the last index is the entry a left-click dispatches to.
+        if (own == entries.length - 1) {
+            return Pass.TOP;
+        }
+        for (int i = own + 1; i < entries.length; i++) {
+            if (entries[i] != null) {
+                entries[i].setDeprioritized(true);
+            }
+        }
+        return Pass.PENDING;
+    }
+
+    private static int topmostIndex(Predicate<MenuEntry> isOurs) {
+        return Microbot.getClientThread()
+                .runOnClientThreadOptional(() -> topmostIndex(Microbot.getClient().getMenuEntries(), isOurs))
+                .orElse(-1);
+    }
+
+    /** Highest-ranked index of the target's entry, or -1 when the menu holds none. */
+    private static int topmostIndex(MenuEntry[] entries, Predicate<MenuEntry> isOurs) {
+        int found = -1;
+        for (int i = 0; i < entries.length; i++) {
+            if (entries[i] != null && isOurs.test(entries[i])) {
+                found = i;
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The entry the press must resolve to for {@code object}: the client's own
+     * "use &lt;item&gt; on &lt;object&gt;" line, matched on action, object id and the scene
+     * coordinates the client packs into param0/param1 — the mapping
+     * {@code Rs2TileObjectModel.click} mirrors when it builds an entry for a tile object.
+     * Only ever evaluated on the client thread, inside the menu passes above.
+     * <p>
+     * Deliberately separate from the priority helper, which takes the matcher as an input:
+     * an {@code ITEM_USE_ON_NPC} / {@code ITEM_USE_ON_PLAYER} overload is a thin follow-up
+     * that only swaps this matcher for {@link MenuEntry#getNpc()} / {@link MenuEntry#getPlayer()}.
+     */
+    private static boolean isOwnObjectEntry(MenuEntry entry, TileObject object) {
+        if (entry.getType() != MenuAction.ITEM_USE_ON_GAME_OBJECT
+                || entry.getIdentifier() != object.getId()) {
+            return false;
+        }
+        int[] scene = sceneCoords(object);
+        return entry.getParam0() == scene[0] && entry.getParam1() == scene[1];
+    }
+
+    /**
+     * Scene coordinates the client packs into an object menu entry's param0/param1 —
+     * {@code Rs2TileObjectModel.click}'s mapping: a multi-tile {@link GameObject} is stored
+     * at its south-west-centre tile, every other tile object at its own local location.
+     * Both readings agree for the 1-tile objects the recipe runs on today.
+     */
+    private static int[] sceneCoords(TileObject object) {
+        if (object instanceof GameObject) {
+            GameObject gameObject = (GameObject) object;
+            LocalPoint local = gameObject.getLocalLocation();
+            int sceneX = local.getSceneX() - (gameObject.sizeX() > 1 ? gameObject.sizeX() / 2 : 0);
+            int sceneY = local.getSceneY() - (gameObject.sizeY() > 1 ? gameObject.sizeY() / 2 : 0);
+            return new int[]{sceneX, sceneY};
+        }
+        LocalPoint local = object.getLocalLocation();
+        return new int[]{local.getSceneX(), local.getSceneY()};
     }
 
     /**
