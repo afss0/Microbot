@@ -3,16 +3,21 @@ package net.runelite.client.plugins.microbot.ascript.eventdismiss;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ItemID;
 import net.runelite.api.Skill;
+import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.settings.Rs2Settings;
+import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
+import java.awt.Rectangle;
 import java.awt.event.KeyEvent;
 import java.util.EnumMap;
 import java.util.Map;
@@ -137,7 +142,7 @@ public class LampUtility {
         // state — close it first so every attempt starts clean.
         closePendingLampInterface();
 
-        if (!Rs2Inventory.interact(ItemID.LAMP, "Rub")) {
+        if (!rubLamp()) {
             log.warn("Failed to rub lamp");
             noteUseFailure();
             return false;
@@ -178,6 +183,30 @@ public class LampUtility {
 
         consecutiveUseFailures = 0;
         log.info("Used lamp on {}", skill);
+        return true;
+    }
+
+    /**
+     * Left-click the lamp's inventory slot with the client mouse — the standard
+     * physical slot click (Jewel Enchant's {@code clickInventoryItem}). "Rub" is the
+     * lamp's default left-click op (OSRS wiki, {@code Lamp}: {@code options = Rub,
+     * Destroy}), so a plain press dispatches it and no menu entry is injected. The
+     * inventory tab is brought forward first: {@link Rs2Inventory#itemBounds} only
+     * resolves slot bounds for the visible inventory container — the injected call
+     * this replaced force-switched the tab itself.
+     *
+     * @return true when the click was issued (the caller confirms the interface opened)
+     */
+    private static boolean rubLamp() {
+        if (!Rs2Tab.switchTo(InterfaceTab.INVENTORY)) {
+            return false;
+        }
+        Rs2ItemModel lamp = Rs2Inventory.get(ItemID.LAMP);
+        Rectangle bounds = lamp == null ? null : Rs2Inventory.itemBounds(lamp);
+        if (bounds == null) {
+            return false;
+        }
+        Microbot.getMouse().click(bounds);
         return true;
     }
 
