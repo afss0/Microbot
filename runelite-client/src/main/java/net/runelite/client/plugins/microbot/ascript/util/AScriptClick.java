@@ -262,8 +262,10 @@ public final class AScriptClick {
      * <b>Menu priority.</b> With a cursor item selected the client ranks
      * {@code WIDGET_TARGET_ON_PLAYER} above {@code WIDGET_TARGET_ON_GAME_OBJECT} (the
      * client's item-on-X family — confirmed against a live menu log), so a player
-     * standing on the fire would win a plain left-click. The recipe reads the hover
-     * menu's actual ranking first, then:
+     * standing on the fire would win a plain left-click. Each try takes a SINGLE
+     * client-thread snapshot of the hover menu (entry and rank together — split reads
+     * raced in the field: the read that found the entry was followed by a rebuild that
+     * hid it), retrying a gone entry instead of failing the attempt. Then:
      * <ul>
      *   <li><b>Object entry already on top</b> — press at the point, exactly as before.
      *       The same hover rebuilds to the same ranking, so nothing has to survive the
@@ -300,13 +302,25 @@ public final class AScriptClick {
             cancelSelectionOnOwnSlot(item, "the cursor never settled on the resolved point");
             return false;
         }
-        if (!awaitOwnEntry(isOurs, point)) {
-            cancelSelectionOnOwnSlot(item, "the menu has no entry for the use target");
-            return false;
+        // One client-thread snapshot per try decides both questions — is the entry
+        // there, and how does it rank. Two separate reads raced in the field: the
+        // first found the entry, the very next saw it gone (the hover menu rebuilds
+        // right after the arrival arc settles), so the rank that gates the action
+        // must come from the same read that found the entry. A GONE read retries
+        // the hover (nudged, with a growing wait) instead of failing the attempt;
+        // only an unbroken run of GONE reads fails the recipe.
+        Rank rank = Rank.GONE;
+        for (int attempt = 0; attempt < ENTRY_ATTEMPTS && rank == Rank.GONE; attempt++) {
+            if (attempt >= NUDGE_AFTER_ATTEMPT) {
+                nudge(point);
+            }
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(
+                    attempt >= NUDGE_AFTER_ATTEMPT ? 150 : 80,
+                    attempt >= NUDGE_AFTER_ATTEMPT ? 350 : 200));
+            rank = rankOfOwnEntry(isOurs);
         }
-        Rank rank = rankOfOwnEntry(isOurs);
         if (rank == Rank.GONE) {
-            cancelSelectionOnOwnSlot(item, "the use target's entry left the hover menu");
+            cancelSelectionOnOwnSlot(item, "the hover menu never showed the use target's entry");
             return false;
         }
         if (rank == Rank.BEATEN) {
@@ -360,24 +374,6 @@ public final class AScriptClick {
     }
 
     /**
-     * Wait for the hover menu to expose the target's own entry. The menu rebuilds only on
-     * mouse movement, so from {@code NUDGE_AFTER_ATTEMPT} on the cursor is stepped off the
-     * point and back on to re-trigger it (small budget); a stale menu never fixes itself.
-     */
-    private static boolean awaitOwnEntry(Predicate<MenuEntry> isOurs, Point point) {
-        for (int attempt = 0; attempt < ENTRY_ATTEMPTS; attempt++) {
-            if (attempt >= NUDGE_AFTER_ATTEMPT) {
-                nudge(point);
-            }
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(80, 200));
-            if (hasOwnEntry(isOurs)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Step the cursor off the point and straight back on, so the client rebuilds the menu
      * for this hover. The step stays inside the canvas, and the move back onto the point
      * leaves the pointer resting on it — the press that follows can therefore take its
@@ -404,10 +400,6 @@ public final class AScriptClick {
             return -NUDGE_PX;
         }
         return 0;
-    }
-
-    private static boolean hasOwnEntry(Predicate<MenuEntry> isOurs) {
-        return topmostIndex(isOurs) >= 0;
     }
 
     /** How the hover menu ranks the target's entry: gone, beaten, or the left-click default. */
