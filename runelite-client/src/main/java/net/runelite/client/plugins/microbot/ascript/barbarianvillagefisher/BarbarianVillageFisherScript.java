@@ -2,7 +2,6 @@ package net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
-import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.game.FishingSpot;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -398,16 +397,29 @@ public class BarbarianVillageFisherScript implements AModule {
             return;
         }
 
-        String fishingAction = config.barbarianVillageFisherType() == BarbarianFishingType.BAIT_FISHING
-                ? "Bait" : "Lure";
-
         if (!Rs2Camera.isTileOnScreen(fishingSpot.getLocalLocation())) {
             Rs2Walker.walkTo(fishingSpot.getWorldLocation(), 3);
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(180, 540, weatherMultiplier));
             return;
         }
 
-        if (fishingSpot.click(fishingAction)) {
+        // "Lure" is the spot's default op — a plain left-click on the clickbox is what a
+        // human does, so that stays the plain actor recipe. "Bait" is NOT the default: a
+        // left-click can only ever dispatch the default, so it goes through the
+        // non-default-op recipe (right-click the clickbox, pick our row out of the open
+        // menu, confirm the menu closed on it). The effect is still judged by the gate
+        // below, unchanged.
+        AScriptClick.Target spotClick =
+                config.barbarianVillageFisherType() == BarbarianFishingType.BAIT_FISHING
+                        ? AScriptClick.clickActorOp(fishingSpot.getNpc(), "Bait")
+                        : AScriptClick.clickActor(fishingSpot.getNpc());
+        if (spotClick.cameraTurned()) {
+            // The recipe turned the camera toward the spot — a retry on a later tick,
+            // not a failure, so it must not spend a click retry or a failure life.
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(180, 540, weatherMultiplier));
+            return;
+        }
+        if (spotClick.clicked()) {
             boolean landed = sleepUntil(
                     () -> Rs2Player.isAnimating() || Rs2Player.isInteracting(),
                     (int) Rs2Random.logNormalBounded(5000, 10000, weatherMultiplier));
