@@ -410,9 +410,11 @@ public class CannonballSmelterScript implements AModule {
      * client thread. Shilo Village uses a name lookup — its gameval id
      * (ZQFURNACE_LIT) does not resolve reliably there (hub precedent).
      * <p>
-     * Returns the query-API entity: its {@code click("Smelt")} is the sanctioned
-     * entry-click (NewMenuEntry + {@code targetMenu} override), so the action fires
-     * even when the pixel does not land on the hull.
+     * Returns the query-API entity, whose {@code click("Smelt")} entry-click is a
+     * known, documented exception to the client-mouse rule ({@code ascript/AGENTS.md})
+     * — not a sanctioned mechanism: it is the entry-click family (NewMenuEntry +
+     * {@code targetMenu} override), kept on that path pending a future conversion, so
+     * the action fires even when the pixel does not land on the hull.
      */
     private Rs2TileObjectModel findFurnace(CannonballSmelterFurnace choice) {
         if (choice == CannonballSmelterFurnace.SHILO_VILLAGE) {
