@@ -14,6 +14,8 @@ import net.runelite.api.kit.KitType;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetInfo;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.accountselector.AutoLoginSuppressionRequest;
+import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.api.boat.Rs2BoatCache;
 import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.microbot.api.playerstate.Rs2PlayerStateCache;
@@ -472,6 +474,38 @@ public class Rs2Player {
         return Microbot.getVarbitPlayerValue(173) == 1;
     }
 
+    public enum TerminalLogoutState { BANK_CLOSING, LOGOUT_REQUESTED, LOGGED_OUT, INPUT_BLOCKED }
+
+    private static TerminalLogoutState terminalLogoutInputStep() {
+        if (!Microbot.isLoggedIn()) return TerminalLogoutState.LOGGED_OUT;
+        if (Rs2Bank.isOpen()) {
+            return Rs2Widget.clickChildWidget(786434, 11)
+                    ? TerminalLogoutState.BANK_CLOSING : TerminalLogoutState.INPUT_BLOCKED;
+        }
+        logout();
+        return TerminalLogoutState.LOGOUT_REQUESTED;
+    }
+
+    /**
+     * Best-effort terminal logout after a confirmed supply failure, off the client thread.
+     * Pending suppression expires after 15 seconds if logout never completes. Resume by manually logging in
+     * after the logout, starting another script, or restarting AutoLogin.
+     * The return value distinguishes requested input from observed logout completion.
+     */
+    public static TerminalLogoutState logoutWithoutAutoLogin() {
+        if (Microbot.getClient().isClientThread()) return TerminalLogoutState.INPUT_BLOCKED;
+        // Post once: a newer script start during bank closure must not be re-blocked.
+        Microbot.getEventBus().post(new AutoLoginSuppressionRequest());
+        TerminalLogoutState state = terminalLogoutInputStep();
+        if (state == TerminalLogoutState.BANK_CLOSING) {
+            if (!sleepUntil(() -> !Rs2Bank.isOpen(), 2400)) return state;
+            state = terminalLogoutInputStep();
+        }
+        if (state == TerminalLogoutState.LOGOUT_REQUESTED
+                && sleepUntil(() -> !Microbot.isLoggedIn(), 5000)) return TerminalLogoutState.LOGGED_OUT;
+        return state;
+    }
+
     /**
      * Logs the player out of the game
      */
@@ -914,9 +948,10 @@ public class Rs2Player {
      * @return The combat level of the local player.
      */
     public static int getCombatLevel() {
-        return Microbot.getClientThread().runOnClientThreadOptional(() ->
-                Microbot.getClient().getLocalPlayer().getCombatLevel()
-        ).orElse(0);
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Player localPlayer = Microbot.getClient().getLocalPlayer();
+            return localPlayer == null ? null : localPlayer.getCombatLevel();
+        }).orElse(0);
     }
 
     /**
@@ -937,7 +972,10 @@ public class Rs2Player {
      * @return The local player wrapped in an {@link Rs2PlayerModel}.
      */
     public static Rs2PlayerModel getLocalPlayer() {
-        return getPlayers(player -> player.getId() == Microbot.getClient().getLocalPlayer().getId(), true).findFirst().orElse(null);
+        return getPlayers(player -> {
+            Player localPlayer = Microbot.getClient().getLocalPlayer();
+            return localPlayer != null && player.getId() == localPlayer.getId();
+        }, true).findFirst().orElse(null);
     }
 
     /**
@@ -1000,11 +1038,13 @@ public class Rs2Player {
 	 */
 	public static WorldPoint getWorldLocation_Internal(){
 		return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+			Player player = Microbot.getClient().getLocalPlayer();
+			if (player == null) return null;
 			if (Microbot.getClient().getTopLevelWorldView().getScene().isInstance()) {
-				LocalPoint l = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), Microbot.getClient().getLocalPlayer().getWorldLocation());
+				LocalPoint l = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), player.getWorldLocation());
 				return WorldPoint.fromLocalInstance(Microbot.getClient(), l);
 			}
-			return Microbot.getClient().getLocalPlayer().getWorldLocation();
+			return player.getWorldLocation();
 		}).orElse(null);
 	}
 
@@ -1164,7 +1204,8 @@ public class Rs2Player {
      * @return The {@link LocalPoint} representing the player's current position.
      */
     public static LocalPoint getLocalLocation() {
-        return Microbot.getClient().getLocalPlayer().getLocalLocation();
+        Player localPlayer = Microbot.getClient().getLocalPlayer();
+        return localPlayer == null ? null : localPlayer.getLocalLocation();
     }
 
     /**
@@ -1527,9 +1568,10 @@ public class Rs2Player {
      * @return The pose animation ID of the player.
      */
     public static int getPoseAnimation() {
-        return Microbot.getClientThread().runOnClientThreadOptional(() ->
-                Microbot.getClient().getLocalPlayer().getPoseAnimation()
-        ).orElse(-1);
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Player localPlayer = Microbot.getClient().getLocalPlayer();
+            return localPlayer == null ? null : localPlayer.getPoseAnimation();
+        }).orElse(-1);
     }
 
     /**
@@ -1726,7 +1768,8 @@ public class Rs2Player {
      * @return The graphic ID of the local player.
      */
     public static int getGraphicId() {
-        return Microbot.getClient().getLocalPlayer().getGraphic();
+        Player localPlayer = Microbot.getClient().getLocalPlayer();
+        return localPlayer == null ? -1 : localPlayer.getGraphic();
     }
 
     /**
@@ -1739,7 +1782,8 @@ public class Rs2Player {
      * @return {@code true} if the local player has the specified spot animation, {@code false} otherwise.
      */
     public static boolean hasSpotAnimation(int graphicId) {
-        return Microbot.getClient().getLocalPlayer().hasSpotAnim(graphicId);
+        Player localPlayer = Microbot.getClient().getLocalPlayer();
+        return localPlayer != null && localPlayer.hasSpotAnim(graphicId);
     }
 
     /**

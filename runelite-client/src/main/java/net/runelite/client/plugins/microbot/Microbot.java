@@ -171,6 +171,8 @@ public class Microbot {
     private static TooltipManager tooltipManager;
     private static ScheduledFuture<?> xpSchedulorFuture;
     private static net.runelite.api.World quickHopTargetWorld;
+    private static final int WORLD_SWITCHER_LOAD_TIMEOUT_MS = 5000;
+    private static final int WORLD_SWITCHER_REOPEN_INTERVAL_MS = 600;
     /**
      * PouchScript is injected in the main MicrobotPlugin as it's being used in multiple scripts
      */
@@ -374,7 +376,8 @@ public class Microbot {
             log.error("Can't hop world, already trying to hop");
             return false;
         }
-        boolean hopIssued = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+        final net.runelite.api.World[] target = new net.runelite.api.World[1];
+        boolean prepared = Microbot.getClientThread().runOnClientThreadOptional(() -> {
             if (Rs2Combat.inCombat()) {
                 log.error("Player is in combat, cannot hop worlds");
                 return false;
@@ -400,6 +403,7 @@ public class Microbot {
             if (rsWorld == null) return false;
 
             quickHopTargetWorld = rsWorld;
+            target[0] = rsWorld;
             rsWorld.setActivity(newWorld.getActivity());
             rsWorld.setAddress(newWorld.getAddress());
             rsWorld.setId(newWorld.getId());
@@ -407,12 +411,21 @@ public class Microbot {
             rsWorld.setLocation(newWorld.getLocation());
             rsWorld.setTypes(WorldUtil.toWorldTypes(newWorld.getTypes()));
 
-            Microbot.getClient().openWorldHopper();
-            Microbot.getClient().hopToWorld(rsWorld);
-            quickHopTargetWorld = null;
             return true;
         }).orElse(false);
-        if (!hopIssued) {
+        if (target[0] != null) {
+            boolean hopIssued;
+            try {
+                hopIssued = prepared && hopViaWorldSwitcher(target[0], WORLD_SWITCHER_LOAD_TIMEOUT_MS);
+            } finally {
+                quickHopTargetWorld = null;
+            }
+            if (prepared && !hopIssued) {
+                log.warn("World switcher did not load in time, could not hop to world {}", worldNumber);
+                return false;
+            }
+        }
+        if (!prepared) {
             log.error("Failed to hop to world {}", worldNumber);
             return false;
         }
@@ -421,7 +434,6 @@ public class Microbot {
         // wait inside it is a no-op and the success check fires before the server has
         // even processed the request. That's the source of "Failed to hop" spam.
         if (Microbot.getClient().getWorld() != worldNumber) {
-            sleep(600);
             sleepUntil(() -> Microbot.isHopping()
                             || Microbot.getClient().getWorld() == worldNumber
                             || Rs2Widget.getWidget(193, 0) != null, 5000);
@@ -452,6 +464,32 @@ public class Microbot {
         return success;
     }
 
+    static boolean hopViaWorldSwitcher(net.runelite.api.World rsWorld, int loadTimeoutMs) {
+        if (!isWorldSwitcherLoaded()
+                && !sleepUntil(Microbot::isWorldSwitcherLoaded, Microbot::openWorldSwitcher, loadTimeoutMs, WORLD_SWITCHER_REOPEN_INTERVAL_MS)) {
+            return false;
+        }
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            if (Microbot.getClient().getWidget(InterfaceID.Worldswitcher.BUTTONS) == null) {
+                return false;
+            }
+            Microbot.getClient().hopToWorld(rsWorld);
+            return true;
+        }).orElse(false);
+    }
+
+    private static void openWorldSwitcher() {
+        Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Microbot.getClient().openWorldHopper();
+            return true;
+        });
+    }
+
+    private static boolean isWorldSwitcherLoaded() {
+        return Microbot.getClientThread().runOnClientThreadOptional(
+                () -> Microbot.getClient().getWidget(InterfaceID.Worldswitcher.BUTTONS) != null).orElse(false);
+    }
+
     public static void showMessage(String message) {
         try {
             Runnable messageRunnable = () ->
@@ -464,6 +502,9 @@ public class Microbot {
             } else {
                 SwingUtilities.invokeAndWait(messageRunnable);
             }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            log.debug("Interrupted while displaying message {}", message);
         } catch (Exception ex) {
             log.error("Error displaying message {}:", message, ex);
         }
@@ -487,6 +528,9 @@ public class Microbot {
             } else {
                 SwingUtilities.invokeAndWait(messageRunnable);
             }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            log.debug("Interrupted while displaying message {}", message);
         } catch (Exception ex) {
             log.error("Error displaying message {}:", message, ex);
         }
@@ -714,7 +758,9 @@ public class Microbot {
                 log.warn(message);
                 break;
             case ERROR:
-                if (ex != null) {
+                if (isInterruption(ex)) {
+                    log.debug(message, ex);
+                } else if (ex != null) {
                     log.error(message, ex);
                 } else {
                     log.error(message);
@@ -727,6 +773,16 @@ public class Microbot {
                 log.info(message);
                 break;
         }
+    }
+
+    static boolean isInterruption(Throwable ex) {
+        Throwable t = ex;
+        for (int depth = 0; t != null && depth < 64; depth++, t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof InterruptedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -841,7 +897,7 @@ public class Microbot {
      * This method filters the active plugins managed by the `pluginManager` to include only those whose
      * package name contains "microbot" (case-insensitive). It further excludes certain plugins based on
      * their class names, such as "QuestHelperPlugin", "MInventorySetupsPlugin", "MicrobotPlugin",
-     * "ShortestPathPlugin", "AntibanPlugin", and "ExamplePlugin".
+     * "ShortestPathPlugin", and "AntibanPlugin".
      *
      * @return a list of active plugins belonging to the "microbot" package, excluding the specified plugins.
      */
@@ -852,8 +908,7 @@ public class Microbot {
                         && !x.getClass().getSimpleName().equalsIgnoreCase("MInventorySetupsPlugin")
                         && !x.getClass().getSimpleName().equalsIgnoreCase("MicrobotPlugin")
                         && !x.getClass().getSimpleName().equalsIgnoreCase("ShortestPathPlugin")
-                        && !x.getClass().getSimpleName().equalsIgnoreCase("AntibanPlugin")
-                        && !x.getClass().getSimpleName().equalsIgnoreCase("ExamplePlugin"))
+                        && !x.getClass().getSimpleName().equalsIgnoreCase("AntibanPlugin"))
                 .collect(Collectors.toList());
     }
 
