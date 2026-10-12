@@ -358,6 +358,7 @@ public class FiremakingScript implements AModule {
      */
     private void lightFire(AScriptConfig config, int logId) {
         if (!Rs2Inventory.hasItem(ItemID.TINDERBOX)) {
+            Microbot.status = "FIREMAKING — no tinderbox in inventory (banking next tick)";
             return; // needsBank() pulls one next tick
         }
         WorldPoint spot = config.firemakingLocation().getWorldPoint();
