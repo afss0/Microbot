@@ -10,12 +10,14 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.skills.fletching.Rs2Fletching;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingArrow;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingBolt;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingDart;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
@@ -454,9 +456,15 @@ public class FletchingScript implements AModule {
             return false;
         }
 
-        // combine bow string + unstrung bow → opens production interface
-        if (!Rs2Inventory.combineClosest("bow string", unstrungName)) {
-            log.warn("[FletchingScript] combineClosest failed");
+        // Combine bow string + unstrung bow → opens production interface — the AScriptClick
+        // item-on-item recipe: a physical click on the bow-string slot selects it, a
+        // physical click on the unstrung bow's slot applies it (the old combineClosest
+        // selected the primary and clicked the secondary the same way, through menu-entry
+        // injection). The recipe logs and cancels its own selection on any failure.
+        Rs2ItemModel stringItem = Rs2Inventory.get("bow string");
+        Rs2ItemModel unstrungItem = Rs2Inventory.get(unstrungName);
+        if (!AScriptClick.useItemOnItem(stringItem, unstrungItem)) {
+            log.warn("[FletchingScript] could not use the bow string on the unstrung bow");
             Microbot.status = "IDLE";
             return false;
         }
