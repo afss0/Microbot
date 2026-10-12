@@ -325,6 +325,11 @@ public final class AScriptClick {
         if (pick == RowPick.MENU_STUCK) {
             log.error("[AScriptClick] the option menu would not close — leaving it open "
                     + "for a human to close before anything else clicks");
+        } else if (pick == RowPick.FAILED) {
+            // Every bounded attempt ran out with the menu closed and no press issued —
+            // the recipe-level line a post-merge in-game diagnosis starts from (the
+            // item path logs the same shape through cancelSelectionOnOwnSlot).
+            log.warn("[AScriptClick] the open menu never exposed the \"{}\" row — not pressing", option);
         }
         return new Target(target.clickbox(), false, pick == RowPick.DISPATCHED);
     }
