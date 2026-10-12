@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript.util;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Actor;
+import net.runelite.api.Client;
 import net.runelite.api.GameObject;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
@@ -13,10 +14,12 @@ import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.input.PointerState;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
+import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 
 import java.awt.Rectangle;
+import java.awt.event.KeyEvent;
 import java.util.function.Predicate;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -73,11 +76,19 @@ public final class AScriptClick {
     private static final int NUDGE_PX = 2;
 
     /**
-     * Bounded polls for a menu-priority change to show up in the menu rank. The client
-     * re-sorts the menu after the deprioritized flags are set — the same pass RuneLite's
-     * menu entry swapper rides — so the rank is re-read rather than assumed.
+     * Bounded attempts to open the option menu with the target's own entry in it. Each
+     * retry closes the menu, re-nudges the hover and right-clicks again — an open menu is
+     * frozen, so one that came up without our entry never fixes itself either.
      */
-    private static final int PROMOTE_ATTEMPTS = 6;
+    private static final int MENU_ATTEMPTS = 3;
+
+    /**
+     * Row geometry of the client's option menu — the hit-test constants questhelper uses
+     * to map menu entries to screen rows ({@code DetailedQuestStep
+     * .renderHoveredMenuEntryPanel}: a 15 px row under a header of row + 3).
+     */
+    private static final int MENU_ROW_HEIGHT = 15;
+    private static final int MENU_HEADER_HEIGHT = MENU_ROW_HEIGHT + 3;
 
     private AScriptClick() {
     }
@@ -234,28 +245,38 @@ public final class AScriptClick {
      * Item-on-object recipe (client mouse, no injection): select {@code item} with a
      * physical click on its inventory slot, verify the game picked it up, put the cursor
      * on the object's real clickbox (camera first, canvas fallback rejected, render waited
-     * out), make a left-click there resolve to the OBJECT, and press at that same point.
+     * out), and make the press resolve to the OBJECT.
      * <p>
      * Confirming the effect — the make-X prompt, the animation, an XP drop — stays with
      * the caller, which owns the module's tracking. On any failure path a selection this
-     * recipe created is cleared (the {@code eatReady} idiom: a click at the current
-     * position drops it), because a dangling cursor item silently converts the next
-     * inventory op. A stale selection present on entry is cleared too — otherwise the
-     * item click would apply that pair instead of selecting.
+     * recipe created is cancelled with a press on the item's OWN inventory slot — a press
+     * at the last press point would re-dispatch whatever ranks top there, which in the
+     * contended case is exactly the mis-dispatch this recipe exists to prevent — because
+     * a dangling cursor item silently converts the next inventory op. A stale selection
+     * present on entry is cleared too — otherwise the item click would apply that pair
+     * instead of selecting.
      * <p>
      * The item's default left-click op must be "Use" (true for logs, tinderbox and the
      * other supported items): a physical click cannot pick a non-default op.
      * <p>
      * <b>Menu priority.</b> With a cursor item selected the client ranks
      * {@code ITEM_USE_ON_PLAYER} above {@code ITEM_USE_ON_GAME_OBJECT}, so a player
-     * standing on the fire steals the press. The recipe therefore demotes every entry the
-     * client ranked above the object's own with {@link MenuEntry#setDeprioritized(boolean)}
-     * — the flag RuneLite's menu entry swapper uses for the same job — waits until the
-     * object's entry really is the top of the minimenu (the entry a left-click dispatches
-     * to), and only then presses. Nothing is fabricated: every entry is a real one the
-     * client built for this hover, only marked, and the press is a physical click on the
-     * object's real clickbox. When the object's entry never reaches the top the recipe
-     * fails instead of pressing at a target it knows is wrong.
+     * standing on the fire would win a plain left-click. The recipe reads the hover
+     * menu's actual ranking first, then:
+     * <ul>
+     *   <li><b>Object entry already on top</b> — press at the point, exactly as before.
+     *       The same hover rebuilds to the same ranking, so nothing has to survive the
+     *       press: a movement frame inside it (weather offset, cursor-tracker drift)
+     *       rebuilds the identical ranking.</li>
+     *   <li><b>A higher-priority entity shares the hover</b> — right-click to open the
+     *       option menu and press OUR OWN ROW in it. An open menu is frozen client-side
+     *       ("The menu is not rebuilt when it is open", {@code MenuEntrySwapperPlugin}),
+     *       so what the row press resolves to is fixed at open time and no movement frame
+     *       can change it. Deprioritize flags ({@link MenuEntry#setDeprioritized(boolean)})
+     *       were deliberately NOT used: they live on the current menu's entry objects, and
+     *       every movement the sanctioned press path can emit rebuilds the menu and drops
+     *       them before dispatch — the swap cannot be made to survive.</li>
+     * </ul>
      *
      * @return true when the "use item on object" click was issued (effect unverified)
      */
@@ -275,39 +296,52 @@ public final class AScriptClick {
         // press has to land on the exact point the menu was built for.
         Point point = Rs2UiHelper.getClickingPoint(target.clickbox(), true);
         if (!arriveAt(point)) {
-            log.warn("[AScriptClick] the cursor never settled on the resolved point — not pressing");
-            clearSelection();
+            cancelSelectionOnOwnSlot(item, "the cursor never settled on the resolved point");
             return false;
         }
         if (!awaitOwnEntry(isOurs, point)) {
-            log.warn("[AScriptClick] the menu has no entry for the use target — not pressing");
-            clearSelection();
+            cancelSelectionOnOwnSlot(item, "the menu has no entry for the use target");
             return false;
         }
-        if (!promoteToPrimaryClick(isOurs)) {
-            log.warn("[AScriptClick] a higher-priority entry stayed ranked above the use target — not pressing");
-            clearSelection();
+        Rank rank = rankOfOwnEntry(isOurs);
+        if (rank == Rank.GONE) {
+            cancelSelectionOnOwnSlot(item, "the use target's entry left the hover menu");
             return false;
         }
-        // The cursor already rests on the point, so NaturalMouse.moveTo short-circuits and
-        // VirtualMouse.handleClick skips its pre-click move: a pure press/release carrying
-        // no movement frame, and therefore no menu rebuild between the demotion and the
-        // press. The flags are never restored — they live on entries the next rebuild
-        // replaces, and a deprioritized entry is a state real swapper users run anyway.
+        if (rank == Rank.BEATEN) {
+            // Contended: a higher-priority entity (a player standing on the fire) shares
+            // the hover. A left-click would dispatch to it, so pick our own row from the
+            // open option menu instead of racing the ranking.
+            RowPick pick = pressViaMenuRow(point, isOurs);
+            if (pick == RowPick.DISPATCHED) {
+                return true;
+            }
+            if (pick == RowPick.MENU_STUCK) {
+                log.error("[AScriptClick] the option menu would not close — leaving the cursor "
+                        + "selection pending (close the menu manually)");
+                return false;
+            }
+            cancelSelectionOnOwnSlot(item, "the open menu never exposed the use target's row");
+            return false;
+        }
+        // Rank.TOP — uncontended: the object's entry already IS the left-click default.
+        // The same hover rebuilds to the same ranking, so a movement frame inside this
+        // press cannot change what dispatches — and no priority flag exists here for such
+        // a frame to drop. The flags are never set on this path at all.
         Microbot.getMouse().click(point);
         return true;
     }
 
-    // ── Menu priority (item-on-X) ─────────────────────────
+    // ── Menu pick (item-on-X) ──────────────────────────────
 
     /**
      * Put the cursor on {@code point} and wait until it is really there. The approach runs
      * through {@code NaturalMouse} so the recipe keeps the natural arc the plain
      * {@code click(clickbox)} used to produce — a single teleported MOVED event would be an
      * input signature no human produces. The corrective move only fires when the arc stopped
-     * short: {@code VirtualMouse.handleClick} skips its pre-click move (so the menu is not
-     * rebuilt between the demotion and the press) only when the tracked pointer already
-     * rests on the press point.
+     * short: {@code VirtualMouse.handleClick} skips its pre-click move (so the press keeps
+     * the no-move fast path {@code PointerState.isAt} gates) only when the tracked pointer
+     * already rests on the press point.
      *
      * @return true when the pointer rests on the point
      */
@@ -345,7 +379,8 @@ public final class AScriptClick {
     /**
      * Step the cursor off the point and straight back on, so the client rebuilds the menu
      * for this hover. The step stays inside the canvas, and the move back onto the point
-     * leaves the pointer resting on it — the press still has no movement frame to skip.
+     * leaves the pointer resting on it — the press that follows can therefore take its
+     * no-move path.
      */
     private static void nudge(Point point) {
         int canvasWidth = Microbot.getClient().getCanvasWidth();
@@ -374,64 +409,184 @@ public final class AScriptClick {
         return topmostIndex(isOurs) >= 0;
     }
 
-    /**
-     * Demote every entry the client ranked above the target's with
-     * {@link MenuEntry#setDeprioritized(boolean)}, then wait until the target's entry is
-     * the top of the minimenu. Only real, existing entries are marked — no reorder, no
-     * fabrication — and the client's own sort does the rest, so the recipe verifies the
-     * very thing the click will resolve to instead of assuming it.
-     *
-     * @return true when a left-click would now dispatch to the target's entry
-     */
-    private static boolean promoteToPrimaryClick(Predicate<MenuEntry> isOurs) {
-        for (int attempt = 0; attempt < PROMOTE_ATTEMPTS; attempt++) {
-            Pass pass = Microbot.getClientThread()
-                    .runOnClientThreadOptional(() -> demoteAbove(isOurs))
-                    .orElse(Pass.GONE);
-            if (pass == Pass.GONE) {
-                return false;
-            }
-            if (pass == Pass.TOP) {
-                return true;
-            }
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(60, 160));
-        }
-        return false;
-    }
-
-    /**
-     * One pass over the live menu, run on the client thread — the menu is live client
-     * state, and RuneLite's own swapper marks its entries there too.
-     */
-    private enum Pass {
-        /** The target's entry is gone: the menu no longer describes this hover. */
+    /** How the hover menu ranks the target's entry: gone, beaten, or the left-click default. */
+    private enum Rank {
         GONE,
-        /** Entries above the target were marked; the client's sort has not run yet. */
-        PENDING,
-        /** The target's entry is the top of the minimenu. */
+        BEATEN,
         TOP
     }
 
-    private static Pass demoteAbove(Predicate<MenuEntry> isOurs) {
-        MenuEntry[] entries = Microbot.getClient().getMenuEntries();
-        int own = topmostIndex(entries, isOurs);
-        if (own < 0) {
-            return Pass.GONE;
-        }
-        // Higher index = higher in the minimenu (MenuManager: "higher-index entries
-        // appearing toward the top"), so everything above the last index outranks it and
-        // the last index is the entry a left-click dispatches to.
-        if (own == entries.length - 1) {
-            return Pass.TOP;
-        }
-        for (int i = own + 1; i < entries.length; i++) {
-            if (entries[i] != null) {
-                entries[i].setDeprioritized(true);
-            }
-        }
-        return Pass.PENDING;
+    /**
+     * Read the hover menu's ranking of the target's entry on the client thread — the
+     * entry at the last index is what a left-click dispatches to ("higher-index entries
+     * appearing toward the top of the minimenu", {@code MenuManager}).
+     *
+     * @return {@link Rank#GONE} also when the client thread could not be reached — a
+     *         failed read must fail the recipe, never default to "click it"
+     */
+    private static Rank rankOfOwnEntry(Predicate<MenuEntry> isOurs) {
+        return Microbot.getClientThread()
+                .runOnClientThreadOptional(() -> {
+                    MenuEntry[] entries = Microbot.getClient().getMenuEntries();
+                    int own = topmostIndex(entries, isOurs);
+                    if (own < 0) {
+                        return Rank.GONE;
+                    }
+                    return own == entries.length - 1 ? Rank.TOP : Rank.BEATEN;
+                })
+                .orElse(Rank.GONE);
     }
 
+    /** Outcome of the open-menu row pick. */
+    private enum RowPick {
+        /** Our row was pressed and the menu closed on it — dispatched. */
+        DISPATCHED,
+        /** Every bounded attempt ran out with the menu closed and no press issued. */
+        FAILED,
+        /** The open menu would not close — nothing may be clicked until a human closes it. */
+        MENU_STUCK
+    }
+
+    /**
+     * Contended path: right-click at {@code point} to open the option menu for the hover,
+     * find the target's own entry in the (frozen) open menu, and press its row. The open
+     * menu is not rebuilt while it is open ({@code MenuEntrySwapperPlugin.onPostMenuSort}:
+     * "The menu is not rebuilt when it is open"), so the row we read is the row that
+     * dispatches — a movement frame inside the row press (cursor-tracker drift, the
+     * weather offset) can move the cursor but cannot change what is listed or where; the
+     * offset only shifts a press centered in a 15 px row.
+     * <p>
+     * Bounded: a menu that came up without our entry is closed, the hover is re-nudged,
+     * and the right-click is repeated; a menu that will not close at all reports
+     * {@link RowPick#MENU_STUCK} so the caller leaves the cursor selection alone (any
+     * further click would dispatch an unknown row).
+     */
+    private static RowPick pressViaMenuRow(Point point, Predicate<MenuEntry> isOurs) {
+        for (int attempt = 0; attempt < MENU_ATTEMPTS; attempt++) {
+            if (attempt > 0) {
+                nudge(point);
+            }
+            Microbot.getMouse().click(point, true);
+            int own = awaitOwnRow(isOurs);
+            if (own >= 0 && clickOwnRow(own)) {
+                return RowPick.DISPATCHED;
+            }
+            if (!closeMenu()) {
+                return RowPick.MENU_STUCK;
+            }
+        }
+        return RowPick.FAILED;
+    }
+
+    /**
+     * Wait for the option menu to open with the target's entry in it. One read once the
+     * menu is open is enough — the open menu is frozen, so its entries do not change.
+     *
+     * @return the entry's index in the open menu, or -1 when the menu never opened or the
+     *         open menu does not list it
+     */
+    private static int awaitOwnRow(Predicate<MenuEntry> isOurs) {
+        if (!sleepUntil(AScriptClick::menuOpen, Rs2Random.logNormalBounded(400, 900))) {
+            return -1;
+        }
+        return topmostIndex(isOurs);
+    }
+
+    /**
+     * Press the center of the target's row in the open menu and confirm the menu closed
+     * on it — an open menu closes only when one of its rows (or Cancel) is picked, so
+     * "menu gone" is the cheap observable for "a row dispatched".
+     */
+    private static boolean clickOwnRow(int ownIndex) {
+        Point row = rowPoint(ownIndex);
+        if (row == null) {
+            return false;
+        }
+        Microbot.getMouse().click(row);
+        return sleepUntil(() -> !menuOpen(), Rs2Random.logNormalBounded(400, 900));
+    }
+
+    /**
+     * Center of entry {@code index} in the open option menu, in canvas coordinates — the
+     * questhelper hit-test geometry ({@code DetailedQuestStep.renderHoveredMenuEntryPanel}:
+     * a 15 px row under a header of row + 3), with the array ↔ display direction the sort
+     * documents: "higher-index entries appearing toward the top of the minimenu"
+     * ({@code MenuManager}), so index {@code length - 1} is the first row.
+     *
+     * @return the row center, or {@code null} when the menu is closed or the index is gone
+     */
+    private static Point rowPoint(int index) {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Client client = Microbot.getClient();
+            if (!client.isMenuOpen()) {
+                return null;
+            }
+            MenuEntry[] entries = client.getMenuEntries();
+            if (index < 0 || index >= entries.length) {
+                return null;
+            }
+            int rowFromTop = entries.length - 1 - index;
+            int x = client.getMenuX() + client.getMenuWidth() / 2;
+            int y = client.getMenuY() + MENU_HEADER_HEIGHT + rowFromTop * MENU_ROW_HEIGHT
+                    + MENU_ROW_HEIGHT / 2;
+            return new Point(x, y);
+        }).orElse(null);
+    }
+
+    /** The client's option-menu open flag — live client state, read on the client thread. */
+    private static boolean menuOpen() {
+        return Microbot.getClientThread()
+                .runOnClientThreadOptional(() -> Microbot.getClient().isMenuOpen())
+                .orElse(false);
+    }
+
+    /**
+     * Close an option menu this recipe opened. The bottom "Cancel" entry closes it
+     * without dispatching anything, so its row is pressed through the same geometry as
+     * the pick above; the Escape key is the fallback when that entry is somehow absent.
+     *
+     * @return true when no menu is open afterwards — only then may anything else click
+     */
+    private static boolean closeMenu() {
+        if (!menuOpen()) {
+            return true;
+        }
+        int cancel = topmostIndex(entry -> "Cancel".equals(entry.getOption()));
+        if (cancel >= 0) {
+            Point row = rowPoint(cancel);
+            if (row != null) {
+                Microbot.getMouse().click(row);
+            }
+            if (sleepUntil(() -> !menuOpen(), Rs2Random.logNormalBounded(400, 900))) {
+                return true;
+            }
+        }
+        Rs2Keyboard.keyPress(KeyEvent.VK_ESCAPE);
+        return sleepUntil(() -> !menuOpen(), Rs2Random.logNormalBounded(400, 900));
+    }
+
+    /**
+     * Fail the item-on-object recipe cleanly: log why, then cancel the selection this
+     * recipe created with a press on the item's OWN inventory slot — a press at the last
+     * press point would dispatch whatever ranks top there (the use-on-player mis-dispatch
+     * in the contended case), so the cancel never happens there. A selection that survives
+     * the cancel click is logged; the next {@code select()} retries it.
+     */
+    private static void cancelSelectionOnOwnSlot(Rs2ItemModel item, String why) {
+        log.warn("[AScriptClick] {} — not pressing", why);
+        Rectangle bounds = item == null ? null : Rs2Inventory.itemBounds(item);
+        if (bounds == null) {
+            clearSelection(); // last resort — the pre-existing click-at-current-position idiom
+            return;
+        }
+        Microbot.getMouse().click(Rs2UiHelper.getClickingPoint(bounds, true));
+        if (!sleepUntil(() -> !Rs2Inventory.isItemSelected(),
+                Rs2Random.logNormalBounded(400, 900))) {
+            log.warn("[AScriptClick] the cursor selection is still pending after the cancel click");
+        }
+    }
+
+    /** Highest-ranked index of the target's entry, or -1 when the menu holds none. */
     private static int topmostIndex(Predicate<MenuEntry> isOurs) {
         return Microbot.getClientThread()
                 .runOnClientThreadOptional(() -> topmostIndex(Microbot.getClient().getMenuEntries(), isOurs))
@@ -454,10 +609,10 @@ public final class AScriptClick {
      * "use &lt;item&gt; on &lt;object&gt;" line, matched on action, object id and the scene
      * coordinates the client packs into param0/param1 — the mapping
      * {@code Rs2TileObjectModel.click} mirrors when it builds an entry for a tile object.
-     * Only ever evaluated on the client thread, inside the menu passes above.
+     * Only ever evaluated on the client thread, inside the menu reads above.
      * <p>
-     * Deliberately separate from the priority helper, which takes the matcher as an input:
-     * an {@code ITEM_USE_ON_NPC} / {@code ITEM_USE_ON_PLAYER} overload is a thin follow-up
+     * Deliberately separate from the menu pick, which takes the matcher as an input: an
+     * {@code ITEM_USE_ON_NPC} / {@code ITEM_USE_ON_PLAYER} overload is a thin follow-up
      * that only swaps this matcher for {@link MenuEntry#getNpc()} / {@link MenuEntry#getPlayer()}.
      */
     private static boolean isOwnObjectEntry(MenuEntry entry, TileObject object) {
