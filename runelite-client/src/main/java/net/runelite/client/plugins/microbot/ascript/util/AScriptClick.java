@@ -6,6 +6,7 @@ import net.runelite.api.Client;
 import net.runelite.api.GameObject;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
+import net.runelite.api.NPC;
 import net.runelite.api.Point;
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.LocalPoint;
@@ -22,6 +23,7 @@ import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
 
 import java.awt.Rectangle;
 import java.awt.event.KeyEvent;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -32,7 +34,7 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  * click on real bounds (widget slot or entity clickbox), never a menu-entry injection
  * ({@code Microbot.doInvoke} / {@code NewMenuEntry} / {@code Rs2Inventory.interact(...)}).
  * <p>
- * Three recipes, consolidated from the per-module copies that grew in Cannoning
+ * Recipes, consolidated from the per-module copies that grew in Cannoning
  * (object), Ammonite Crabs (actor) and Cannonball Smelter (object render gate):
  * <ul>
  *   <li><b>Object / actor click</b> — camera first, then the target's real clickbox
@@ -41,6 +43,9 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *       return for a target that is not rendered yet is never clicked — it lands on the
  *       terrain as "Walk here". Callers keep their own render-miss accounting: the
  *       recipes report why a click did not happen via {@link Target}.</li>
+ *   <li><b>Non-default op pick</b> ({@link #clickActorOp(Actor, String)}) — the same
+ *       resolved clickbox, right-clicked, with OUR option's row picked out of the open
+ *       menu. A left-click only ever reaches the target's default op.</li>
  *   <li><b>Item-on-object / item-on-item</b> — select the first item with a physical
  *       click on its inventory slot, verify the game picked it up, click the target
  *       (an entity clickbox or another inventory slot) physically. Any failure path
@@ -91,6 +96,23 @@ public final class AScriptClick {
      */
     private static final int MENU_ROW_HEIGHT = 15;
     private static final int MENU_HEADER_HEIGHT = MENU_ROW_HEIGHT + 3;
+
+    /**
+     * Post-press confirmation for the item-on-X pick: a real "use" dispatch consumes the
+     * cursor selection, and that consumption — not "the menu closed", which Cancel also
+     * produces — is what tells a dispatch from a no-op.
+     */
+    private static final BooleanSupplier SELECTION_CONSUMED =
+            () -> sleepUntil(() -> !Rs2Inventory.isItemSelected(),
+                    Rs2Random.logNormalBounded(400, 900));
+
+    /**
+     * Post-press confirmation for a non-default op pick: such a row carries no cursor
+     * selection to consume, so "our row was pressed and the menu closed on it" is the
+     * whole in-recipe confirmation. Confirming the EFFECT (the animation, the
+     * interaction, the XP) stays with the caller's existing gate.
+     */
+    private static final BooleanSupplier MENU_CLOSED_IS_ENOUGH = () -> true;
 
     private AScriptClick() {
     }
@@ -206,6 +228,24 @@ public final class AScriptClick {
      * run on the client thread (see {@link Rs2UiHelper#getActorClickbox(Actor)}).
      */
     public static Target clickActor(Actor actor) {
+        Target target = resolveActor(actor);
+        if (!target.ready()) {
+            return target;
+        }
+        Microbot.getMouse().click(target.clickbox());
+        return new Target(target.clickbox(), false, true);
+    }
+
+    /**
+     * First half of the actor recipe — camera first, then the actor's real clickbox,
+     * without clicking. {@link #clickActorOp(Actor, String)} right-clicks this same
+     * resolved point, so the resolution lives here instead of being copied.
+     *
+     * @return the resolved clickbox, or a {@link Target} saying why there is none
+     *         (an off-camera actor returns with {@link Target#cameraTurned()} set —
+     *         the turn is the whole action there, retry on a later tick)
+     */
+    private static Target resolveActor(Actor actor) {
         if (actor == null) {
             return notRendered();
         }
@@ -237,8 +277,56 @@ public final class AScriptClick {
         if (clickbox == null) {
             return notRendered();
         }
-        Microbot.getMouse().click(clickbox);
-        return new Target(clickbox, false, true);
+        return new Target(clickbox, false, false);
+    }
+
+    /**
+     * Non-default op recipe: reach an option a plain left-click can never select.
+     * Right-click the actor's real clickbox point (same resolution and rejections as
+     * {@link #clickActor(Actor)} — camera first, the canvas-sized fallback never
+     * clicked), then pick OUR option's row out of the open menu and confirm the menu
+     * closed on it.
+     * <p>
+     * <b>Confirmation contract.</b> A non-default op carries no cursor selection to
+     * consume, so the in-recipe confirmation stops at "our row was pressed and the menu
+     * closed on it" ({@link #MENU_CLOSED_IS_ENOUGH}). Confirming the EFFECT — the
+     * animation, the interaction, the XP drop — stays with the caller's existing gate,
+     * exactly as for the other recipes. A menu that comes up without our row is closed
+     * and the right-click repeated (bounded); a menu that will not close reports
+     * {@link Target#clicked()}{@code false} and is left for a human.
+     * <p>
+     * The whole menu pick reuses the item-on-X machinery — stable anchor before row
+     * geometry ({@link #awaitStableMenuAnchor()}), frame-aware waits, and ONE
+     * client-thread snapshot per read (index and geometry together, never split): the
+     * matcher is the only per-recipe part, which is what makes an object variant
+     * ({@code clickObjectOp}) a thin follow-up rather than a second copy.
+     *
+     * @param actor  the target actor — pass the raw {@link NPC} (e.g.
+     *               {@code model.getNpc()}), because the row is matched by reference
+     *               against the entry's own actor
+     * @param option the exact op to pick, case-insensitive (e.g. {@code "Bait"})
+     * @return the outcome — {@link Target#clicked()} when our row was pressed and the
+     *         menu closed on it (effect unverified)
+     */
+    public static Target clickActorOp(Actor actor, String option) {
+        if (option == null || option.isBlank()) {
+            log.warn("[AScriptClick] no option to pick — not clicking");
+            return notRendered();
+        }
+        Target target = resolveActor(actor);
+        if (!target.ready()) {
+            return target;
+        }
+        Predicate<MenuEntry> isOurs = entry -> isOwnActorEntry(entry, actor, option);
+        // Resolve the press point once: getClickingPoint randomizes on every call, and
+        // the right-click has to land on the exact point the menu was built for.
+        Point point = Rs2UiHelper.getClickingPoint(target.clickbox(), true);
+        RowPick pick = pressViaMenuRow(point, isOurs, MENU_CLOSED_IS_ENOUGH);
+        if (pick == RowPick.MENU_STUCK) {
+            log.error("[AScriptClick] the option menu would not close — leaving it open "
+                    + "for a human to close before anything else clicks");
+        }
+        return new Target(target.clickbox(), false, pick == RowPick.DISPATCHED);
     }
 
     // ── Item-on-X recipe ───────────────────────────────────
@@ -331,7 +419,7 @@ public final class AScriptClick {
             // Contended: a higher-priority entity (a player standing on the fire) shares
             // the hover. A left-click would dispatch to it, so pick our own row from the
             // open option menu instead of racing the ranking.
-            RowPick pick = pressViaMenuRow(point, isOurs);
+            RowPick pick = pressViaMenuRow(point, isOurs, SELECTION_CONSUMED);
             if (pick == RowPick.DISPATCHED) {
                 return true;
             }
@@ -351,7 +439,7 @@ public final class AScriptClick {
         return true;
     }
 
-    // ── Menu pick (item-on-X) ──────────────────────────────
+    // ── Menu pick (shared by the item-on-X and non-default op recipes) ──
 
     /**
      * Put the cursor on {@code point} and wait until it is really there. The approach runs
@@ -492,27 +580,34 @@ public final class AScriptClick {
     }
 
     /**
-     * Contended path: right-click at {@code point} to open the option menu for the hover,
-     * find the target's own entry in the (frozen) open menu, and press its row. The open
-     * menu is not rebuilt while it is open ({@code MenuEntrySwapperPlugin.onPostMenuSort}:
-     * "The menu is not rebuilt when it is open"), so the row we read is the row that
-     * dispatches — a movement frame inside the row press (cursor-tracker drift, the
-     * weather offset) can move the cursor but cannot change what is listed or where; the
-     * offset only shifts a press centered in a 15 px row.
+     * Contended path — and the whole path of the non-default op recipe: right-click at
+     * {@code point} to open the option menu for the hover, find the target's own entry in
+     * the (frozen) open menu, and press its row. The open menu is not rebuilt while it is
+     * open ({@code MenuEntrySwapperPlugin.onPostMenuSort}: "The menu is not rebuilt when
+     * it is open"), so the row we read is the row that dispatches — a movement frame
+     * inside the row press (cursor-tracker drift, the weather offset) can move the cursor
+     * but cannot change what is listed or where; the offset only shifts a press centered
+     * in a 15 px row.
      * <p>
      * Bounded: a menu that came up without our entry is closed, the hover is re-nudged,
      * and the right-click is repeated; a menu that will not close at all reports
-     * {@link RowPick#MENU_STUCK} so the caller leaves the cursor selection alone (any
-     * further click would dispatch an unknown row).
+     * {@link RowPick#MENU_STUCK} so the caller stops clicking (any further click would
+     * dispatch an unknown row).
+     *
+     * @param confirmedAfterClose what else must hold right after the menu closes on our
+     *                            row — the recipe-specific proof that the press really
+     *                            dispatched (see {@link #SELECTION_CONSUMED} /
+     *                            {@link #MENU_CLOSED_IS_ENOUGH})
      */
-    private static RowPick pressViaMenuRow(Point point, Predicate<MenuEntry> isOurs) {
+    private static RowPick pressViaMenuRow(Point point, Predicate<MenuEntry> isOurs,
+                                           BooleanSupplier confirmedAfterClose) {
         for (int attempt = 0; attempt < MENU_ATTEMPTS; attempt++) {
             if (attempt > 0) {
                 nudge(point);
             }
             Microbot.getMouse().click(point, true);
             int own = awaitOwnRow(isOurs);
-            if (own >= 0 && clickOwnRow(isOurs)) {
+            if (own >= 0 && clickOwnRow(isOurs, confirmedAfterClose)) {
                 return RowPick.DISPATCHED;
             }
             if (!closeMenu()) {
@@ -545,10 +640,15 @@ public final class AScriptClick {
      * dispatched. Index and geometry come from ONE client-thread read — a split read raced
      * in the field (index from one array state, coordinates from the next). The menu also
      * closes on Cancel, so "closed" alone is NOT a dispatch (the pilot's first attempt
-     * counted a Cancel hit as success): a real use dispatch consumes the cursor selection,
-     * and that consumption is the confirmation.
+     * counted a Cancel hit as success): the caller supplies the recipe's own proof on top
+     * of the close — the item recipes wait for the cursor selection to be consumed, a
+     * non-default op has no selection and stops at the close
+     * ({@link #MENU_CLOSED_IS_ENOUGH}).
+     *
+     * @param confirmedAfterClose evaluated after the menu closed and a frame has passed;
+     *                            true = treat the row press as dispatched
      */
-    private static boolean clickOwnRow(Predicate<MenuEntry> isOurs) {
+    private static boolean clickOwnRow(Predicate<MenuEntry> isOurs, BooleanSupplier confirmedAfterClose) {
         Point row = Microbot.getClientThread().runOnClientThreadOptional(() -> {
             Client client = Microbot.getClient();
             if (!client.isMenuOpen()) {
@@ -573,8 +673,7 @@ public final class AScriptClick {
             return false;
         }
         awaitFrames(2);
-        return sleepUntil(() -> !Rs2Inventory.isItemSelected(),
-                Rs2Random.logNormalBounded(400, 900));
+        return confirmedAfterClose.getAsBoolean();
     }
 
     /** The client's option-menu open flag — live client state, read on the client thread. */
@@ -684,6 +783,37 @@ public final class AScriptClick {
         }
         int[] scene = sceneCoords(object);
         return entry.getParam0() == scene[0] && entry.getParam1() == scene[1];
+    }
+
+    /**
+     * The row the non-default op pick must press: OUR option on OUR actor.
+     * <p>
+     * Two conditions, both needed: the option text (case-insensitive, as the client
+     * renders it against the NPC composition's actions) and the target's identity. The
+     * identity comes from the entry's own actor reference — the client resolves
+     * {@link MenuEntry#getActor()} / {@link MenuEntry#getNpc()} for a row by looking the
+     * NPC up from the row's identifier, so a reference comparison against the raw NPC the
+     * caller passed pins OUR spot even when another entity shares the hover (the same
+     * accessor {@code InteractHighlightPlugin} leans on for its hover outline). When the
+     * client resolved no actor for the row at all, the identifier of an NPC row IS the
+     * NPC index — the value this fork's own NPC injections carry
+     * ({@code Rs2NpcModel#getIndex}) — so that is the fallback; a row that identifies as
+     * another actor never matches, whatever its option says.
+     * <p>
+     * Only ever evaluated on the client thread, inside the menu reads.
+     */
+    private static boolean isOwnActorEntry(MenuEntry entry, Actor actor, String option) {
+        if (entry == null || actor == null || option == null) {
+            return false;
+        }
+        if (!option.equalsIgnoreCase(entry.getOption())) {
+            return false;
+        }
+        Actor entryActor = entry.getActor();
+        if (entryActor != null) {
+            return entryActor == actor;
+        }
+        return actor instanceof NPC && entry.getIdentifier() == ((NPC) actor).getIndex();
     }
 
     /**
