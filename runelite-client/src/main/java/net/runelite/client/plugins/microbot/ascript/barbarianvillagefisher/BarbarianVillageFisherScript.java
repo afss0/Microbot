@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
+import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.game.FishingSpot;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -9,14 +10,17 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.inventory.InteractOrder;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.api.npc.models.Rs2NpcModel;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
@@ -613,24 +617,43 @@ public class BarbarianVillageFisherScript implements AModule {
     }
 
     /**
+     * The scenery fire this module cooks on — id + the exact tile the caller verified with
+     * {@link #isGameObjectOnTile}, resolved on the client thread (client-state reads, see
+     * the Firemaking note). The object is resolved immediately before the dispatch: the
+     * recipe switches panels and turns the camera, so a model resolved earlier in the tick
+     * could be stale by the time it is clicked.
+     */
+    private Rs2TileObjectModel findCookingFire() {
+        return Microbot.getRs2TileObjectCache().query()
+                .withId(BARBARIAN_VILLAGE_FIRE_ID)
+                .within(BARBARIAN_VILLAGE_FIRE_POINT, 0)
+                .firstOnClientThread();
+    }
+
+    /**
      * Dispatches a cooking action: select raw fish → use on fire → wait for
      * make-X dialog → confirm with SPACE → mark cooking state.
      *
      * @return true if the make-X dialog appeared and was confirmed; false if
      *         the dispatch did not engage (click silently failed).
      *
-     * <p>NOTE: {@code Rs2Inventory.useItemOnObject} uses menu injection which
-     * can silently fail on this machine. The AGENTS.md rule is to use real
-     * mouse clicks instead; implementing that here requires resolving the fire's
-     * screen bounds and clicking via {@code Microbot.getMouse().click(rect)},
-     * which is a deeper refactor. For now this method works correctly but may
-     * silently fail when menu injection is broken — the caller handles retries.</p>
+     * <p>The fish→fire dispatch is a {@link AScriptClick} client-mouse item-on-X recipe
+     * (the Firemaking pilot of the aScript mouse refactor): a physical click on the raw
+     * fish's inventory slot selects it, the selection is verified, and a physical click on
+     * the fire's real clickbox applies it — no {@code doInvoke}/{@code NewMenuEntry} menu
+     * injection. The Barbarian Village scenery fire (id 43475) is not a Firemaking target
+     * (that module never converts scenery), but it is this module's cook target; it is
+     * resolved by id on the same tile the caller just verified, mirroring what
+     * {@code Rs2Inventory.useItemOnObject(fishId, fireId)} resolved for the old injection.
+     * Confirming the make-X box below stays this method's verification, as before.</p>
      */
     private boolean doCookingDispatch() {
         for (int fishId : RAW_FISH) {
             if (Rs2Inventory.contains(fishId)) {
-                boolean interacted = Rs2Inventory.useItemOnObject(fishId, BARBARIAN_VILLAGE_FIRE_ID);
-                if (!interacted) {
+                // Raw fish's left-click default is "Use" — what the recipe's physical slot
+                // click selects with.
+                Rs2ItemModel fishItem = Rs2Inventory.get(fishId);
+                if (!AScriptClick.useItemOnObject(fishItem, findCookingFire())) {
                     return false;
                 }
                 // Wait for the make-X dialog to appear (confirm the click landed)
