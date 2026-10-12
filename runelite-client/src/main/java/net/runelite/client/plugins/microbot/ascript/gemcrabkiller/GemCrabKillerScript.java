@@ -10,6 +10,7 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -262,8 +263,13 @@ public class GemCrabKillerScript implements AModule {
             if (composition != null
                     && java.util.Arrays.stream(composition.getActions())
                     .anyMatch("Crawl-through"::equals)) {
-                Microbot.getRs2TileObjectCache().query().withId(CAVE_ENTRANCE_ID)
-                        .interact("Crawl-through");
+                // Client-mouse object recipe (AScriptClick — the aScript mouse refactor):
+                // camera first, then the entrance's real clickbox through the client mouse;
+                // the canvas-sized fallback of an entrance that has not rendered is never
+                // clicked. "Crawl-through" is the entrance's left-click default — all a
+                // physical click dispatches; the crab lookup below is the effect
+                // verification (unchanged).
+                AScriptClick.clickObject(caveEntrance);
                 sleepUntil(
                         () -> Microbot.getRs2NpcCache().query().withId(CRAB_NPC_ID).nearest() != null,
                         Rs2Random.logNormalBounded(4000, 7000, weatherMultiplier));
@@ -291,7 +297,13 @@ public class GemCrabKillerScript implements AModule {
                     && AScriptBank.hasUnnotedItem(" pickaxe")
                     && !hasLooted) {
                 Microbot.status = "MINING LOOT";
-                deadNpc.click("Mine");
+                // Client-mouse actor recipe (AScriptClick — the Ammonite attackCrab shape):
+                // camera first, then the dead crab's real clickbox through the client mouse;
+                // the canvas-sized fallback of an actor that has not rendered is never
+                // clicked. "Mine" is the dead crab's left-click default — all a physical
+                // click dispatches; the inventory wait below is the effect verification
+                // (unchanged).
+                AScriptClick.clickActor(deadNpc.getNpc());
                 Rs2Inventory.waitForInventoryChanges(Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
                 sleep(Rs2Random.logNormalBounded(3000, 5000, weatherMultiplier));
                 hasLooted = true;
@@ -301,9 +313,10 @@ public class GemCrabKillerScript implements AModule {
                 }
             }
 
-            // Exit cave
-            Microbot.getRs2TileObjectCache().query().withId(CAVE_ENTRANCE_ID)
-                    .interact("Crawl-through");
+            // Exit cave — same recipe as the way in (see handleWalking): the WAITING state
+            // below is what follows the crawl.
+            AScriptClick.clickObject(Microbot.getRs2TileObjectCache()
+                    .query().withId(CAVE_ENTRANCE_ID).nearest());
             internalState = InternalState.WAITING;
             waitingTimeStart = Instant.now();
             return;
@@ -320,7 +333,10 @@ public class GemCrabKillerScript implements AModule {
         // Attack if not in combat
         if (!Rs2Player.isInCombat()) {
             Microbot.status = "FIGHTING";
-            npc.click("Attack");
+            // Client-mouse actor recipe (see the dead-crab click): "Attack" is the crab's
+            // left-click default — all a physical click dispatches; combat itself is the
+            // verification (unchanged).
+            AScriptClick.clickActor(npc.getNpc());
         } else {
             waitingTimeStart = null;
         }
