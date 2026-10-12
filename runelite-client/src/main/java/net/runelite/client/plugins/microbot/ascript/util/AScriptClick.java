@@ -260,7 +260,8 @@ public final class AScriptClick {
      * other supported items): a physical click cannot pick a non-default op.
      * <p>
      * <b>Menu priority.</b> With a cursor item selected the client ranks
-     * {@code ITEM_USE_ON_PLAYER} above {@code ITEM_USE_ON_GAME_OBJECT}, so a player
+     * {@code WIDGET_TARGET_ON_PLAYER} above {@code WIDGET_TARGET_ON_GAME_OBJECT} (the
+     * client's item-on-X family — confirmed against a live menu log), so a player
      * standing on the fire would win a plain left-click. The recipe reads the hover
      * menu's actual ranking first, then:
      * <ul>
@@ -609,14 +610,20 @@ public final class AScriptClick {
      * "use &lt;item&gt; on &lt;object&gt;" line, matched on action, object id and the scene
      * coordinates the client packs into param0/param1 — the mapping
      * {@code Rs2TileObjectModel.click} mirrors when it builds an entry for a tile object.
+     * The action is {@code WIDGET_TARGET_ON_GAME_OBJECT} — the constant every other fork
+     * path uses for this interaction ({@code Rs2GameObject} / {@code Rs2TileObjectModel}
+     * builders), confirmed against a live menu log from the firemaking pilot:
+     * {@code getOption=Use, getTarget="<item> -> <object>", getType=WIDGET_TARGET_ON_GAME_OBJECT,
+     * getIdentifier=<object id>, getParam0/param1=<scene coords>, getItemId=-1}.
      * Only ever evaluated on the client thread, inside the menu reads above.
      * <p>
-     * Deliberately separate from the menu pick, which takes the matcher as an input: an
-     * {@code ITEM_USE_ON_NPC} / {@code ITEM_USE_ON_PLAYER} overload is a thin follow-up
-     * that only swaps this matcher for {@link MenuEntry#getNpc()} / {@link MenuEntry#getPlayer()}.
+     * Deliberately separate from the menu pick, which takes the matcher as an input: a
+     * {@code WIDGET_TARGET_ON_NPC} / {@code WIDGET_TARGET_ON_PLAYER} overload is a thin
+     * follow-up that only swaps this matcher for {@link MenuEntry#getNpc()}
+     * / {@link MenuEntry#getPlayer()}.
      */
     private static boolean isOwnObjectEntry(MenuEntry entry, TileObject object) {
-        if (entry.getType() != MenuAction.ITEM_USE_ON_GAME_OBJECT
+        if (entry.getType() != MenuAction.WIDGET_TARGET_ON_GAME_OBJECT
                 || entry.getIdentifier() != object.getId()) {
             return false;
         }
