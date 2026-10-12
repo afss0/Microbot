@@ -10,6 +10,7 @@ import net.runelite.api.Point;
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.input.PointerState;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
@@ -17,6 +18,7 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
+import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
 
 import java.awt.Rectangle;
 import java.awt.event.KeyEvent;
@@ -743,10 +745,27 @@ public final class AScriptClick {
     }
 
     /**
+     * Bring the inventory panel forward before any slot read or click — a closed inventory
+     * tab leaves {@code Rs2Inventory.itemBounds} empty and the recipe then has nothing to
+     * click (field report: "the script breaks with the inventory tab closed"). The switch
+     * is a physical click on the tab and a no-op when the inventory already shows; the
+     * frame wait covers the panel render at a low FPS cap. Scripts that depend on OTHER
+     * panels must switch them the same way ({@code Rs2Tab.switchTo(...)}) before reading
+     * their widgets — same class of failure.
+     */
+    private static void ensureInventoryVisible() {
+        if (!Rs2Tab.isCurrentTab(InterfaceTab.INVENTORY)) {
+            Rs2Tab.switchTo(InterfaceTab.INVENTORY);
+            awaitFrames(2);
+        }
+    }
+
+    /**
      * Step one of the item-on-X recipes: pick the item up with a physical click on its
      * inventory slot and verify the game actually selected it.
      */
     private static boolean select(Rs2ItemModel item) {
+        ensureInventoryVisible();
         if (Rs2Inventory.isItemSelected() && !clearSelection()) {
             log.warn("[AScriptClick] could not clear a stale selection — not clicking an item");
             return false;
