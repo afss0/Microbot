@@ -93,6 +93,17 @@ public class AScript extends Script {
     private int consecutiveBankOpenFailures = 0;
     private static final int MAX_BANK_OPEN_FAILURES = 10;
     /**
+     * Consecutive bank closes that did not land on the "no module needs bank" path.
+     * An open bank interface blocks production interfaces (make-X etc.) for ANY module,
+     * so dispatch must not proceed while one is open — the tick retries the close and
+     * stops loudly after the bound instead of letting the module act against the bank.
+     * The close itself falls back between ESC and the widget click inside
+     * {@link Rs2Bank#closeBank()}, so a run of failures means both mechanisms failed
+     * (e.g. keyboard emission suppressed by human takeover *and* the click not landing).
+     */
+    private int consecutiveBankCloseFailures = 0;
+    private static final int MAX_BANK_CLOSE_FAILURES = 5;
+    /**
      * Consecutive "materials missing" verdicts. A missing verdict ends the run and is read
      * from the cached bank mirror (refreshed only by bank container events), so it is
      * confirmed across ticks and trusted only on a live mirror — see the bank step in
@@ -154,6 +165,7 @@ public class AScript extends Script {
             stopRequested = false;
             consecutiveBankFailures = 0;
             consecutiveBankOpenFailures = 0;
+            consecutiveBankCloseFailures = 0;
             consecutiveMissingVerdicts = 0;
             consecutiveEatFailures = 0;
             eatThreshold = 0;
@@ -287,11 +299,28 @@ public class AScript extends Script {
             consecutiveMissingVerdicts = 0;
             // Bank HAS materials — fall through to BANKING
         } else {
-            // No module needs bank — close bank if open
+            // No module needs bank — close bank if open. The close is a HARD precondition
+            // for dispatch: an open bank interface blocks production interfaces (make-X,
+            // smelt) for any module, so dispatching doAction with the bank open stalls
+            // the module ("production interface did not open"). The close itself falls
+            // back between ESC and the widget click inside closeBank(); if the bank is
+            // STILL open after that, retry next tick — and stop loudly after the bound
+            // instead of looping forever against an open bank.
             if (Rs2Bank.isOpen()) {
                 Rs2Bank.closeBank();
-                sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
+                if (Rs2Bank.isOpen()) {
+                    consecutiveBankCloseFailures++;
+                    log.warn("[AScript] Bank still open after closeBank() ({}/{}); not dispatching doAction",
+                            consecutiveBankCloseFailures, MAX_BANK_CLOSE_FAILURES);
+                    if (consecutiveBankCloseFailures >= MAX_BANK_CLOSE_FAILURES) {
+                        stopWithMessage("aScript Stopped — Bank Will Not Close",
+                                "the bank did not close after " + consecutiveBankCloseFailures
+                                        + " attempts — close it manually (ESC or the bank X button)");
+                    }
+                    return;
+                }
             }
+            consecutiveBankCloseFailures = 0;
         }
 
         // 5. Dispatch
@@ -513,6 +542,7 @@ public class AScript extends Script {
         stopRequested = true;
         consecutiveBankFailures = 0;
         consecutiveBankOpenFailures = 0;
+        consecutiveBankCloseFailures = 0;
         Microbot.status = "STOPPED — " + message;
         log.warn("[AScript] {}: {}", title, message);
         AScriptNotify.notify(title, message);
@@ -532,6 +562,7 @@ public class AScript extends Script {
         stopRequested = false;
         consecutiveBankFailures = 0;
         consecutiveBankOpenFailures = 0;
+        consecutiveBankCloseFailures = 0;
         consecutiveEatFailures = 0;
         eatThreshold = 0;
         playerWasLoggedIn = false;

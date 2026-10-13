@@ -54,6 +54,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.IntPredicate;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -493,17 +494,39 @@ public class Rs2Bank {
 	/**
 	 * Closes the bank interface if it is open.
 	 *
+	 * <p>Each close mechanism is attempted with outcome verification, falling back to the
+	 * other when the bank is still open — a single mechanism can be silently suppressed:
+	 * while a human owns the input (real input within the idle-resume window), the
+	 * client's event dispatch drops keyboard events, so the ESC close becomes a no-op and
+	 * the wait times out with the bank still open. The widget click is mouse-based
+	 * (coordinated through InputLoop) and is not dropped this way, which makes it the
+	 * fallback under takeover and the primary when the ESC-to-close account setting is off.
+	 *
 	 * @return true if the bank interface was open and successfully closed, true if already closed.
 	 */
     public static boolean closeBank() {
         if (!isOpen()) return true;
+
+        // One shared BooleanSupplier (not an inline lambda per call) so the compiler emits
+        // a single lambda for this method: inline lambdas would renumber the synthetic
+        // lambda ordinals of every later method in this class and invalidate the
+        // client-thread guardrail baseline, which is keyed by those ordinals.
+        BooleanSupplier isClosed = () -> !isOpen();
+
         if (Rs2Settings.isEscCloseInterfaceSettingEnabled()) {
             Rs2Keyboard.keyPress(KeyEvent.VK_ESCAPE);
+            if (sleepUntil(isClosed, 1200)) return true;
+            // ESC can be silently suppressed while a human owns the input (keyboard
+            // dispatch drops it during takeover) — fall back to the mouse click.
+            Rs2Widget.clickChildWidget(786434, 11);
         } else {
             Rs2Widget.clickChildWidget(786434, 11);
+            if (sleepUntil(isClosed, 1200)) return true;
+            // The click did not close the bank within the window — fall back to ESC.
+            Rs2Keyboard.keyPress(KeyEvent.VK_ESCAPE);
         }
 
-        return sleepUntil(() -> !isOpen(), 5000);
+        return sleepUntil(isClosed, 3800);
     }
 
     /**
