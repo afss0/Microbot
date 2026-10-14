@@ -202,6 +202,13 @@ public class Rs2InventorySetup {
     public enum MissingSupplyPolicy { PAUSE_ALL_SCRIPTS, LOGOUT_AND_STOP }
 
     private MissingSupplyPolicy missingSupplyPolicy = MissingSupplyPolicy.PAUSE_ALL_SCRIPTS;
+    private java.util.function.Consumer<String> missingSupplyHandler;
+
+    /** Retains the owning loop until its terminal logout is observed. */
+    public Rs2InventorySetup withMissingSupplyHandler(java.util.function.Consumer<String> handler) {
+        missingSupplyHandler = Objects.requireNonNull(handler, "handler");
+        return this;
+    }
 
     /**
      * Selects behavior for confirmed required-supply shortages on this loader only.
@@ -879,12 +886,13 @@ public class Rs2InventorySetup {
 			if (!inInventory && !inBank) {
 				int bankGear = bankQtyForPresetRow(item, lowerCaseName, isFuzzy);
 				int invGear = isFuzzy ? Rs2Inventory.itemQuantity((String) identifier) : Rs2Inventory.itemQuantity((int) identifier);
+				boolean stopLoad = missingSupplyHandler != null || missingSupplyPolicy == MissingSupplyPolicy.LOGOUT_AND_STOP;
 				logSetup(Level.WARN,
 						"missing gear %s | bank=%d | inv=%d | need=%d — %s",
 						item.getName(), bankGear, invGear, item.getQuantity(),
-						missingSupplyPolicy == MissingSupplyPolicy.LOGOUT_AND_STOP ? "stopping" : "pausing");
+						stopLoad ? "stopping" : "pausing");
 				stopForMissingRequiredSupply(item.getName());
-				if (missingSupplyPolicy == MissingSupplyPolicy.LOGOUT_AND_STOP) return false;
+				if (stopLoad) return false;
 				continue;
 			}
 
@@ -921,6 +929,10 @@ public class Rs2InventorySetup {
     }
 
     private void stopForMissingRequiredSupply(String itemName) {
+        if (missingSupplyHandler != null) {
+            missingSupplyHandler.accept(itemName);
+            return;
+        }
         if (missingSupplyPolicy == MissingSupplyPolicy.PAUSE_ALL_SCRIPTS) {
             Microbot.pauseAllScripts.compareAndSet(false, true);
             return;

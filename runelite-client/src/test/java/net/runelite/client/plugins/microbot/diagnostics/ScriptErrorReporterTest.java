@@ -13,15 +13,19 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.MicrobotApi;
 import net.runelite.client.plugins.microbot.externalplugins.MicrobotPluginManager;
+import net.runelite.client.util.ResetResistantAttachment;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -248,5 +252,50 @@ public class ScriptErrorReporterTest
 		reporter.flush();
 		assertEquals(0, reporter.pendingCount());
 		verify(api, never()).submitErrors(any(), any());
+	}
+
+	@Test
+	public void installedReporterKeepsCollectingErrorsAfterLogbackReset()
+	{
+		ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
+		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), executor, sessions, false);
+		ResetResistantAttachment attachment = installed.install(context);
+
+		context.reset();
+		context.getLogger("some.Script").error("loop failed", boom());
+
+		assertTrue(installed.isStarted());
+		assertEquals(1, installed.pendingCount());
+		verify(executor, times(2)).scheduleWithFixedDelay(any(), anyLong(), anyLong(), any());
+		attachment.remove();
+	}
+
+	@Test
+	public void reinstalledReporterCountsEachErrorOnceAfterLogbackReset()
+	{
+		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), mock(ScheduledExecutorService.class), sessions, false);
+		installed.install(context).remove();
+		installed.install(context);
+
+		context.reset();
+		context.getLogger("some.Script").error("loop failed", boom());
+		installed.flush();
+
+		ArgumentCaptor<JsonObject> captor = ArgumentCaptor.forClass(JsonObject.class);
+		verify(api).submitErrors(captor.capture(), any());
+		assertEquals(1, captor.getValue().getAsJsonArray("errors").get(0).getAsJsonObject().get("count").getAsInt());
+	}
+
+	@Test
+	public void removedReporterIgnoresErrorsAfterLogbackReset()
+	{
+		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), mock(ScheduledExecutorService.class), sessions, false);
+		installed.install(context).remove();
+
+		context.reset();
+		context.getLogger("some.Script").error("loop failed", boom());
+
+		assertFalse(installed.isStarted());
+		assertEquals(0, installed.pendingCount());
 	}
 }

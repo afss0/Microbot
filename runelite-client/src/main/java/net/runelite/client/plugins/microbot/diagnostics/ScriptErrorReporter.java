@@ -1,6 +1,7 @@
 package net.runelite.client.plugins.microbot.diagnostics;
 
 import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.LoggerContext;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.classic.spi.StackTraceElementProxy;
@@ -28,6 +29,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.MicrobotApi;
 import net.runelite.client.plugins.microbot.externalplugins.MicrobotPluginManager;
+import net.runelite.client.util.ResetResistantAttachment;
 
 @Slf4j
 @Singleton
@@ -59,9 +61,20 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 		setName("SCRIPT_ERROR_REPORTER");
 	}
 
+	public ResetResistantAttachment install(LoggerContext context)
+	{
+		setContext(context);
+		start();
+		return ResetResistantAttachment.attach(context, this, this::start);
+	}
+
 	@Override
 	public void start()
 	{
+		if (isStarted())
+		{
+			return;
+		}
 		super.start();
 		flushTask = executor.scheduleWithFixedDelay(this::flush, FLUSH_MINUTES, FLUSH_MINUTES, TimeUnit.MINUTES);
 	}

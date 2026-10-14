@@ -12,8 +12,10 @@ import net.runelite.api.*;
 import net.runelite.api.annotations.Component;
 import net.runelite.api.annotations.Varbit;
 import net.runelite.api.annotations.Varp;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetModalMode;
 import net.runelite.client.Notifier;
@@ -42,10 +44,12 @@ import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.shop.Rs2Shop;
 import net.runelite.client.plugins.microbot.util.item.Rs2ItemManager;
+import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.mouse.Mouse;
+import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.mouse.VirtualMouse;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.NaturalMouse;
 import net.runelite.client.plugins.microbot.api.boat.Rs2BoatCache;
@@ -55,6 +59,7 @@ import net.runelite.client.plugins.microbot.api.player.Rs2PlayerCache;
 import net.runelite.client.plugins.microbot.api.playerstate.Rs2PlayerStateCache;
 import net.runelite.client.plugins.microbot.api.tileitem.Rs2TileItemCache;
 import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjectCache;
+import net.runelite.client.plugins.microbot.util.security.HopBudget;
 import net.runelite.client.plugins.microbot.util.security.LoginManager;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
@@ -69,6 +74,7 @@ import javax.inject.Inject;
 import javax.swing.Timer;
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.KeyEvent;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
@@ -173,6 +179,8 @@ public class Microbot {
     private static net.runelite.api.World quickHopTargetWorld;
     private static final int WORLD_SWITCHER_LOAD_TIMEOUT_MS = 5000;
     private static final int WORLD_SWITCHER_REOPEN_INTERVAL_MS = 600;
+    private static final int HOP_WAIT_MIN_IDLE_MARGIN_TICKS = 3000;
+    private static final int HOP_WAIT_MAX_IDLE_MARGIN_TICKS = 10000;
     /**
      * PouchScript is injected in the main MicrobotPlugin as it's being used in multiple scripts
      */
@@ -194,7 +202,8 @@ public class Microbot {
     private static GameState lastGameState = null;
 
     public static boolean cantReachTarget = false;
-    public static boolean cantHopWorld = false;
+    public static volatile boolean cantHopWorld = false;
+    private static volatile WorldPoint cantHopWorldLocation = null;
 
     public static int cantReachTargetRetries = 0;
 
@@ -372,18 +381,25 @@ public class Microbot {
             log.error("Already hopping world");
             return true;
         }
-        if (Microbot.cantHopWorld) {
-            log.error("Can't hop world, already trying to hop");
-            return false;
+        if (Microbot.getClient().getWorld() != worldNumber) {
+            if (isNonMembersHopRefused(worldNumber)) {
+                log.error("Can't hop to non-members world {} from a members-only area", worldNumber);
+                return false;
+            }
+            String blocker = Microbot.getClientThread().runOnClientThreadOptional(Microbot::hopBlocker).orElse(null);
+            if (blocker != null) {
+                log.error(blocker);
+                return false;
+            }
+            if (!awaitHopBudget(worldNumber)) {
+                return false;
+            }
         }
         final net.runelite.api.World[] target = new net.runelite.api.World[1];
         boolean prepared = Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            if (Rs2Combat.inCombat()) {
-                log.error("Player is in combat, cannot hop worlds");
-                return false;
-            }
-            if (Rs2Bank.isOpen() || Rs2Shop.isOpen() || Rs2Dialogue.isInDialogue()) {
-                log.error("Blocking widget open (bank/shop/dialogue), cannot hop worlds");
+            String blocker = hopBlocker();
+            if (blocker != null) {
+                log.error(blocker);
                 return false;
             }
             if (quickHopTargetWorld != null || Microbot.getClient().getGameState() != GameState.LOGGED_IN) {
@@ -464,6 +480,92 @@ public class Microbot {
         return success;
     }
 
+    public static void markNonMembersHopRefused(WorldPoint location) {
+        cantHopWorldLocation = location;
+        cantHopWorld = true;
+    }
+
+    static boolean isNonMembersHopRefused(int worldNumber) {
+        if (!cantHopWorld) {
+            return false;
+        }
+        WorldPoint refusedAt = cantHopWorldLocation;
+        if (refusedAt == null || !refusedAt.equals(Rs2Player.getWorldLocation())) {
+            cantHopWorld = false;
+            cantHopWorldLocation = null;
+            return false;
+        }
+        WorldService service = getWorldService();
+        net.runelite.http.api.worlds.WorldResult worlds = service == null ? null : service.getWorlds();
+        World world = worlds == null ? null : worlds.findWorld(worldNumber);
+        return world != null && !world.getTypes().contains(net.runelite.http.api.worlds.WorldType.MEMBERS);
+    }
+
+    private static String hopBlocker() {
+        if (Rs2Combat.inCombat()) {
+            return "Player is in combat, cannot hop worlds";
+        }
+        if (Rs2Bank.isOpen() || Rs2Shop.isOpen() || Rs2Dialogue.isInDialogue()) {
+            return "Blocking widget open (bank/shop/dialogue), cannot hop worlds";
+        }
+        return null;
+    }
+
+    static boolean awaitHopBudget(int worldNumber) {
+        HopBudget budget = HopBudget.getInstance();
+        if (Microbot.getClient().isClientThread() || SwingUtilities.isEventDispatchThread()) {
+            long waitMs = budget.cachedMillisUntilHopAllowed();
+            if (waitMs <= 0) {
+                return true;
+            }
+            log.warn("Hop limit reached - not hopping to world {}, next hop allowed in {}s",
+                    worldNumber, TimeUnit.MILLISECONDS.toSeconds(waitMs));
+            return false;
+        }
+        long waitMs = budget.millisUntilHopAllowed();
+        if (waitMs <= 0) {
+            return true;
+        }
+        log.info("Hop limit reached - waiting {}s before hopping to world {}",
+                TimeUnit.MILLISECONDS.toSeconds(waitMs), worldNumber);
+        String previousStatus = status;
+        int idleMargin = Rs2Random.between(HOP_WAIT_MIN_IDLE_MARGIN_TICKS, HOP_WAIT_MAX_IDLE_MARGIN_TICKS);
+        try {
+            while (waitMs > 0) {
+                if (!isLoggedIn()) {
+                    log.info("Logged out while waiting for the hop limit - not hopping to world {}", worldNumber);
+                    return false;
+                }
+                if (shouldPreventIdleLogout(idleMargin)) {
+                    Rs2Keyboard.keyPress(KeyEvent.VK_BACK_SPACE);
+                    idleMargin = Rs2Random.between(HOP_WAIT_MIN_IDLE_MARGIN_TICKS, HOP_WAIT_MAX_IDLE_MARGIN_TICKS);
+                }
+                status = "Hop limit - next hop in " + TimeUnit.MILLISECONDS.toSeconds(waitMs + 999) + "s";
+                Thread.sleep(Math.min(waitMs, 1000L));
+                waitMs = budget.millisUntilHopAllowed();
+            }
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } finally {
+            status = previousStatus;
+        }
+    }
+
+    private static boolean shouldPreventIdleLogout(int idleMargin) {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Client client = Microbot.getClient();
+            return Rs2Player.checkIdleLogout(idleMargin)
+                    && isNullOrEmpty(client.getVarcStrValue(VarClientID.CHATINPUT))
+                    && isNullOrEmpty(client.getVarcStrValue(VarClientID.MESLAYERINPUT));
+        }).orElse(false);
+    }
+
+    private static boolean isNullOrEmpty(String value) {
+        return value == null || value.isEmpty();
+    }
+
     static boolean hopViaWorldSwitcher(net.runelite.api.World rsWorld, int loadTimeoutMs) {
         if (!isWorldSwitcherLoaded()
                 && !sleepUntil(Microbot::isWorldSwitcherLoaded, Microbot::openWorldSwitcher, loadTimeoutMs, WORLD_SWITCHER_REOPEN_INTERVAL_MS)) {
@@ -488,6 +590,17 @@ public class Microbot {
     private static boolean isWorldSwitcherLoaded() {
         return Microbot.getClientThread().runOnClientThreadOptional(
                 () -> Microbot.getClient().getWidget(InterfaceID.Worldswitcher.BUTTONS) != null).orElse(false);
+    }
+
+    public static String supplyMessage(String supplies) {
+        String item = supplies == null ? "required supplies" : supplies.trim();
+        item = item.replaceFirst("(?i)^ran out of supplies:\\s*", "")
+                .replaceFirst("(?i)^(?:out of|missing|no|not enough|insufficient)\\s+", "")
+                .replaceFirst("(?i)\\s+(?:not found|found|missing)(?: (?:in|from) (?:the )?bank)?[.!]?$", "")
+                .replaceFirst("(?i)\\s+(?:remaining|in bank)[.!]?$", "")
+                .replaceFirst("[.!]+$", "");
+        if (item.isEmpty()) item = "required supplies";
+        return "Ran out of supplies: " + item;
     }
 
     public static void showMessage(String message) {

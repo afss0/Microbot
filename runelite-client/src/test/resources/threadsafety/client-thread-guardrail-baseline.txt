@@ -117,6 +117,8 @@ net.runelite.client.plugins.microbot.util.bank.Rs2Bank#withdrawLootItems(String,
 net.runelite.client.plugins.microbot.util.bank.Rs2Bank#withdrawLootItems(String, List): boolean  ->  net.runelite.api.ItemComposition#isTradeable(): boolean
 net.runelite.client.plugins.microbot.util.camera.Rs2Camera#getZoom(): int  ->  net.runelite.api.Client#getVarcIntValue(int): int
 net.runelite.client.plugins.microbot.util.camera.Rs2Camera#isTileOnScreen(LocalPoint): boolean  ->  net.runelite.api.Client#getPlane(): int
+net.runelite.client.plugins.microbot.util.camera.Rs2Camera#readPitchDirectly(): int  ->  net.runelite.api.Client#getCameraPitch(): int
+net.runelite.client.plugins.microbot.util.camera.Rs2Camera#readYawDirectly(): int  ->  net.runelite.api.Client#getCameraYaw(): int
 net.runelite.client.plugins.microbot.util.combat.Rs2Combat#getWeaponAttackStyle(): String  ->  net.runelite.api.EnumComposition#getIntValue(int): int
 net.runelite.client.plugins.microbot.util.combat.Rs2Combat#inCombat(): boolean  ->  net.runelite.api.Client#getLocalPlayer(): Player
 net.runelite.client.plugins.microbot.util.combat.Rs2Combat#setAttackStyle(WidgetInfo): boolean  ->  net.runelite.api.Client#getWidget(WidgetInfo): Widget
@@ -544,7 +546,6 @@ net.runelite.client.plugins.microbot.util.npc.Rs2NpcModel#getTransformedComposit
 net.runelite.client.plugins.microbot.util.player.Rs2Player#IsInInstance(): boolean  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
 net.runelite.client.plugins.microbot.util.player.Rs2Player#IsInInstance(): boolean  ->  net.runelite.api.Scene#isInstance(): boolean
 net.runelite.client.plugins.microbot.util.player.Rs2Player#IsInInstance(): boolean  ->  net.runelite.api.WorldView#getScene(): Scene
-net.runelite.client.plugins.microbot.util.player.Rs2Player#checkIdleLogout(long): boolean  ->  net.runelite.api.Client#getKeyboardIdleTicks(): int
 net.runelite.client.plugins.microbot.util.player.Rs2Player#distanceTo(WorldPoint): int  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
 net.runelite.client.plugins.microbot.util.player.Rs2Player#distanceTo(WorldPoint): int  ->  net.runelite.api.Scene#isInstance(): boolean
 net.runelite.client.plugins.microbot.util.player.Rs2Player#distanceTo(WorldPoint): int  ->  net.runelite.api.WorldView#getScene(): Scene
@@ -990,4 +991,4 @@ net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getRandomAccessible
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getRandomAccessibleWorldFromRegion(WorldRegion, boolean, boolean, boolean): int  ->  net.runelite.api.Client#getWorldType(): EnumSet
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getWorldStatistics(): Map  ->  net.runelite.api.Client#getWorldType(): EnumSet
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#isMemberAccount(): boolean  ->  net.runelite.api.Client#getLocalPlayer(): Player
-net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#lambda$hopWorld$8(): boolean  ->  net.runelite.api.Client#getGameState(): GameState
+net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#lambda$hopWorld$7(): boolean  ->  net.runelite.api.Client#getGameState(): GameState

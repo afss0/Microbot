@@ -92,6 +92,14 @@ public class AutoLoginScript extends Script {
         suppression.request();
     }
 
+    void renewAutoLoginSuppression() {
+        suppression.renew();
+    }
+
+    void holdAutoLoginLoggedOut() {
+        suppression.holdLoggedOut(LoginManager.getGameState());
+    }
+
     void resumeAutoLogin() {
         suppression.clear();
     }

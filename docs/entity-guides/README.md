@@ -21,6 +21,8 @@ Scene walk-click render validity and destination confirmation: [movement gotcha 
 
 Route camera turns only for unreachable targets: [movement gotcha 23](movement.md#23-route-camera-turns-are-for-targets-the-scene-cannot-reach).
 
+Camera turns wait for the yaw to settle before returning: [movement gotcha 24](movement.md#24-a-camera-turn-is-finished-only-when-the-yaw-stops-changing).
+
 ## Format
 
 Each entity guide is a numbered list of gotchas. Each entry follows this structure:

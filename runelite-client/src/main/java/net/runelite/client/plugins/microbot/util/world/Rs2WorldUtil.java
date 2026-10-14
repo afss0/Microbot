@@ -388,8 +388,8 @@ public class Rs2WorldUtil {
                 
                 
                 log.info("Attempting world hop {} to world {}", attemptsPerWorld, world);
-               ;                
-                sleepUntil(() -> Microbot.hopToWorld(world), 6000);
+                sleepUntil(Microbot::isLoggedIn, 6000);
+                Microbot.hopToWorld(world);
                 sleepUntil(() -> !Microbot.isHopping(), 6000);
                 if (Microbot.isHopping()) {
                     Microbot.status = "Failed to hop to world " + world + " (attempt " + attemptsPerWorld + ")";

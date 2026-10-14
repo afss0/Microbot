@@ -8,7 +8,7 @@ import net.runelite.api.GameState;
 final class AutoLoginSuppression {
     private enum State { ALLOWED, AWAITING_LOGOUT, LOGGED_OUT }
 
-    static final long AWAIT_LOGOUT_MILLIS = 15_000L;
+    static final long AWAIT_LOGOUT_MILLIS = AutoLoginSuppressionRequest.PENDING_LOGOUT_MILLIS;
     private final LongSupplier clock;
     private State state = State.ALLOWED;
     private long requestedAt;
@@ -26,6 +26,19 @@ final class AutoLoginSuppression {
         if (state == State.ALLOWED) {
             requestedAt = clock.getAsLong();
             state = State.AWAITING_LOGOUT;
+        }
+    }
+
+    synchronized void renew() {
+        expirePendingRequest();
+        if (state == State.AWAITING_LOGOUT) {
+            requestedAt = clock.getAsLong();
+        }
+    }
+
+    synchronized void holdLoggedOut(GameState gameState) {
+        if (gameState == GameState.LOGIN_SCREEN) {
+            state = State.LOGGED_OUT;
         }
     }
 

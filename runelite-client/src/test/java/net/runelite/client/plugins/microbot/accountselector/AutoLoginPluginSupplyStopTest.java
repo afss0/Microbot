@@ -14,6 +14,13 @@ public class AutoLoginPluginSupplyStopTest {
         plugin.accountSelectorScript = mock(AutoLoginScript.class);
         plugin.onAutoLoginSuppressionRequest(new AutoLoginSuppressionRequest());
         verify(plugin.accountSelectorScript).suppressAutoLogin();
+        plugin.onAutoLoginSuppressionRequest(AutoLoginSuppressionRequest.renewal());
+        verify(plugin.accountSelectorScript).renewAutoLoginSuppression();
+        verify(plugin.accountSelectorScript).suppressAutoLogin();
+        plugin.onAutoLoginSuppressionRequest(AutoLoginSuppressionRequest.loggedOut());
+        verify(plugin.accountSelectorScript).holdAutoLoginLoggedOut();
+        verify(plugin.accountSelectorScript).suppressAutoLogin();
+        verify(plugin.accountSelectorScript).renewAutoLoginSuppression();
         GameStateChanged event = new GameStateChanged();
         event.setGameState(GameState.LOGIN_SCREEN);
         plugin.onGameStateChanged(event);

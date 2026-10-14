@@ -7,6 +7,7 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.client.config.ConfigProfile;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.util.security.HopBudget;
 import net.runelite.client.plugins.microbot.util.security.LoginLockout;
 import net.runelite.client.plugins.microbot.util.security.LoginManager;
 
@@ -78,6 +79,11 @@ public class LoginHandler extends AgentHandler {
 		long loginCooldownMs = LoginLockout.getInstance().remainingMillis();
 		if (loginCooldownMs > 0) {
 			result.put("loginCooldownMs", loginCooldownMs);
+		}
+		HopBudget hopBudget = HopBudget.getInstance();
+		if (hopBudget.isEnabled()) {
+			result.put("hopsAvailable", hopBudget.available());
+			result.put("nextHopInMs", hopBudget.millisUntilHopAllowed());
 		}
 
 		if (Microbot.isLoggedIn()) {
