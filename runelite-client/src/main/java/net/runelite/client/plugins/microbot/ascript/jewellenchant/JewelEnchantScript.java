@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -272,9 +273,36 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
-        // 3. Equip the elemental staff when staff mode is on — it then supplies its
-        //    own runes, so only the remaining ones are withdrawn in step 4.
+        // 3. Withdraw the elemental runes the (worn or to-be-equipped) staff does not
+        //    supply. Re-verify the bank window first: a mid-cycle close (a human taking
+        //    over at the keyboard, a stray ESC) used to leave the remaining withdraws
+        //    dispatching into nothing, and the cycle ended with a misleading "no
+        //    materials" stop (2026-10-14). The retry/stop verdicts for genuinely
+        //    missing materials belong to the orchestrator's missing-materials path.
+        if (!ensureBankOpen()) return false;
+        for (Map.Entry<Runes, Integer> entry : runesNeededInInventory(config, level).entrySet()) {
+            if (!AScriptBank.withdrawVerified(String.valueOf(entry.getKey().getItemId()))) {
+                log.warn("[JewelEnchant] {} rune withdraw failed (bank open: {}) — retrying next cycle",
+                        entry.getKey().name(), Rs2Bank.isOpen());
+                return false;
+            }
+        }
+
+        // 4. Withdraw unenchanted jewellery (fill remaining inventory)
+        if (!ensureBankOpen()) return false;
+        if (!AScriptBank.withdrawVerified(String.valueOf(item.getUnenchantedId()))) {
+            log.warn("[JewelEnchant] {} withdraw failed (bank open: {}) — retrying next cycle",
+                    item.getName(), Rs2Bank.isOpen());
+            return false;
+        }
+
+        // 5. Equip the elemental staff LAST — after every withdraw that needs the bank
+        //    window. The equip path interacts with the bank UI; with nothing left to
+        //    withdraw, a state change mid-equip can no longer break the cycle. The
+        //    early isWearingStaffFor() check also picks up a staff a human equipped
+        //    while the earlier steps ran.
         if (config.jewelEnchantUseStaff() && !staffCoverableRunes(level).isEmpty()) {
+            if (!ensureBankOpen()) return false;
             if (!equipStaff(level)) {
                 log.warn("[JewelEnchant] No usable elemental staff for {}", level.getName());
                 AScriptNotify.notify("Staff Equip Failed",
@@ -283,23 +311,25 @@ public class JewelEnchantScript implements AModule {
             }
         }
 
-        // 4. Withdraw the elemental runes the equipped staff does not supply
-        for (Map.Entry<Runes, Integer> entry : runesNeededInInventory(config, level).entrySet()) {
-            if (!AScriptBank.withdrawVerified(String.valueOf(entry.getKey().getItemId()))) {
-                AScriptNotify.notify("Banking Failed", "No " + entry.getKey().name() + " runes in bank");
-                return false;
-            }
-        }
-
-        // 5. Withdraw unenchanted jewellery (fill remaining inventory)
-        if (!AScriptBank.withdrawVerified(String.valueOf(item.getUnenchantedId()))) {
-            AScriptNotify.notify("Banking Failed", "No " + item.getName() + " in bank");
-            return false;
-        }
-
         // Fresh batch scope — the next empty state only earns its closing break after a
         // batch runs on these materials.
         batchRanSinceBank = false;
+        return true;
+    }
+
+    /**
+     * True when the bank window is open, reopening it once when it is not. Guards the
+     * withdraw steps against a mid-cycle close — the failure that stopped a live run
+     * with a misleading "No Sapphire ring in bank" (2026-10-14): the withdraws below
+     * dispatch into nothing while the window is closed, and AScriptBank has no
+     * reopen logic of its own by design.
+     */
+    private boolean ensureBankOpen() {
+        if (Rs2Bank.isOpen()) return true;
+        if (!Rs2Bank.openBank()) {
+            log.warn("[JewelEnchant] Bank closed mid-cycle and could not be reopened — retrying next cycle");
+            return false;
+        }
         return true;
     }
 
@@ -536,16 +566,34 @@ public class JewelEnchantScript implements AModule {
      * most of its staff-coverable runes (a mud battlestaff beats a plain earth
      * staff for Lvl-5).
      * <p>
-     * Only meaningful with the bank open — {@code Rs2Bank.hasBankItem} reads a cached
-     * snapshot that stays empty while the bank never opened (and retries, so one stale
-     * read does not hide a staff that is really there). Returns {@code null} when the
-     * bank holds no usable staff.
+     * ONE pass over the bank snapshot ({@link Rs2Bank#getAll()}). The previous
+     * per-staff {@code hasBankItem} scan paid a 2-tick race-retry sleep for every
+     * ABSENT staff — ~20 s across the enum — and read as a frozen step: a human
+     * watching took over mid-cycle on 2026-10-14. The snapshot is fresh here —
+     * every caller runs with the bank just opened. If the pass finds nothing, ONE
+     * re-read after two ticks guards the stale-mirror case the retrying scan was
+     * built for. Returns {@code null} when the bank holds no usable staff.
      */
     private ElementalStaff bestStaffInBank(JewelEnchantLevel level) {
+        ElementalStaff best = pickBestStaff(bankItemIds(), level);
+        if (best == null) {
+            Rs2Random.waitEx(1200, 300);
+            best = pickBestStaff(bankItemIds(), level);
+        }
+        return best;
+    }
+
+    /** Item ids currently in the bank snapshot. */
+    private Set<Integer> bankItemIds() {
+        return Rs2Bank.getAll().map(Rs2ItemModel::getId).collect(Collectors.toSet());
+    }
+
+    /** The bank staff covering the most staff-coverable runes of {@code level}. */
+    private ElementalStaff pickBestStaff(Set<Integer> bankIds, JewelEnchantLevel level) {
         ElementalStaff best = null;
         int bestCovered = 0;
         for (ElementalStaff staff : ElementalStaff.values()) {
-            if (!Rs2Bank.hasBankItem(staff.getItemId(), 1)) continue;
+            if (!bankIds.contains(staff.getItemId())) continue;
             int covered = 0;
             for (Runes rune : staffCoverableRunes(level)) {
                 if (staff.providesRune(rune)) covered++;
