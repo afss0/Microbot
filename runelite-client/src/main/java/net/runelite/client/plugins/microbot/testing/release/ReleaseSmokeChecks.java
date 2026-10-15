@@ -40,6 +40,7 @@ import net.runelite.client.game.WorldService;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.http.api.worlds.World;
+import net.runelite.http.api.worlds.WorldRegion;
 import net.runelite.http.api.worlds.WorldResult;
 
 import java.io.IOException;
@@ -747,17 +748,17 @@ public final class ReleaseSmokeChecks {
     }
 
     static int pickF2pWorld(List<World> worlds, int current) {
-        int currentLocation = worlds.stream()
+        WorldRegion currentRegion = worlds.stream()
                 .filter(world -> world.getId() == current)
-                .map(World::getLocation)
+                .map(World::getRegion)
                 .findFirst()
-                .orElse(-1);
+                .orElse(null);
         return worlds.stream()
                 .filter(world -> world.getId() != current)
                 .filter(world -> world.getTypes() == null || world.getTypes().isEmpty())
                 .filter(world -> "-".equals(world.getActivity()))
                 .filter(world -> world.getPlayers() > 0 && world.getPlayers() < 1500)
-                .sorted(Comparator.comparing((World world) -> world.getLocation() != currentLocation)
+                .sorted(Comparator.comparing((World world) -> world.getRegion() != currentRegion)
                         .thenComparingInt(World::getPlayers))
                 .map(World::getId)
                 .findFirst()

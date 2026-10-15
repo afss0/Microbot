@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.runelite.client.plugins.microbot.testing.TestResultWriter;
 import net.runelite.http.api.worlds.World;
+import net.runelite.http.api.worlds.WorldRegion;
 import net.runelite.http.api.worlds.WorldType;
 import org.junit.Rule;
 import org.junit.Test;
@@ -150,6 +151,6 @@ public class ReleaseSmokeResultTest {
     }
 
     private static World world(int id, EnumSet<WorldType> types, String activity, int location, int players) {
-        return World.builder().id(id).types(types).activity(activity).location(location).players(players).address("x").build();
+        return World.builder().id(id).types(types).activity(activity).region(WorldRegion.fromLocationId(location)).players(players).address("x").build();
     }
 }

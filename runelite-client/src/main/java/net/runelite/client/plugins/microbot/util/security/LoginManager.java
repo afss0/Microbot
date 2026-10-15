@@ -523,7 +523,9 @@ public final class LoginManager {
             rsWorld.setAddress(world.getAddress());
             rsWorld.setId(world.getId());
             rsWorld.setPlayerCount(world.getPlayers());
-            rsWorld.setLocation(world.getLocation());
+            if (world.getRegion() != null) {
+                rsWorld.setLocation(world.getRegion().getId());
+            }
             rsWorld.setTypes(WorldUtil.toWorldTypes(world.getTypes()));
             Microbot.getClient().changeWorld(rsWorld);
         } catch (Exception ex) {
