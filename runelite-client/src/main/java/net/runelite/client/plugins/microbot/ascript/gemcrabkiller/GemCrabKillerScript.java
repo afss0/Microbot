@@ -64,6 +64,14 @@ public class GemCrabKillerScript implements AModule {
     private static final int MAX_CONSECUTIVE_FIGHT_FAILURES = 10;
     /** Set once per doFight() call; used for weather-modulated timing. */
     private double weatherMultiplier = 1.0;
+    /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
+    private long lastAfkTime = 0L;
+    /**
+     * One post-kill break per completed kill: set when the break runs and cleared when a new
+     * fight is engaged (the {@link #hasLooted} lifecycle — a corpse still in the scene never
+     * earns a second break).
+     */
+    private boolean postKillBreakDone = false;
 
     // ── Combat thresholds ──────────────────────────────────────
     /** HP% below which we bank for food (when useFood enabled). */
@@ -234,6 +242,8 @@ public class GemCrabKillerScript implements AModule {
         waitingTimeStart = null;
         totalCrabKills = 0;
         sessionStartTime = null;
+        lastAfkTime = 0L;
+        postKillBreakDone = false;
         internalState = InternalState.WALKING;
     }
 
@@ -308,10 +318,19 @@ public class GemCrabKillerScript implements AModule {
                 sleep(Rs2Random.logNormalBounded(3000, 5000, weatherMultiplier));
                 hasLooted = true;
                 if (Rs2Inventory.isFull()) {
+                    // The internal bank trip runs on a later tick (needsBank is constant
+                    // false, so the house yield cannot take this tick): take the post-kill
+                    // break HERE, with the bank still closed — cannonball placement.
+                    postKillBreak(config);
                     internalState = InternalState.BANKING;
                     return;
                 }
             }
+
+            // Post-kill break — the unit (kill + optional loot) just completed: the
+            // unconditional short pause plus the toggle-gated random AFK, once per kill,
+            // where the kill happened and before the module moves on.
+            postKillBreak(config);
 
             // Exit cave — same recipe as the way in (see handleWalking): the WAITING state
             // below is what follows the crawl.
@@ -322,6 +341,8 @@ public class GemCrabKillerScript implements AModule {
             return;
         } else {
             hasLooted = false;
+            // A new fight is under way — its kill earns the next post-kill break.
+            postKillBreakDone = false;
         }
 
         // No crab at all — go find one
@@ -339,6 +360,27 @@ public class GemCrabKillerScript implements AModule {
             AScriptClick.clickActor(npc.getNpc());
         } else {
             waitingTimeStart = null;
+        }
+    }
+
+    /**
+     * Post-kill break — the Jewelry/Crafting randomness pattern: a short randomized pause
+     * after every completed kill, then the optional random AFK (log-normal 3–120 s,
+     * weather-modulated, interruptible so blocking events still fire), 5 s min-gap and
+     * status {@code AFK (Ns)}. Runs once per kill (see {@link #postKillBreakDone}) with the
+     * bank still closed — Gem Crab Killer banks through its own state machine, so the house
+     * {@code needsBank} yield cannot take this tick; the internal BANKING transition is
+     * what follows a full inventory.
+     */
+    private void postKillBreak(AScriptConfig config) {
+        if (postKillBreakDone) return; // one break per kill — a corpse still in the scene never re-runs it
+        postKillBreakDone = true;
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
+        if (config.gemCrabKillerAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
+            int afkMs = Rs2Random.logNormalBounded(3_000, 120_000, weatherMultiplier);
+            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+            AScriptSleep.sleepInterruptibly(afkMs);
+            lastAfkTime = System.currentTimeMillis();
         }
     }
 
