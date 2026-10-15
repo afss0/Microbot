@@ -302,6 +302,16 @@ if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
 
 `doBank()` must return `false` if banking failed (bank didn't open, materials missing, withdraw failed). If it returns `true`, the tick proceeds to CRAFTING. Returning `true` when inventory is empty creates an infinite loop.
 
+### doBank ordering: withdraws before equips; re-verify the window before each step
+
+- Do every withdraw that needs the bank window **before** any equip/wear step: equips interact with the bank UI, and with nothing left to withdraw a mid-equip state change cannot break the cycle (Jewel Enchant's staff equip used to run before the rune/jewellery withdraws).
+- Re-verify `Rs2Bank.isOpen()` before each withdraw step (Jewel Enchant's `ensureBankOpen()`: reopen once, else return `false`). A human at the VNC closing the bank mid-cycle leaves the remaining withdraws dispatching into nothing — `withdrawOne`/`withdrawAll` return `false` with no click and no WARN — and the cycle died with a misleading "no materials" message (live 2026-10-14, Jewel Enchant: the user equipped the staff by hand and closed the bank, the ring withdraw failed 3× against the closed window, the module stopped saying "No Sapphire ring in bank" while the mirror said the ring was there). Treat human intervention mid-cycle as an expected condition, not an anomaly.
+- Never raise an inline "No <item> in bank" notification from a failed withdraw: the withdraw can fail for non-missing reasons (closed window, lag). Return `false` (the orchestrator retries the cycle; three consecutive failures stop as "Bank Cycle Failed") and let the confirmed missing-materials verdict own that stop (see "Missing-materials verdicts are confirmed before they stop").
+
+### Never scan a candidate list through the retrying bank reads
+
+`Rs2Bank.hasBankItem` pays a 2-tick race-retry sleep for every item it MISSES (`bankItemRaceRetryWarranted` = count 0 && bank open), so scanning a 23-staff enum cost ~20 s of silent stall whenever the bank held just one of them — it reads as a frozen step, and a human watching took over mid-cycle (live 2026-10-14). Read ONE bank snapshot (`Rs2Bank.getAll()`) and match ids in memory; when the pass finds nothing, ONE re-read after ~2 ticks guards the stale-mirror case the retrying reads were built for. Same rule for any candidate-list lookup (tools, variants, runes) — reserve the retrying reads for single-item checks and stop verdicts.
+
 ### Bank item-GRID interactions can die silently — deposit via the toolbar button
 
 On some machines, **any** interaction targeting the bank's item grids fails silently: injected CC_OP entries (`Rs2Bank.depositAll(id)` op 8, `depositX` ops 2/6/7) AND raw physical clicks on the slot widget all do nothing — mouse fires, no deposit, no exception, no `MenuOptionClicked`. Verified live via Agent Server (menu entry logging on): withdraw-side grid entries work fine, toolbar BUTTON clicks work fine, only grid targets die. Suspected coordinate/scaling issue with dynamic item widgets on that display setup.
