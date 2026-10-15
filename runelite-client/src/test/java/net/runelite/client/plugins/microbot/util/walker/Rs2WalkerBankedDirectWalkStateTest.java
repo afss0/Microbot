@@ -63,10 +63,16 @@ public class Rs2WalkerBankedDirectWalkStateTest
 		when(comparison.getDirectDistance()).thenReturn(250);
 		when(comparison.getTransportEdgesToBank()).thenReturn(List.of());
 		planner = Mockito.mockStatic(Rs2WalkerBankingPlanner.class);
-		planner.when(() -> Rs2WalkerBankingPlanner.compareRoutes(isNull(), eq(TARGET), isNull())).thenReturn(comparison);
+		// Production reaches the comparison through Rs2Walker.compareRoutes(target) ->
+		// Rs2Walker.compareRoutes(null, target) -> the 2-arg planner overload, which mockStatic
+		// intercepts (it never runs its real body that delegates to the 3-arg overload).
+		planner.when(() -> Rs2WalkerBankingPlanner.compareRoutes(isNull(), eq(TARGET))).thenReturn(comparison);
 		planner.when(() -> Rs2WalkerBankingPlanner.getRequiredTransportEdgesFromBank(any())).thenReturn(List.of());
 		planner.when(() -> Rs2WalkerBankingPlanner.getMissingTransportEdges(anyList())).thenReturn(List.of());
-		planner.when(() -> Rs2WalkerBankingPlanner.getMissingTransportEdgeLoadout(anyList(), anyList()))
+		// Production calls the 1-arg overload (Rs2Walker.getMissingTransportEdgeLoadout(transports)
+		// -> planner.getMissingTransportEdgeLoadout(transports)); the 2-arg overload is a different
+		// method on the mocked class and would be intercepted, returning null here.
+		planner.when(() -> Rs2WalkerBankingPlanner.getMissingTransportEdgeLoadout(anyList()))
 			.thenReturn(Rs2TransportLoadout.empty());
 	}
 
