@@ -398,6 +398,17 @@ public interface AScriptConfig extends Config {
         return false;
     }
 
+    @ConfigItem(
+            keyName = "gemCrabKillerAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds after every kill",
+            position = 4,
+            section = gemCrabKillerSection
+    )
+    default boolean gemCrabKillerAfk() {
+        return true;
+    }
+
     // ── Jewel Enchant ─────────────────────────────────────
 
     @ConfigSection(
