@@ -109,6 +109,7 @@ Used during merges to verify nothing is lost.
   - **Firemaking** (`ascript/firemaking/`) — burn logs on fires / forester's campfires (GE corners, Castle Wars); deadlock-free tick-driven burn tracking (stall re-engage + relight), ID-only fire lookup, locked tinderbox slot; Jewelry-style random-AFK layer (`firemakingAfk`)
   - **Barbarian Fishing** (`ascript/barbarianfishing/`) — powerfish leaping fish at Otto's Grotto (drop-only); rod + feather locked slots, walk-gated bank at the Barbarian Outpost chest, spec actuation verified before latching, sliced humanized mouse drops; Jewelry-style random-AFK layer (`barbarianFishingAfk`)
   - **Cannoning** (`ascript/cannoning/`) — maintain a placed dwarf multicannon: repairs it when it breaks (broken object id + `MCANNON_DECAYED` varbit, both verified before it counts) and reloads it from the inventory when `CANNON_AMMO` drops to the configured threshold (≥ 15 balls); latches only the player's own cannon from the `OWNEDMCANNON` varp (a stranger's cannon at a shared spot is never clicked), client-mouse clicks behind a render-race budget, loud actionable stop when the cannonballs run out (never banks); Jewelry-style random-AFK layer (`cannonAfk`, hard-capped at 50 s)
+  - **Woodcutting** (`ascript/woodcutting/`) — chop trees (Drop/powercut or Bank) + log basket + bird-nest looting; action-filtered tree lookup around the activation anchor, best-axe auto-equip from one bank snapshot, axe spec (BVF latch), Jewelry-style random-AFK layer (`woodcuttingAfk`)
 - **Anti-detection:**
   - All timing uses `Rs2Random.logNormalBounded()` with log-normal distributions (not uniform)
   - AFK timing: `Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier)`
@@ -149,6 +150,11 @@ Used during merges to verify nothing is lost.
   - Powerdrop with rod + feathers as locked anchors; drops slice 5–9 items per tick with count-drop verification; the post-batch break + `barbarianFishingAfk` run when a drop session completes.
   - Banking is restock-only (rod/feather missing): walk-gated to the Barbarian Outpost chest (`BankLocation.BARBARIAN_OUTPOST`); `isBankMissingMaterials` uses the retrying `hasBankItem` so a stale bank mirror cannot stop the run.
   - Merge check: `grep "HARPOON_SPEC_MAX_ATTEMPTS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/barbarianfishing/BarbarianFishingScript.java | head -1`
+- **Woodcutting module (Oct 2026):**
+  - New `WOODCUTTING` module — migration of the hub AutoWoodcutting plugin mapped onto the AModule contract (no FSM port): the chop loop is tick-driven (woodcutting animation = in-flight signal; log-count increases = batch tracker), banking runs through the orchestrator (`readyForBank` = `AScriptBank.bankVisible()`, travel only when no bank is in sight, 120 s stagnation watchdog), and the hub's Burn/Fletch workflows are dropped in favour of the existing Firemaking/Fletching modules.
+  - Trees resolve by composition **action filter** + exact name within the configured radius of the activation anchor (the hub's name-only search could target the wrong tree type — wrong log id downstream). Clicks go through the `AScriptClick.clickObject` client-mouse recipe.
+  - Drop mode slices 5–9 logs per tick (fisher pattern); Bank mode returns to the anchor after the deposit and runs a held **log basket** (filled near-full, emptied + slot-locked in `doBank` so the deposit keeps it). **Bird nests** looted from the idle path (`woodcuttingLootNests`, radius 15). Axe handling: tier-ordered enum, best tier withdrawn+equipped from ONE bank snapshot (never a per-tier scan through the retrying reads), locked-slot fallback when the equip fails, spec attack via the BVF harpoon-spec latch.
+  - Merge check: `grep "WOODCUTTING_ANIMATION_IDS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/WoodcuttingScript.java | head -1`
 - **aScript AFK-layer rollout + precision machinery removal (Oct 2026):**
   - `mlmAfk` / `barbarianVillageFisherAfk` / `jewelEnchantAfk` — default-on random-AFK layers (Jewelry/Crafting parity: unconditional short log-normal pause + 3–120 s log-normal AFK, weather-modulated, interruptible, 5 s min-gap). Triggers: MLM at the sack-empty trip falling edge (bank-free deposit-box flow); Barbarian Village Fisher once per completed cycle (inline after a drop session; bank-closed on the tick after `doBank` via `postCycleBreakPending`); Jewel Enchant at batch end with a bank-closed yield (`needsBank` returns the `jewelEnchantPostBatchBreakDone` flag for one tick).
   - Removed the dead precision-mouse machinery: `AScript.managePrecisionMouseSpeed()` + `AModule.isPrecisionModule()` + all per-module overrides — `Rs2Antiban.setActivityIntensity` is a no-op (activity intensity locked to VERY_LOW), so the block could never do anything.
@@ -260,4 +266,7 @@ grep "effectiveMax" runelite-client/src/test/java/net/runelite/client/plugins/mi
 # aScript client-mouse click recipes (2026-10-11)
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java
 grep "useItemOnObject(logItem, fire)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/firemaking/FiremakingScript.java | head -1
+# aScript woodcutting module (2026-10-15)
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/
+grep "WOODCUTTING_ANIMATION_IDS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/WoodcuttingScript.java | head -1
 ```
