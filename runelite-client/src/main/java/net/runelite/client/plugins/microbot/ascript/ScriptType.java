@@ -17,7 +17,8 @@ public enum ScriptType {
     CANNONING("Cannoning"),
     AMMONITE_CRABS("Ammonite Crabs"),
     FIREMAKING("Firemaking"),
-    BARBARIAN_FISHING("Barbarian Fishing");
+    BARBARIAN_FISHING("Barbarian Fishing"),
+    WOODCUTTING("Woodcutting");
 
     private final String name;
 
