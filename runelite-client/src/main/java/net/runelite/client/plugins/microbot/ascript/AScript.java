@@ -20,6 +20,7 @@ import net.runelite.client.plugins.microbot.ascript.gemcrabkiller.GemCrabKillerS
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantScript;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
@@ -63,7 +64,8 @@ public class AScript extends Script {
             new CannoningScript(),
             new AmmoniteCrabsScript(),
             new FiremakingScript(),
-            new BarbarianFishingScript()
+            new BarbarianFishingScript(),
+            new WoodcuttingScript()
     );
 
     /** Previous tick's active state per module — for NONE → active transition detection. */
