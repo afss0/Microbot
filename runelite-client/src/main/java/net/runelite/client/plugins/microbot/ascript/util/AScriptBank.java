@@ -11,9 +11,13 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 import java.util.function.BooleanSupplier;
+import java.util.stream.Collectors;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -391,6 +395,89 @@ public final class AScriptBank {
     public static boolean isEmptyExceptLocksAndLamp() {
         return !Rs2Inventory.items()
                 .anyMatch(item -> !Rs2Bank.isLockedSlot(item.getSlot()) && item.getId() != ItemID.LAMP);
+    }
+
+    /**
+     * Deposit every inventory item whose id is NOT in {@code keepIds} — the
+     * contained-inventory sweep for bank cycles that must end holding exactly the
+     * run's own materials (Jewel Enchant, 2026-10-16: a staff equip displaces the
+     * previously worn item into the inventory, where it held a slot for the whole
+     * batch — for good when the run stopped before the next clean bank cycle — and
+     * left an extraneous clickable under the enchant click).
+     * <p>
+     * Mechanism: the toolbar "Deposit inventory" button empties every UNLOCKED slot,
+     * so the keepers are locked for the duration (slots already locked stay as found)
+     * and unlocked again afterwards; the strays then leave through the same toolbar
+     * path the rest of this class uses. Never the grid-targeted
+     * {@code Rs2Bank.depositAll(name/id)} — it dies silently on some machines (see
+     * {@link #ensureLocked}). Locked slots and the XP lamp are never touched.
+     *
+     * @param keepIds item ids that must survive the sweep
+     * @return true when no stray remains (no-op true when the inventory is already
+     *         clean); false when the bank is closed, a keeper lock could not be
+     *         established, or the strays were still present after the deposit
+     */
+    public static boolean depositAllExcept(Collection<Integer> keepIds) {
+        if (!Rs2Bank.isOpen()) {
+            log.warn("[AScriptBank] depositAllExcept needs the open bank");
+            return false;
+        }
+        List<Rs2ItemModel> strays = new ArrayList<>();
+        List<Rs2ItemModel> keepers = new ArrayList<>();
+        for (Rs2ItemModel item : Rs2Inventory.items().filter(Objects::nonNull).collect(Collectors.toList())) {
+            if (Rs2Bank.isLockedSlot(item.getSlot())) continue; // anchors stay as found
+            if (item.getId() == ItemID.LAMP) continue;          // cannot be deposited at all
+            if (keepIds != null && keepIds.contains(item.getId())) {
+                keepers.add(item);
+            } else {
+                strays.add(item);
+            }
+        }
+        if (strays.isEmpty()) {
+            return true;
+        }
+
+        // Lock the keepers so the toolbar deposit spares them. A keeper that cannot be
+        // locked aborts the sweep with nothing deposited — better a retry next cycle
+        // than a deposit with a gap in the keep-set.
+        List<Rs2ItemModel> lockedNow = new ArrayList<>();
+        for (Rs2ItemModel keeper : keepers) {
+            if (!Rs2Bank.toggleItemLock(keeper.getName(), true)) {
+                for (Rs2ItemModel locked : lockedNow) {
+                    Rs2Bank.toggleItemLock(locked.getName(), false);
+                }
+                log.warn("[AScriptBank] could not lock keeper {} — sweep aborted, nothing deposited",
+                        keeper.getName());
+                return false;
+            }
+            lockedNow.add(keeper);
+        }
+
+        depositAll(); // toolbar button ignores locked slots; locks the lamp if needed
+
+        // Verify by invariant, not by the button's return: no stray id may remain in a
+        // non-locked slot.
+        boolean clean = sleepUntil(() -> {
+            for (Rs2ItemModel stray : strays) {
+                Rs2ItemModel again = Rs2Inventory.get(stray.getId());
+                if (again != null && !Rs2Bank.isLockedSlot(again.getSlot())) {
+                    return false;
+                }
+            }
+            return true;
+        }, 3000);
+
+        // Always release the keeper locks this call established.
+        for (Rs2ItemModel locked : lockedNow) {
+            if (Rs2Bank.isLockedSlot(locked.getSlot())) {
+                Rs2Bank.toggleItemLock(locked.getName(), false);
+            }
+        }
+
+        if (!clean) {
+            log.warn("[AScriptBank] depositAllExcept: strays still present after the deposit");
+        }
+        return clean;
     }
 
     // ── Numeric-id dispatch helpers ───────────────────────────
