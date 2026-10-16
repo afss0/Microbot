@@ -26,6 +26,7 @@ import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 
 import java.awt.Rectangle;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -311,6 +312,24 @@ public class JewelEnchantScript implements AModule {
             }
         }
 
+        // 6. Contained-inventory sweep — the cycle must end holding exactly its own
+        //    materials. A staff equip just displaced the previously worn item into the
+        //    inventory (equips always do); left alone it holds a slot for the rest of
+        //    the batch — for good when the run stops before the next clean bank cycle
+        //    (2026-10-16 live report) — and it is an extraneous clickable the enchant
+        //    click can misland on. Deposit everything outside the keep-set NOW, while
+        //    the bank is open; a clean inventory makes this a zero-click no-op.
+        Set<Integer> keptIds = new HashSet<>();
+        keptIds.add(Runes.COSMIC.getItemId());
+        keptIds.add(item.getUnenchantedId());
+        for (Runes rune : level.getRequiredRunes().keySet()) {
+            keptIds.add(rune.getItemId());
+        }
+        if (!AScriptBank.depositAllExcept(keptIds)) {
+            log.warn("[JewelEnchant] contained-inventory sweep failed — retrying next cycle");
+            return false;
+        }
+
         // Fresh batch scope — the next empty state only earns its closing break after a
         // batch runs on these materials.
         batchRanSinceBank = false;
@@ -369,12 +388,10 @@ public class JewelEnchantScript implements AModule {
             log.debug("[JewelEnchant] Cosmics missing with jewellery in hand — waiting for the bank cycle");
             return;
         }
-        int remaining = Rs2Inventory.itemQuantity(item.getUnenchantedId());
-
         // 1. Select the enchant spell by clicking its spellbook icon with the
         //    client mouse (no injected menu entries).
         if (!selectSpell(spell)) {
-            failEnchant("could not click " + level.getName() + " in the spellbook");
+            failEnchant("could not arm " + level.getName() + " from the spellbook");
             return;
         }
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(150, 350, weatherMultiplier));
@@ -402,20 +419,24 @@ public class JewelEnchantScript implements AModule {
             consecutiveEnchantFailures = 0;
             return;
         }
+        int enchantedBefore = enchantedCount(item);
         if (!clickInventoryItem(jewellery)) {
             failEnchant("no clickable inventory slot for " + item.getName());
             return;
         }
 
-        // 3. Confirm the enchant landed — the jewellery count drops or the player
-        //    animates. Anything else (missed click, spell not selected) is a failed
-        //    attempt, counted so a broken run stops instead of spinning forever.
+        // 3. Confirm the enchant landed — the ENCHANTED side count rises (all known
+        //    charge variants), or the player animates while a queued conversion lands.
+        //    A bare "raw count dropped" would also fire when a misclick WORE a piece
+        //    (the 2026-10-16 report): the raw count drops and the piece sits worn.
+        //    Anything else is a failed attempt, counted so a broken run stops instead
+        //    of spinning forever.
         boolean enchanted = sleepUntil(
-                () -> Rs2Inventory.itemQuantity(item.getUnenchantedId()) < remaining
+                () -> enchantedCount(item) > enchantedBefore
                         || Rs2Player.isAnimating(),
                 Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier));
         if (!enchanted) {
-            failEnchant("no enchant animation and " + item.getName() + " count unchanged");
+            failEnchant("no enchant conversion for " + item.getName());
             return;
         }
 
@@ -443,12 +464,22 @@ public class JewelEnchantScript implements AModule {
         }
     }
 
+    /** Total count of {@code item}'s enchanted variants (all known charge states)
+     *  currently in the inventory — the enchant-success signal. */
+    private int enchantedCount(JewelEnchantItem item) {
+        int count = 0;
+        for (int id : item.getEnchantedIds()) {
+            count += Rs2Inventory.itemQuantity(id);
+        }
+        return count;
+    }
+
     /**
      * Select the enchant spell by clicking its icon in the spellbook with the
      * client mouse — no injected menu entries. Opens the "Jewellery
      * Enchantments" sub-tab first when the icons are not visible yet.
      *
-     * @return true when the spell icon was clicked
+     * @return true when the spell icon was clicked AND the spell is armed
      */
     private boolean selectSpell(MagicAction spell) {
         // One-time spellbook filter reconciliation (shared util): a filter like
@@ -474,7 +505,19 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
+        // Click, then VERIFY the spell actually armed: a click that does not land
+        // (lag, sub-tab still opening) would leave the next inventory left-click
+        // meaning WEAR under the cursor — the misclick class of the 2026-10-16
+        // report. One bounded re-click keeps a single lost click from failing the
+        // tick; still unarmed counts as a failed attempt.
         Microbot.getMouse().click(bounds);
+        if (!sleepUntil(Rs2Inventory::isItemSelected, 1200)) {
+            Microbot.getMouse().click(bounds);
+            if (!sleepUntil(Rs2Inventory::isItemSelected, 1200)) {
+                log.warn("[JewelEnchant] {} click did not arm the spell", spell.getName());
+                return false;
+            }
+        }
         return true;
     }
 
