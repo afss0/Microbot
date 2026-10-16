@@ -22,6 +22,8 @@ import net.runelite.client.plugins.microbot.ascript.fletching.*;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantActivity;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantItem;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MLMMiningSpotList;
+import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingAction;
+import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingTree;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingArrow;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingBolt;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingDart;
@@ -761,6 +763,83 @@ public interface AScriptConfig extends Config {
             section = barbarianFishingSection
     )
     default boolean barbarianFishingHarpoonSpec() {
+        return true;
+    }
+
+    // ── Woodcutting ─────────────────────────────────────────────
+
+    @ConfigSection(
+            name = "Woodcutting",
+            description = "Woodcutting settings",
+            position = 11,
+            closedByDefault = true
+    )
+    String woodcuttingSection = "woodcutting";
+
+    @ConfigItem(
+            keyName = "woodcuttingTree",
+            name = "Tree Type",
+            description = "Tree to chop (keep an axe in the bank or equipped; start near the trees)",
+            position = 0,
+            section = woodcuttingSection
+    )
+    default WoodcuttingTree woodcuttingTree() {
+        return WoodcuttingTree.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "woodcuttingAction",
+            name = "Log Handling",
+            description = "Drop the logs (powercut) or bank them when the inventory fills",
+            position = 1,
+            section = woodcuttingSection
+    )
+    default WoodcuttingAction woodcuttingAction() {
+        return WoodcuttingAction.DROP;
+    }
+
+    @Range(min = 5, max = 50)
+    @ConfigItem(
+            keyName = "woodcuttingRadius",
+            name = "Search Radius",
+            description = "How far (tiles) from the starting spot trees are searched (and how far drift is tolerated)",
+            position = 2,
+            section = woodcuttingSection
+    )
+    default int woodcuttingRadius() {
+        return 20;
+    }
+
+    @ConfigItem(
+            keyName = "woodcuttingAxeSpec",
+            name = "Axe Special Attack",
+            description = "Activate the dragon/crystal/infernal axe special attack when worn and its energy is full",
+            position = 3,
+            section = woodcuttingSection
+    )
+    default boolean woodcuttingAxeSpec() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "woodcuttingLootNests",
+            name = "Loot Bird Nests",
+            description = "Pick up bird nests that drop from trees while chopping",
+            position = 4,
+            section = woodcuttingSection
+    )
+    default boolean woodcuttingLootNests() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "woodcuttingAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds between batches",
+            position = 5,
+            section = woodcuttingSection
+    )
+    default boolean woodcuttingAfk() {
         return true;
     }
 
