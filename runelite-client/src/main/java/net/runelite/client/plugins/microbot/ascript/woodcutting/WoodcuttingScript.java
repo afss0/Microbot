@@ -354,15 +354,24 @@ public class WoodcuttingScript implements AModule {
         maybeAxeSpec(config);
 
         // DROP mode batch end: the logs are gone after a batch ran — bank-free break,
-        // once per batch (MLM placement).
+        // once per batch (MLM placement). lastLogCount > 0 demands that logs were held
+        // since the last break/reset: the chop confirmation below arms
+        // batchRanSinceBank as soon as the animation starts, before the first log
+        // arrives, so count == 0 alone would fire the break at startup and again
+        // through every 0-log window — an empty inventory is not a batch end.
         if (config.woodcuttingAction() == WoodcuttingAction.DROP
-                && Rs2Inventory.itemQuantity(logId) == 0 && batchRanSinceBank) {
+                && Rs2Inventory.itemQuantity(logId) == 0 && lastLogCount > 0
+                && batchRanSinceBank) {
             postBatchBreak(config);
             return;
         }
 
         int count = Rs2Inventory.itemQuantity(logId);
-        if (count > lastLogCount) {
+        // Arm only with logs in hand: with the -1 baseline, `count > lastLogCount`
+        // alone armed the tracker at 0 logs (empty inventory), resetting
+        // postBatchBreakDone so the batch-end break above could fire at startup and
+        // re-fire every ~2 ticks while the inventory waited empty.
+        if (count > 0 && count > lastLogCount) {
             lastLogCount = count;
             batchRanSinceBank = true;    // a batch is being worked
             postBatchBreakDone = false;  // logs in hand — the next batch end is a new one
