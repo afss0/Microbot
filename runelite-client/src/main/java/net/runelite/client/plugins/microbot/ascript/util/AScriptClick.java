@@ -7,6 +7,7 @@ import net.runelite.api.GameObject;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.NPC;
+import net.runelite.api.Player;
 import net.runelite.api.Point;
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.LocalPoint;
@@ -46,7 +47,9 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *   <li><b>Non-default op pick</b> ({@link #clickActorOp(Actor, String)}) — the same
  *       resolved clickbox, right-clicked, with OUR option's row picked out of the open
  *       menu. A left-click only ever reaches the target's default op.</li>
- *   <li><b>Item-on-object / item-on-item</b> — select the first item with a physical
+ *   <li><b>Item-on-X</b> ({@link #useItemOnObject(Rs2ItemModel, TileObject)} /
+ *       {@link #useItemOnNpc} / {@link #useItemOnPlayer} / {@link #useItemOnItem}) —
+ *       select the first item with a physical
  *       click on its inventory slot, verify the game picked it up, click the target
  *       (an entity clickbox or another inventory slot) physically. Any failure path
  *       clears a selection the recipe created, because a dangling cursor item silently
@@ -354,27 +357,11 @@ public final class AScriptClick {
      * The item's default left-click op must be "Use" (true for logs, tinderbox and the
      * other supported items): a physical click cannot pick a non-default op.
      * <p>
-     * <b>Menu priority.</b> With a cursor item selected the client ranks
-     * {@code WIDGET_TARGET_ON_PLAYER} above {@code WIDGET_TARGET_ON_GAME_OBJECT} (the
-     * client's item-on-X family — confirmed against a live menu log), so a player
-     * standing on the fire would win a plain left-click. Each try takes a SINGLE
-     * client-thread snapshot of the hover menu (entry and rank together — split reads
-     * raced in the field: the read that found the entry was followed by a rebuild that
-     * hid it), retrying a gone entry instead of failing the attempt. Then:
-     * <ul>
-     *   <li><b>Object entry already on top</b> — press at the point, exactly as before.
-     *       The same hover rebuilds to the same ranking, so nothing has to survive the
-     *       press: a movement frame inside it (weather offset, cursor-tracker drift)
-     *       rebuilds the identical ranking.</li>
-     *   <li><b>A higher-priority entity shares the hover</b> — right-click to open the
-     *       option menu and press OUR OWN ROW in it. An open menu is frozen client-side
-     *       ("The menu is not rebuilt when it is open", {@code MenuEntrySwapperPlugin}),
-     *       so what the row press resolves to is fixed at open time and no movement frame
-     *       can change it. Deprioritize flags ({@link MenuEntry#setDeprioritized(boolean)})
-     *       were deliberately NOT used: they live on the current menu's entry objects, and
-     *       every movement the sanctioned press path can emit rebuilds the menu and drops
-     *       them before dispatch — the swap cannot be made to survive.</li>
-     * </ul>
+     * <b>Menu priority.</b> The contended case (a higher-priority entity shares the
+     * hover and would win a plain left-click) and its open-menu row pick are handled by
+     * the shared tail {@link #pressUseOn(Rs2ItemModel, Target, Predicate)}, which this
+     * recipe, {@link #useItemOnNpc} and {@link #useItemOnPlayer} all run — the matcher
+     * is the only per-target part.
      *
      * @return true when the "use item on object" click was issued (effect unverified)
      */
@@ -387,9 +374,107 @@ public final class AScriptClick {
             clearSelection();
             return false;
         }
+        return pressUseOn(item, target, entry -> isOwnObjectEntry(entry, object));
+    }
 
-        Predicate<MenuEntry> isOurs = entry -> isOwnObjectEntry(entry, object);
+    /**
+     * Item-on-NPC recipe — the same contract as
+     * {@link #useItemOnObject(Rs2ItemModel, TileObject)} with the NPC in the object's
+     * place: select {@code item} with a physical click on its inventory slot (verified),
+     * resolve the NPC's real clickbox (camera first, canvas-sized fallback rejected,
+     * {@link Rs2UiHelper#getActorClickbox}), and make the press resolve to the NPC.
+     * <p>
+     * The entry is the client's own "use &lt;item&gt; on &lt;NPC&gt;" line,
+     * {@link MenuAction#WIDGET_TARGET_ON_NPC} (the item-on-X family this client really
+     * uses — the ITEM_USE_ON_* constants never appear in its menu, F0.1 live menu log),
+     * matched through {@link MenuEntry#getActor()} against the NPC the caller passed —
+     * the generic matcher {@link #isOwnUseTargetEntry}. Menu priority bites here harder
+     * than for objects: a player standing on the NPC ranks above it, so the contended
+     * row pick in {@link #pressUseOn} is the common path, not the edge case.
+     * <p>
+     * Every failure path clears a selection this recipe created; confirming the effect
+     * (the hit, the pickup, the XP) stays with the caller.
+     *
+     * @param item the item to use, whose default left-click op must be "Use"
+     * @param npc  the target NPC — pass the raw {@link NPC} (e.g. {@code model.getNpc()}),
+     *             because the entry is matched by reference against it
+     * @return true when the "use item on NPC" click was issued (effect unverified)
+     */
+    public static boolean useItemOnNpc(Rs2ItemModel item, NPC npc) {
+        if (!select(item)) {
+            return false;
+        }
+        Target target = resolveActor(npc);
+        if (!target.ready()) {
+            clearSelection();
+            return false;
+        }
+        return pressUseOn(item, target,
+                entry -> isOwnUseTargetEntry(entry, npc, MenuAction.WIDGET_TARGET_ON_NPC));
+    }
 
+    /**
+     * Item-on-player recipe — the same contract as
+     * {@link #useItemOnNpc(Rs2ItemModel, NPC)} with {@link MenuAction#WIDGET_TARGET_ON_PLAYER}
+     * as the entry family and a {@link Player} as the target. Use this only when the
+     * interaction really is item-on-player (e.g. using an item on another player); the
+     * usual NPC/PC distinction applies — a player on the hover over an NPC target is the
+     * competition the row pick handles, not a reason for this overload.
+     * <p>
+     * Same failure-path and confirmation contract as the other item-on-X recipes.
+     *
+     * @param item   the item to use, whose default left-click op must be "Use"
+     * @param player the target player — pass the raw {@link Player}
+     * @return true when the "use item on player" click was issued (effect unverified)
+     */
+    public static boolean useItemOnPlayer(Rs2ItemModel item, Player player) {
+        if (!select(item)) {
+            return false;
+        }
+        Target target = resolveActor(player);
+        if (!target.ready()) {
+            clearSelection();
+            return false;
+        }
+        return pressUseOn(item, target,
+                entry -> isOwnUseTargetEntry(entry, player, MenuAction.WIDGET_TARGET_ON_PLAYER));
+    }
+
+    /**
+     * Shared tail of the item-on-X recipes — everything after the selection and the
+     * target's clickbox are resolved: put the cursor on the press point, verify the hover
+     * menu ranks the target's entry ({@code isOurs} — the matcher is the only
+     * per-recipe part), and make the press resolve to THAT entry.
+     * <p>
+     * <b>Menu priority.</b> With a cursor item selected the client ranks actors above
+     * objects, and players above NPCs — a player standing on the fire (or on the NPC)
+     * would win a plain left-click. Each try takes a SINGLE client-thread snapshot of the
+     * hover menu (entry and rank together — split reads raced in the field: the read that
+     * found the entry was followed by a rebuild that hid it), retrying a gone entry
+     * instead of failing the attempt. Then:
+     * <ul>
+     *   <li><b>Our entry already on top</b> — press at the point. The same hover
+     *       rebuilds to the same ranking, so nothing has to survive the press: a movement
+     *       frame inside it (weather offset, cursor-tracker drift) rebuilds the identical
+     *       ranking.</li>
+     *   <li><b>A higher-priority entity shares the hover</b> — right-click to open the
+     *       option menu and press OUR OWN ROW in it. An open menu is frozen client-side
+     *       ("The menu is not rebuilt when it is open", {@code MenuEntrySwapperPlugin}),
+     *       so what the row press resolves to is fixed at open time and no movement frame
+     *       can change it. Deprioritize flags ({@link MenuEntry#setDeprioritized(boolean)})
+     *       were deliberately NOT used: they live on the current menu's entry objects, and
+     *       every movement the sanctioned press path can emit rebuilds the menu and drops
+     *       them before dispatch — the swap cannot be made to survive.</li>
+     * </ul>
+     *
+     * @param item   the selected item — used to cancel the selection on failure paths
+     * @param target the resolved real clickbox ({@link Target#ready()})
+     * @param isOurs matcher for the entry the press must resolve to
+     * @return true when the "use item on &lt;target&gt;" click was issued (effect
+     *         unverified)
+     */
+    private static boolean pressUseOn(Rs2ItemModel item, Target target,
+                                      Predicate<MenuEntry> isOurs) {
         // Resolve the press point once: getClickingPoint randomizes on every call, and the
         // press has to land on the exact point the menu was built for.
         Point point = Rs2UiHelper.getClickingPoint(target.clickbox(), true);
@@ -421,9 +506,9 @@ public final class AScriptClick {
             return false;
         }
         if (rank == Rank.BEATEN) {
-            // Contended: a higher-priority entity (a player standing on the fire) shares
-            // the hover. A left-click would dispatch to it, so pick our own row from the
-            // open option menu instead of racing the ranking.
+            // Contended: a higher-priority entity (a player standing on the fire, or on
+            // the NPC) shares the hover. A left-click would dispatch to it, so pick our
+            // own row from the open option menu instead of racing the ranking.
             RowPick pick = pressViaMenuRow(point, isOurs, SELECTION_CONSUMED);
             if (pick == RowPick.DISPATCHED) {
                 return true;
@@ -436,7 +521,7 @@ public final class AScriptClick {
             cancelSelectionOnOwnSlot(item, "the open menu never exposed the use target's row");
             return false;
         }
-        // Rank.TOP — uncontended: the object's entry already IS the left-click default.
+        // Rank.TOP — uncontended: our entry already IS the left-click default.
         // The same hover rebuilds to the same ranking, so a movement frame inside this
         // press cannot change what dispatches — and no priority flag exists here for such
         // a frame to drop. The flags are never set on this path at all.
@@ -776,10 +861,9 @@ public final class AScriptClick {
      * getIdentifier=<object id>, getParam0/param1=<scene coords>, getItemId=-1}.
      * Only ever evaluated on the client thread, inside the menu reads above.
      * <p>
-     * Deliberately separate from the menu pick, which takes the matcher as an input: a
-     * {@code WIDGET_TARGET_ON_NPC} / {@code WIDGET_TARGET_ON_PLAYER} overload is a thin
-     * follow-up that only swaps this matcher for {@link MenuEntry#getNpc()}
-     * / {@link MenuEntry#getPlayer()}.
+     * Deliberately separate from the menu pick, which takes the matcher as an input: the
+     * {@link #useItemOnNpc} / {@link #useItemOnPlayer} overloads are thin follow-ups that
+     * only swap this matcher for {@link #isOwnUseTargetEntry}.
      */
     private static boolean isOwnObjectEntry(MenuEntry entry, TileObject object) {
         if (entry.getType() != MenuAction.WIDGET_TARGET_ON_GAME_OBJECT
@@ -788,6 +872,35 @@ public final class AScriptClick {
         }
         int[] scene = sceneCoords(object);
         return entry.getParam0() == scene[0] && entry.getParam1() == scene[1];
+    }
+
+    /**
+     * The entry the press must resolve to for an ACTOR target (item-on-NPC /
+     * item-on-player): the client's own "use &lt;item&gt; on &lt;actor&gt;" line, matched
+     * on the action family — {@link MenuAction#WIDGET_TARGET_ON_NPC} /
+     * {@link MenuAction#WIDGET_TARGET_ON_PLAYER}, the same constants this fork's own
+     * injections use for an item on an actor ({@code Rs2NpcModel#getMenuAction},
+     * {@code Rs2Player#invokeMenu}) and, per the F0.1 live menu log, the family the
+     * client's own item-on-X entries actually use (the ITEM_USE_ON_* constants never
+     * appear in this client's menu) — plus the target's identity through
+     * {@link MenuEntry#getActor()}: reference comparison against the raw actor the caller
+     * passed pins OUR target even when another entity shares the hover (the same
+     * accessor {@link #isOwnActorEntry} relies on). When the client resolved no actor
+     * for the row at all, the identifier of an NPC row IS the NPC index (this fork's own
+     * injections carry {@code Rs2NpcModel#getIndex}), so NPC targets fall back to that; a
+     * player row that resolves no actor never matches — there is no identifier to trust.
+     * <p>
+     * Only ever evaluated on the client thread, inside the menu reads above.
+     */
+    private static boolean isOwnUseTargetEntry(MenuEntry entry, Actor target, MenuAction type) {
+        if (entry == null || target == null || entry.getType() != type) {
+            return false;
+        }
+        Actor entryActor = entry.getActor();
+        if (entryActor != null) {
+            return entryActor == target;
+        }
+        return target instanceof NPC && entry.getIdentifier() == ((NPC) target).getIndex();
     }
 
     /**
