@@ -205,6 +205,13 @@ Used during merges to verify nothing is lost.
   - Merge check: `grep "class AScriptClick" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
   - Merge check: `grep "AScriptClick.useItemOnItem" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/firemaking/FiremakingScript.java | head -1`
   - Merge check: `grep "clickActorOp" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
+- **aScript Jewel Enchant contained-inventory sweep + armed-cast gate (Oct 2026):**
+  - A staff equip displaces the previously worn item into the inventory; the module deliberately left it for "the next clean bank cycle" (its own comment), so the stray held a slot for the whole batch — and permanently when the run stopped first (live report 2026-10-16: the displaced Dramen staff sat while the enchant clicks ran, and the user flagged the extraneous clickable as an equip hazard).
+  - `doBank()` now ends with `AScriptBank.depositAllExcept(keptIds)` — a new shared sweep: keep-set = cosmic + the level's runes + the raw jewellery; mechanism = lock the keepers → toolbar deposit (the house unlock+toolbar pattern mirrored) → unlock. Locked slots and the XP lamp are never touched, and a keeper that cannot be locked aborts the sweep with nothing deposited (retried next cycle). The inventory now holds exactly the run's materials through the batch.
+  - The enchant dispatch verifies the spell actually armed before the inventory left-click: `Rs2Inventory.isItemSelected()` (true for a selected spell; guardrail-baselined util, not a raw client call) with a bounded wait + one re-click — an unarmed click degrades to WEAR under the cursor (second half of the report).
+  - Landed-cast confirmation switched from "raw count dropped" to "ENCHANTED side count rose": `JewelEnchantItem` carries `enchantedIds` (every charge variant per piece, wiki-verified; ornamente/imbued excluded) and `JewelEnchantScript.enchantedCount()` sums them — a misclick-wear drops the raw count and must no longer read as a successful enchant.
+  - Merge check: `grep "depositAllExcept" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1`
+  - Merge check: `grep "getEnchantedIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantItem.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
 ### Project Rename
@@ -269,4 +276,7 @@ grep "useItemOnObject(logItem, fire)" runelite-client/src/main/java/net/runelite
 # aScript woodcutting module (2026-10-15)
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/
 grep "WOODCUTTING_ANIMATION_IDS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/WoodcuttingScript.java | head -1
+# aScript jewel-enchant contained-inventory sweep + armed-cast gate (2026-10-16)
+grep "depositAllExcept" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1
+grep "getEnchantedIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantItem.java | head -1
 ```
