@@ -462,7 +462,11 @@ public class FletchingScript implements AModule {
         // physical click on the unstrung bow's slot applies it (the old combineClosest
         // selected the primary and clicked the secondary the same way, through menu-entry
         // injection). The recipe logs and cancels its own selection on any failure.
-        Rs2ItemModel stringItem = Rs2Inventory.get("bow string");
+        // Bow string is NOT stackable (wiki: Stackable=No, item id 1777) — 14 strings occupy
+        // 14 slots, so both ends of this chain are drawn: the string side through the same
+        // AScriptPick type-resolution rules ("bow string" contains-matches "bow string spool"
+        // too; the shortest-name tie-break keeps the plain string, exactly as before).
+        Rs2ItemModel stringItem = AScriptPick.pick("bow string");
         Rs2ItemModel unstrungItem = AScriptPick.pick(unstrungName);
         if (!AScriptClick.useItemOnItem(stringItem, unstrungItem)) {
             log.warn("[FletchingScript] could not use the bow string on the unstrung bow");
