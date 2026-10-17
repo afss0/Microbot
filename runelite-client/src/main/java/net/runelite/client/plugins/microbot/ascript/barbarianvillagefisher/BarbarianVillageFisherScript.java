@@ -11,6 +11,7 @@ import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -663,8 +664,9 @@ public class BarbarianVillageFisherScript implements AModule {
         for (int fishId : RAW_FISH) {
             if (Rs2Inventory.contains(fishId)) {
                 // Raw fish's left-click default is "Use" — what the recipe's physical slot
-                // click selects with.
-                Rs2ItemModel fishItem = Rs2Inventory.get(fishId);
+                // click selects with. The slot is drawn from the batch (AScriptPick), never
+                // pinned to the first raw fish.
+                Rs2ItemModel fishItem = AScriptPick.pick(fishId);
                 if (!AScriptClick.useItemOnObject(fishItem, findCookingFire())) {
                     return false;
                 }

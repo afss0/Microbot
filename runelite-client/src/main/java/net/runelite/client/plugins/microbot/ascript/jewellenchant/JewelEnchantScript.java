@@ -9,6 +9,7 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.skillcalculator.skills.MagicAction;
@@ -412,8 +413,10 @@ public class JewelEnchantScript implements AModule {
         // here leaves only the mouse travel time. The LAST occupied slot
         // (Rs2Inventory.items() walks the container in ascending slot order, so
         // getLast(id) is the bottom-most piece) is the one least likely to be the
-        // spell's first-of-type pick.
-        Rs2ItemModel jewellery = Rs2Inventory.getLast(item.getUnenchantedId());
+        // spell's first-of-type pick. This is the documented opt-out from the AScriptPick
+        // slot randomization (ascript/AGENTS.md): a drawn slot near the front could
+        // resolve to a piece the queued cast already consumed.
+        Rs2ItemModel jewellery = AScriptPick.last(item.getUnenchantedId());
         if (jewellery == null) {
             // Consumed while the spell was being selected — bank for more next tick.
             consecutiveEnchantFailures = 0;
