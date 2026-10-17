@@ -19,6 +19,7 @@ import net.runelite.client.plugins.microbot.util.skills.fletching.data.Fletching
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
@@ -462,7 +463,7 @@ public class FletchingScript implements AModule {
         // selected the primary and clicked the secondary the same way, through menu-entry
         // injection). The recipe logs and cancels its own selection on any failure.
         Rs2ItemModel stringItem = Rs2Inventory.get("bow string");
-        Rs2ItemModel unstrungItem = Rs2Inventory.get(unstrungName);
+        Rs2ItemModel unstrungItem = AScriptPick.pick(unstrungName);
         if (!AScriptClick.useItemOnItem(stringItem, unstrungItem)) {
             log.warn("[FletchingScript] could not use the bow string on the unstrung bow");
             Microbot.status = "IDLE";
