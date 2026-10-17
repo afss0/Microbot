@@ -12,6 +12,7 @@ import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -322,8 +323,9 @@ public class FiremakingScript implements AModule {
         Microbot.status = "FIREMAKING — adding logs to fire";
         // Client-mouse item-on-object — the AScriptClick recipe (the aScript mouse-refactor
         // pilot, see AGENTS.md): a physical click on a log slot selects it, a physical click
-        // on the fire's real clickbox applies it. No menu-entry injection.
-        Rs2ItemModel logItem = Rs2Inventory.get(logId);
+        // on the fire's real clickbox applies it. No menu-entry injection. The log slot is
+        // drawn from the batch (AScriptPick), never pinned to the first log.
+        Rs2ItemModel logItem = AScriptPick.pick(logId);
         if (!AScriptClick.useItemOnObject(logItem, fire)) {
             fail("could not use the logs on the fire");
             return;
@@ -374,10 +376,12 @@ public class FiremakingScript implements AModule {
 
         Microbot.status = "FIREMAKING — lighting fire";
         // Same recipe, item-on-item: a physical click on the tinderbox slot selects it and
-        // a physical click on the last log's slot applies it (the last slot mirrors the old
-        // useLast target; the selection and its cleanup are the recipe's job).
+        // a physical click on a log's slot applies it — the slot is DRAWN from the batch
+        // (AScriptPick), not the last log: which log lights the fire is mechanically
+        // irrelevant, and the pinned last slot was inherited from the removed useLast
+        // injection (the selection and its cleanup are the recipe's job).
         Rs2ItemModel tinderboxItem = Rs2Inventory.get(ItemID.TINDERBOX);
-        Rs2ItemModel logItem = Rs2Inventory.getLast(logId);
+        Rs2ItemModel logItem = AScriptPick.pick(logId);
         if (!AScriptClick.useItemOnItem(tinderboxItem, logItem)) {
             fail("could not use the tinderbox on the logs");
             return;

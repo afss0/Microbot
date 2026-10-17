@@ -24,6 +24,7 @@ import net.runelite.api.Skill;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 
 
@@ -597,7 +598,7 @@ public class CraftingScript implements AModule {
 
         if (amethyst) {
             Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
-            Rs2ItemModel amethystItem = Rs2Inventory.get(21347);
+            Rs2ItemModel amethystItem = AScriptPick.pick(21347);
             if (!AScriptClick.useItemOnItem(chiselItem, amethystItem)) {
                 Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
                 return false;
@@ -611,7 +612,7 @@ public class CraftingScript implements AModule {
                     Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
         } else {
             Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
-            Rs2ItemModel uncutGemItem = Rs2Inventory.get(uncutGemName);
+            Rs2ItemModel uncutGemItem = AScriptPick.pick(uncutGemName);
             if (!AScriptClick.useItemOnItem(chiselItem, uncutGemItem)) {
                 Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
                 return false;
@@ -628,7 +629,7 @@ public class CraftingScript implements AModule {
                 Microbot.status = "FLETCHING BOLT TIPS";
                 // Same chisel as above (a locked tool, still in the inventory); the cut gem
                 // is the new use target.
-                Rs2ItemModel cutGemItem = Rs2Inventory.get(gem.getName());
+                Rs2ItemModel cutGemItem = AScriptPick.pick(gem.getName());
                 if (!AScriptClick.useItemOnItem(chiselItem, cutGemItem)) {
                     Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
                     return false;
@@ -653,7 +654,7 @@ public class CraftingScript implements AModule {
         Microbot.status = "BLOWING " + glass.getLabel().toUpperCase();
 
         Rs2ItemModel pipeItem = Rs2Inventory.get("glassblowing pipe");
-        Rs2ItemModel moltenGlassItem = Rs2Inventory.get("molten glass");
+        Rs2ItemModel moltenGlassItem = AScriptPick.pick("molten glass");
         if (!AScriptClick.useItemOnItem(pipeItem, moltenGlassItem)) {
             Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
             return false;
@@ -671,8 +672,8 @@ public class CraftingScript implements AModule {
     private boolean craftStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
         Microbot.status = "MAKING " + staff.getLabel().toUpperCase();
-        Rs2ItemModel orbItem = Rs2Inventory.get(staff.getOrb());
-        Rs2ItemModel staffItem = Rs2Inventory.get(staff.getItemName());
+        Rs2ItemModel orbItem = AScriptPick.pick(staff.getOrb());
+        Rs2ItemModel staffItem = AScriptPick.pick(staff.getItemName());
         if (!AScriptClick.useItemOnItem(orbItem, staffItem)) {
             Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
             return false;
@@ -761,7 +762,7 @@ public class CraftingScript implements AModule {
         CraftingDragonLeather armour = config.dragonLeatherType();
         Microbot.status = "CRAFTING " + armour.getName().toUpperCase();
 
-        Rs2ItemModel leatherItem = Rs2Inventory.get(armour.getLeatherId());
+        Rs2ItemModel leatherItem = AScriptPick.pick(armour.getLeatherId());
         // The costume-needle variant picks its own name string; resolution stays the old
         // substring match Rs2Inventory.use(name) used, so the dispatch picks the same
         // needle the pre-recipe code would have.
