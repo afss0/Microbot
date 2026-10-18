@@ -29,7 +29,6 @@ import java.awt.Rectangle;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -45,15 +44,14 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  * Modern spellbank. Handles rune withdrawal, elemental staff equipping, and
  * the enchant spell cast + jewellery click sequence.
  * <p>
- * The elemental staff is taken from wherever it already is: the WORN one (kept
- * as-is), else the staff the player carries in the inventory (worn by
- * {@link #doAction} — with the bank open an inventory left-click is a deposit,
- * never a Wear), else the best one in the bank. Only one staff can be worn, so
- * "best" is the coverage of the level's staff-coverable runes and ties go to the
- * item already at hand; a held staff that does not cover the spell's rune needs
- * in full lets the bank's better staff win. A better bank staff is withdrawn INTO
- * the inventory and worn by {@link #doAction} with the bank closed, exactly like a
- * held one — the module never dispatches an equip from inside the bank cycle.
+ * The elemental staff is taken from wherever it already is: the WORN one (kept as-is),
+ * else the one carried in the inventory, else the best one in the bank — where "best" is
+ * the coverage of the level's staff-coverable runes and ties go to the item already at
+ * hand. It is then WORN FIRST, before any deposit of a bank cycle: a deposit would bank the
+ * staff the player is carrying, and a staff withdrawn after the jewellery fill has no free
+ * slot left. The wear is a client-mouse click with the bank CLOSED (with it open an
+ * inventory left-click is a deposit, never a Wear), and the restock completes on a later
+ * tick with the staff on.
  * <p>
  * The cosmic rune stack is held as a locked inventory slot (like the jewellery
  * mould in {@code CraftingScript}) so the banking deposit never removes it —
@@ -281,41 +279,45 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
-        // 0. Staff plan — decided BEFORE the deposits, because a staff the player carries has
-        //    to survive them: step 1's own blanket deposit (inside ensureStackLocked, when the
-        //    cosmics are not in the inventory yet) runs BEFORE step 2's keep-set can protect
-        //    anything — exactly how a held staff got banked in the first live run of this path
-        //    (2026-10-18 16:23): no attack on the plan, the protection just came too late. The
-        //    slot is therefore locked HERE and passed into that call as a keeper, so neither
-        //    its stray sweep nor any deposit touches it. The wear itself can only happen in
-        //    doAction, with the bank closed (with the bank open an inventory left-click is a
-        //    deposit, never a Wear). A strictly better staff in the bank is fetched into the
-        //    inventory at step 5 and worn by doAction too: `Rs2Bank.withdrawAndEquip` never
-        //    dispatched on this machine (silent false, no menu entry — live 2026-10-18), so
-        //    the module no longer calls it.
-        ElementalStaff plannedStaff = null;
-        boolean fetchStaffFromBank = false;
-        String plannedStaffName = null;
+        // 0. STAFF FIRST — before any deposit or withdraw of this cycle:
+        //    - a deposit would bank the staff the player is carrying (2026-10-18 live: the
+        //      staff went with the very first "Deposit inventory" of the run, because that
+        //      deposit runs before any keep-set of this cycle exists);
+        //    - a staff still in the bank must be withdrawn BEFORE the jewellery fill, which
+        //      takes every remaining slot — a staff withdraw after it can never fit.
+        //    The wear needs the bank CLOSED (with it open an inventory left-click is a
+        //    deposit, never a Wear), so the cycle is handed back to the orchestrator once the
+        //    staff is on: the next tick reopens the bank and runs the restock with the staff
+        //    WORN — equipped items are never deposited, so nothing needs protecting, no slot
+        //    lock and no keep-set entry is involved.
         if (config.jewelEnchantUseStaff() && !staffCoverableRunes(level).isEmpty()
                 && !isWearingStaffFor(level)) {
-            ElementalStaff held = bestStaffInInventory(level);
-            ElementalStaff bankStaff = bestStaffInBank(level);
-            if (bankStaffWins(held, bankStaff, level)) {
-                plannedStaff = bankStaff;   // strictly better than what is held (or nothing held)
-                fetchStaffFromBank = true;
-            } else {
-                plannedStaff = held;        // ties go to the item already in hand
-            }
-        }
-        if (plannedStaff != null && !fetchStaffFromBank) {
-            Rs2ItemModel heldStaffItem = Rs2Inventory.get(plannedStaff.getItemId());
-            if (heldStaffItem != null) {
-                plannedStaffName = heldStaffItem.getName();
-                if (!Rs2Bank.isLockedSlot(heldStaffItem.getSlot())
-                        && !Rs2Bank.toggleItemLock(plannedStaffName, true)) {
-                    log.warn("[JewelEnchant] could not lock the held {} slot — it may be banked this cycle",
-                            plannedStaff.name());
+            ElementalStaff staff = bestStaffInInventory(level);
+            if (staff == null) {
+                staff = bestStaffInBank(level);
+                if (staff != null) {
+                    // A full bag is a state banking legitimately fixes (leftover enchanted
+                    // jewellery): free the slot the withdraw will ask for.
+                    if (Rs2Inventory.isFull() && !AScriptBank.depositAll()) {
+                        log.warn("[JewelEnchant] could not free a slot for the staff withdraw");
+                        return false;
+                    }
+                    if (!AScriptBank.withdrawVerified(String.valueOf(staff.getItemId()))) {
+                        log.warn("[JewelEnchant] {} staff withdraw failed (bank open: {}) — retrying next cycle",
+                                staff.name(), Rs2Bank.isOpen());
+                        return false;
+                    }
                 }
+            }
+            if (staff != null) {
+                if (!closeBankForWear()) return false;
+                ensureStaffWorn(config, level);
+                if (!isWearingStaffFor(level)) {
+                    log.warn("[JewelEnchant] {} not worn after closing the bank — retrying next cycle",
+                            staff.name());
+                    return false;
+                }
+                return true; // staff on — the rest of the cycle happens on a later tick
             }
         }
 
@@ -324,25 +326,18 @@ public class JewelEnchantScript implements AModule {
         //    deposit below preserves them. If they are missing, ensureStackLocked
         //    withdraws the WHOLE stack (one rune per cast would bank again on the
         //    next cast) and locks its slot. Same pattern as the jewellery mould in
-        //    CraftingScript.bankJewelry(). The planned staff rides along as a keeper:
-        //    the call's stray sweep releases every locked slot that is not its target,
-        //    and this cycle's staff must not be one of them.
-        if (!AScriptBank.ensureStackLocked(Integer.toString(Runes.COSMIC.getItemId()),
-                plannedStaffName == null ? List.of() : List.of(plannedStaffName))) {
+        //    CraftingScript.bankJewelry().
+        if (!AScriptBank.ensureStackLocked(Integer.toString(Runes.COSMIC.getItemId()))) {
             AScriptNotify.notify("Banking Failed", "No cosmic runes in bank");
             return false;
         }
 
-        // 2. Deposit the rest through the keeper-aware sweep: the locked cosmic slot is
-        //    preserved (a locked stack is only released when it is consumed empty), and the
-        //    held staff joins the keep-set while it is pending its wear. depositAllExcept
-        //    locks its keepers only for the duration of the sweep and releases them itself,
-        //    so no lock is left behind on the player's staff. (depositAndWaitEmpty could not
-        //    do this — it empties every unlocked slot.)
-        Set<Integer> depositKeep = new HashSet<>();
-        depositKeep.add(Runes.COSMIC.getItemId());
-        if (plannedStaff != null && !fetchStaffFromBank) depositKeep.add(plannedStaff.getItemId());
-        if (!AScriptBank.depositAllExcept(depositKeep)) {
+        // 2. Deposit everything the cycle does not need. The locked cosmic slot survives the
+        //    toolbar deposit (a locked stack is only released when it is consumed empty), so
+        //    the sweep is keeper-aware for exactly one item. The staff needs no protection
+        //    here: step 0 wears it BEFORE this deposit ever runs, and an equipped item is
+        //    never deposited.
+        if (!AScriptBank.depositAllExcept(Set.of(Runes.COSMIC.getItemId()))) {
             log.warn("[JewelEnchant] deposit failed");
             return false;
         }
@@ -370,20 +365,8 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
-        // 5. Staff LAST — after every withdraw that needs the bank window. A staff already in
-        //    the inventory is left for doAction (step 0's plan); a strictly better one is pulled
-        //    into the inventory HERE, with the same verified, grid-free withdraw the runes and
-        //    jewellery above use, and doAction wears it on the next tick with the bank closed.
-        //    Nothing in this cycle dispatches an equip: the bank interface turns an inventory
-        //    left-click into a deposit, so a wear from inside the cycle cannot work.
-        if (fetchStaffFromBank) {
-            if (!ensureBankOpen()) return false;
-            if (!AScriptBank.withdrawVerified(String.valueOf(plannedStaff.getItemId()))) {
-                log.warn("[JewelEnchant] {} staff withdraw failed (bank open: {}) — retrying next cycle",
-                        plannedStaff.name(), Rs2Bank.isOpen());
-                return false;
-            }
-        }
+        // 5. Nothing else is dispatched here: the staff was already resolved at step 0 (worn
+        //    before any deposit could touch the bag), so this cycle is purely the restock.
 
         // 6. Contained-inventory sweep — the cycle must end holding exactly its own
         //    materials. A staff equip just displaced the previously worn item into the
@@ -398,21 +381,9 @@ public class JewelEnchantScript implements AModule {
         for (Runes rune : level.getRequiredRunes().keySet()) {
             keptIds.add(rune.getItemId());
         }
-        if (plannedStaff != null) keptIds.add(plannedStaff.getItemId()); // pending its wear in doAction
         if (!AScriptBank.depositAllExcept(keptIds)) {
             log.warn("[JewelEnchant] contained-inventory sweep failed — retrying next cycle");
             return false;
-        }
-
-        // The held staff's lock has done its job — every deposit of this cycle is behind us and
-        // the wear happens in doAction, which needs no bank interaction. Release it, so no lock
-        // is ever left on an item the player carries. (When the slot emptied because the staff
-        // was worn mid-cycle there is nothing left to unlock.)
-        if (plannedStaffName != null) {
-            Rs2ItemModel pendingStaffItem = Rs2Inventory.get(plannedStaff.getItemId());
-            if (pendingStaffItem != null && Rs2Bank.isLockedSlot(pendingStaffItem.getSlot())) {
-                Rs2Bank.toggleItemLock(plannedStaffName, false);
-            }
         }
 
         // Fresh batch scope — the next empty state only earns its closing break after a
@@ -435,6 +406,19 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Close the bank window so the staff can be worn — with it open, an inventory left-click is
+     * a deposit, never a Wear. Bounded wait; {@code false} when the window stayed open, so the
+     * cycle retries instead of clicking the staff into the bank.
+     */
+    private boolean closeBankForWear() {
+        if (!Rs2Bank.isOpen()) return true;
+        Rs2Bank.closeBank();
+        if (sleepUntil(() -> !Rs2Bank.isOpen(), 2000)) return true;
+        log.warn("[JewelEnchant] bank did not close for the staff wear — retrying next cycle");
+        return false;
     }
 
     // ── Action (enchant) ──────────────────────────────────
@@ -465,11 +449,11 @@ public class JewelEnchantScript implements AModule {
         jewelEnchantPostBatchBreakDone = false; // jewellery present again — the next empty state is a new batch end
         batchRanSinceBank = true;               // a batch is being worked — its end earns the closing break
 
-        // 0. Wear the elemental staff held in the inventory before anything else: the runes
-        //    it supplies are the ones needsBank may have left in the bank, and the wear can
-        //    only happen here, with the bank closed (the bank interface turns an inventory
-        //    left-click into a deposit). One tick consumed by the wear; the cast follows on
-        //    the next one.
+        // 0. Wear the elemental staff held in the inventory before anything else: the runes it
+        //    supplies are exactly the ones needsBank may have left in the bank, so the wear has
+        //    to precede the cast. This is the no-bank-trip path — the bank cycle wears the staff
+        //    in its own step 0; either way it is a client-mouse click with the bank closed. One
+        //    tick consumed by the wear; the cast follows on the next one.
         if (!ensureStaffWorn(config, level)) return;
 
         // Cosmics ran out while jewellery remains — needsBank routes this state to the
@@ -829,11 +813,12 @@ public class JewelEnchantScript implements AModule {
     /**
      * Wear the elemental staff held in the inventory, so the runes it supplies do not have
      * to be carried. Runs with the BANK CLOSED — with the bank open an inventory left-click
-     * is a deposit, never a Wear, which is exactly why this step lives in {@link #doAction}
-     * and not in {@link #doBank}. The click is the client mouse (no injected menu entries);
-     * a staff is a single held instance, so it resolves through {@link Rs2Inventory#get(int)}
-     * like a tool, not through the slot-randomising pick. ONE re-click covers a single lost
-     * click, mirroring {@link #selectSpell}.
+     * is a deposit, never a Wear, which is why every wear goes through here: from
+     * {@link #doAction} when no bank trip is needed, and from {@link #doBank}'s staff step
+     * (which closes the window first) when the run needs the bank. The click is the client
+     * mouse (no injected menu entries); a staff is a single held instance, so it resolves
+     * through {@link Rs2Inventory#get(int)} like a tool, not through the slot-randomising
+     * pick. ONE re-click covers a single lost click, mirroring {@link #selectSpell}.
      *
      * @return true when a staff is worn, when none is held (the bank cycle owns that state)
      *         or when a cast is armed and the wear must wait a tick; false when the wear
