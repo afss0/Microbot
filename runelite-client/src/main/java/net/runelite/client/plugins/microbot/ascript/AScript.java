@@ -20,6 +20,7 @@ import net.runelite.client.plugins.microbot.ascript.gemcrabkiller.GemCrabKillerS
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantScript;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -30,7 +31,6 @@ import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2Food;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 
-import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -419,10 +419,11 @@ public class AScript extends Script {
      * {@link Rs2Player#eatAt(int)} delegates to {@code useFood()}, which eats the FIRST food in
      * slot order — a shark in slot 3 always wins over a summer pie in slot 20, whatever the
      * heal. The selection here mirrors {@code useFood()}'s rules (unnoted items only, blighted
-     * food first in the Wilderness, "jug of wine" is drunk rather than eaten) but sorts by the
-     * per-bite heal in {@link Rs2Food}, so the biggest heal available goes first. Food with no
-     * heal in the table (level-scaled or random heals) sorts last; ties fall back to the lowest
-     * slot so the choice stays deterministic.
+     * food first in the Wilderness, "jug of wine" is drunk rather than eaten) and takes the
+     * per-bite heal priority from {@link Rs2Food} — the biggest heal always goes first — but the
+     * INSTANCE within the top-heal group is DRAWN by {@link AScriptPick#pickFood(java.util.List)}
+     * with the same log-normal rank as every other click target (toward the first occurrences,
+     * occasionally the last), never the lowest slot every time.
      *
      * @return true when the Eat/Drink op was dispatched — see {@link #waitForBite()} for the
      *         confirmation, the dispatch itself proves nothing
@@ -440,25 +441,12 @@ public class AScript extends Script {
             if (!blighted.isEmpty()) foods = blighted;
         }
 
-        Rs2ItemModel food = foods.stream()
-                .max(Comparator.comparingInt(this::foodHeal)
-                        .thenComparingInt(candidate -> -candidate.getSlot()))
-                .orElse(null);
+        Rs2ItemModel food = AScriptPick.pickFood(foods);
         if (food == null) return false;
 
         return food.getName().toLowerCase().contains("jug of wine")
                 ? Rs2Inventory.interact(food, "drink")
                 : Rs2Inventory.interact(food, "eat");
-    }
-
-    /** Per-bite heal of {@code food} from {@link Rs2Food}; 0 when the item is not in the table. */
-    private int foodHeal(Rs2ItemModel food) {
-        for (Rs2Food known : Rs2Food.values()) {
-            if (known.getId() == food.getId()) {
-                return known.getHeal();
-            }
-        }
-        return 0;
     }
 
     /**
