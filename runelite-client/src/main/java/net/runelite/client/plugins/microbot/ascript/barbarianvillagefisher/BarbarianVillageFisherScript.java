@@ -18,7 +18,6 @@ import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
-import net.runelite.client.plugins.microbot.util.inventory.InteractOrder;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.api.npc.models.Rs2NpcModel;
@@ -29,6 +28,7 @@ import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 
+import java.awt.Rectangle;
 import java.awt.event.KeyEvent;
 import java.util.Arrays;
 import java.util.List;
@@ -450,7 +450,24 @@ public class BarbarianVillageFisherScript implements AModule {
         Microbot.status = "DROPPING";
         String rodName = getRodName(config);
         String baitName = getBaitName(config);
-        Rs2Inventory.dropAllExcept(true, InteractOrder.STANDARD, rodName, baitName);
+        // Drop-target decisions (AScriptPick.nextDropTarget) over the not-rod/bait instances the
+        // old dropAllExcept(STANDARD) walked in slot order: uniform first draw, then a
+        // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
+        // cursor. Client-mouse clicks — the shared dropAll* helper dispatched by injection.
+        List<Rs2ItemModel> candidates = Rs2Inventory.getList(item ->
+                !rodName.equalsIgnoreCase(item.getName()) && !baitName.equalsIgnoreCase(item.getName()));
+        boolean firstDraw = true;
+        while (!candidates.isEmpty()) {
+            Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
+                    firstDraw ? null : Microbot.getMouse().getMousePosition());
+            firstDraw = false;
+            if (item == null) break;
+            Rectangle bounds = Rs2Inventory.itemBounds(item);
+            candidates.remove(item);
+            if (bounds == null) continue;
+            Microbot.getMouse().click(bounds);
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
+        }
         boolean dropped = sleepUntil(() -> countDroppableItems() == 0,
                 (int) Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
         if (!dropped) {
