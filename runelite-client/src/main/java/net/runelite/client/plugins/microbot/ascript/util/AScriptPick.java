@@ -4,6 +4,7 @@ import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.misc.Rs2Food;
 
 import java.awt.Point;
 import java.awt.Rectangle;
@@ -112,6 +113,60 @@ public final class AScriptPick {
      */
     public static Rs2ItemModel last(int id) {
         return Rs2Inventory.getLast(id);
+    }
+
+    // ── Eat-path decisions (the food analogue of the Use pick) ─────
+
+    /**
+     * The food instance to eat — the eat-path analogue of {@link #pick(Predicate)}.
+     *
+     * <p>The PRIORITY is the auto-eat's rule and does not change: the biggest per-bite heal wins
+     * ({@link Rs2Food}); food with no entry in the table (level-scaled or unknown heals) scores 0
+     * and ranks last. The caller owns the membership rules (unnoted only; blighted food already
+     * preferred in the Wilderness). What changes is only the INSTANCE within the top-heal group:
+     * it is DRAWN with the same log-normal rank as every other click target — toward the first
+     * occurrences, occasionally the last ones — instead of always being the lowest slot.</p>
+     *
+     * @param foods the candidate foods, priority rules already applied
+     * @return the food to eat, or {@code null} when {@code foods} is empty
+     */
+    public static Rs2ItemModel pickFood(List<Rs2ItemModel> foods) {
+        if (foods == null || foods.isEmpty()) return null;
+        int[] heals = new int[foods.size()];
+        for (int i = 0; i < foods.size(); i++) {
+            heals[i] = foodHeal(foods.get(i));
+        }
+        return foods.get(pickTopScoredIndex(heals));
+    }
+
+    /**
+     * Index drawn among the entries sharing the highest score — the food group's instance draw.
+     * Pure (no item models, no client) so "stay inside the top group, vary the instance" is
+     * unit-testable; the draw itself is {@link #rank(int)}.
+     *
+     * @return the drawn index, or {@code -1} for an empty input
+     */
+    static int pickTopScoredIndex(int[] scores) {
+        if (scores == null || scores.length == 0) return -1;
+        int best = Integer.MIN_VALUE;
+        for (int score : scores) {
+            if (score > best) best = score;
+        }
+        List<Integer> top = new java.util.ArrayList<>(scores.length);
+        for (int i = 0; i < scores.length; i++) {
+            if (scores[i] == best) top.add(i);
+        }
+        return top.get(rank(top.size()) - 1);
+    }
+
+    /** Per-bite heal of {@code food} from {@link Rs2Food}; 0 when the item is not in the table. */
+    static int foodHeal(Rs2ItemModel food) {
+        for (Rs2Food known : Rs2Food.values()) {
+            if (known.getId() == food.getId()) {
+                return known.getHeal();
+            }
+        }
+        return 0;
     }
 
     // ── Drop-target decisions (the drop model) ─────────────────────
