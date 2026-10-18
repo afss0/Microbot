@@ -13,6 +13,7 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -388,9 +389,17 @@ public class BarbarianFishingScript implements AModule {
         int before = countDroppables();
         int slice = Rs2Random.fancyNormalSample(DROP_SLICE_MIN, DROP_SLICE_MAX);
         int clicked = 0;
-        for (Rs2ItemModel item : droppables) {
-            if (clicked >= slice) break;
+        // Drop-target decisions (AScriptPick.nextDropTarget): uniform first draw, then a
+        // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
+        // cursor. Bounds resolve immediately before each click; the clicked instance is pruned.
+        boolean firstDraw = true;
+        while (clicked < slice && !droppables.isEmpty()) {
+            Rs2ItemModel item = AScriptPick.nextDropTarget(droppables,
+                    firstDraw ? null : Microbot.getMouse().getMousePosition());
+            firstDraw = false;
+            if (item == null) break;
             Rectangle bounds = Rs2Inventory.itemBounds(item);
+            droppables.remove(item);
             if (bounds == null) continue;
             Microbot.getMouse().click(bounds);
             clicked++;

@@ -11,6 +11,7 @@ import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -441,9 +442,19 @@ public class WoodcuttingScript implements AModule {
         Microbot.status = "WOODCUTTING — dropping logs";
         int before = Rs2Inventory.itemQuantity(logId);
         int slice = Math.min(before, Rs2Random.fancyNormalSample(5, 9));
-        for (Rs2ItemModel item : Rs2Inventory.getList(i -> i.getId() == logId)) {
-            if (slice <= 0) break;
+        // Drop-target decisions (AScriptPick.nextDropTarget): the batch's first draw is uniform —
+        // never the lowest slot — then a weather-scaled roll between another uniform draw and one
+        // of the 2-4 slots nearest the cursor (the "sweep the neighbours, then jump" rhythm).
+        // Bounds resolve immediately before each click; the clicked instance is pruned.
+        List<Rs2ItemModel> candidates = Rs2Inventory.getList(i -> i.getId() == logId);
+        boolean firstDraw = true;
+        while (slice > 0 && !candidates.isEmpty()) {
+            Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
+                    firstDraw ? null : Microbot.getMouse().getMousePosition());
+            firstDraw = false;
+            if (item == null) break;
             Rectangle bounds = Rs2Inventory.itemBounds(item);
+            candidates.remove(item);
             if (bounds == null) continue;
             Microbot.getMouse().click(bounds);
             slice--;

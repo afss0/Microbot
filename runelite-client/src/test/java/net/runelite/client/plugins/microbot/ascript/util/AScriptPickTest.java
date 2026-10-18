@@ -46,4 +46,25 @@ public class AScriptPickTest {
         assertTrue("the last rank must not dominate the tail, got " + hits[n] + " vs " + hits[n - 1],
                 hits[n] < samples * 0.05);
     }
+
+    @Test
+    public void dropHopChanceStaysWithinTheDocumentedBand() {
+        // A unit-test JVM has no weather data → the mistake offset reads 0 → the 15% base.
+        double chance = AScriptPick.dropHopChancePercent();
+        assertTrue("hop chance below the 15% base: " + chance, chance >= 15.0);
+        assertTrue("hop chance above the 24% rain+gust ceiling: " + chance, chance <= 24.0);
+    }
+
+    @Test
+    public void dropNeighborWindowStaysInRangeAndTendsToTheWideEnd() {
+        int samples = 20_000;
+        int wide = 0;
+        for (int i = 0; i < samples; i++) {
+            int window = AScriptPick.dropNeighborCount();
+            assertTrue("neighbour window out of range: " + window, window >= 2 && window <= 4);
+            if (window >= 3) wide++;
+        }
+        assertTrue("the window should tend to the wide end (4), got " + wide + "/" + samples,
+                wide > samples * 0.75);
+    }
 }
