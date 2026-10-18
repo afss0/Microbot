@@ -67,4 +67,24 @@ public class AScriptPickTest {
         assertTrue("the window should tend to the wide end (4), got " + wide + "/" + samples,
                 wide > samples * 0.75);
     }
+
+    @Test
+    public void foodChoiceStaysInTheTopHealGroupAndVariesTheInstance() {
+        int[] heals = {20, 11, 20, 0, 20}; // sharks at 0/2/4, a summer pie at 1, unknown food at 3
+        boolean[] picked = new boolean[heals.length];
+        for (int i = 0; i < 20_000; i++) {
+            int index = AScriptPick.pickTopScoredIndex(heals);
+            assertTrue("left the top heal group: index " + index, heals[index] == 20);
+            picked[index] = true;
+        }
+        assertTrue("the draw must not pin a single instance", picked[0] && picked[2] && picked[4]);
+        assertTrue("a lower-heal food must never be eaten first", !picked[1] && !picked[3]);
+    }
+
+    @Test
+    public void foodChoiceHandlesSingleAndEmptyInputs() {
+        assertEquals(0, AScriptPick.pickTopScoredIndex(new int[]{7}));
+        assertEquals(-1, AScriptPick.pickTopScoredIndex(new int[0]));
+        assertEquals(-1, AScriptPick.pickTopScoredIndex(null));
+    }
 }
