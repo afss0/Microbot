@@ -290,4 +290,9 @@ grep "WOODCUTTING_ANIMATION_IDS" runelite-client/src/main/java/net/runelite/clie
 # aScript jewel-enchant contained-inventory sweep + armed-cast gate (2026-10-16)
 grep "depositAllExcept" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1
 grep "getEnchantedIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantItem.java | head -1
+# aScript Ammonite random-AFK layer + unified Afk defaults (2026-10-18)
+grep "ammoniteCrabAfk" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/ammonitecrabs/AmmoniteCrabsScript.java | head -1
+grep "AFK_MIN_GAP_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/ammonitecrabs/AmmoniteCrabsScript.java | head -1
+grep -A1 "default boolean craftingAfk" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -2
+grep -A1 "default boolean fletchingAfk" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -2
 ```
