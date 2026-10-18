@@ -13,6 +13,7 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
@@ -27,6 +28,7 @@ import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.api.Perspective;
 
+import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -613,12 +615,24 @@ public class MotherloadMineScript implements AModule {
 
     private boolean dropGems() {
         Microbot.status = "DROPPING GEMS";
-        Rs2Inventory.dropAll(
-                ItemID.UNCUT_SAPPHIRE, ItemID.UNCUT_EMERALD,
-                ItemID.UNCUT_RUBY, ItemID.UNCUT_DIAMOND,
-                ItemID.UNCUT_DRAGONSTONE
-        );
-        return true; // dropAll is fire-and-forget; return true to not block the cycle
+        // Drop-target decisions (AScriptPick.nextDropTarget) over the gem instances the old
+        // dropAll(ids) walked in slot order: uniform first draw, then a weather-scaled roll
+        // between another uniform draw and one of the 2-4 slots nearest the cursor.
+        List<Rs2ItemModel> candidates = Rs2Inventory.getList(
+                item -> GEM_IDS.stream().anyMatch(gemId -> gemId == item.getId()));
+        boolean firstDraw = true;
+        while (!candidates.isEmpty()) {
+            Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
+                    firstDraw ? null : Microbot.getMouse().getMousePosition());
+            firstDraw = false;
+            if (item == null) break;
+            Rectangle bounds = Rs2Inventory.itemBounds(item);
+            candidates.remove(item);
+            if (bounds == null) continue;
+            Microbot.getMouse().click(bounds);
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
+        }
+        return true; // fire-and-forget like the old dropAll; return true to not block the cycle
     }
 
     // ── Clicks ────────────────────────────────────────────────

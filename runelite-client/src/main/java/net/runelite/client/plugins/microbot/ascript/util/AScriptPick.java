@@ -1,9 +1,12 @@
 package net.runelite.client.plugins.microbot.ascript.util;
 
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Predicate;
@@ -109,6 +112,117 @@ public final class AScriptPick {
      */
     public static Rs2ItemModel last(int id) {
         return Rs2Inventory.getLast(id);
+    }
+
+    // ── Drop-target decisions (the drop model) ─────────────────────
+
+    /**
+     * The FIRST draw of a drop batch — no cursor anchor yet, so the item is drawn UNIFORMLY
+     * (never the lowest slot). Same as {@link #nextDropTarget(List, Point)} with
+     * {@code cursor == null}.
+     */
+    public static Rs2ItemModel nextDropTarget(List<Rs2ItemModel> candidates) {
+        return nextDropTarget(candidates, null);
+    }
+
+    /**
+     * One drop-target decision for a batch being emptied.
+     *
+     * <p>Drops use a different model from the Use chain: every drop REMOVES its instance, so the
+     * sequence — not the front-loading of a stack — is what carries the signature, and the draw
+     * is uniform. {@code cursor == null} (the first draw of a batch), a cursor nowhere near the
+     * batch, or a roll under {@link #dropHopChancePercent()} draws uniformly again; otherwise the
+     * target is one of the {@link #dropNeighborCount()} candidates NEAREST the cursor — the human
+     * "sweep the neighbours, then jump" rhythm. A uniform draw alone would break it: 27
+     * corner-to-corner teleports in a row is its own tell.</p>
+     *
+     * @param candidates the instances still to drop (the caller prunes the returned one)
+     * @param cursor     the current virtual-mouse position, or {@code null} with no anchor
+     * @return the next target, or {@code null} when {@code candidates} is empty
+     */
+    public static Rs2ItemModel nextDropTarget(List<Rs2ItemModel> candidates, Point cursor) {
+        if (candidates == null || candidates.isEmpty()) return null;
+        if (candidates.size() == 1) return candidates.get(0);
+
+        List<DropAnchor> anchors = anchors(candidates); // one slot-bounds read per candidate
+        if (cursor == null || !anchorUsable(anchors, cursor) || rollDropHop()) {
+            return candidates.get(Rs2Random.between(0, candidates.size()));
+        }
+        anchors.sort(Comparator.comparingDouble(anchor -> anchor.distanceSquared(cursor)));
+        return anchors.get(Rs2Random.between(0, Math.min(dropNeighborCount(), anchors.size()))).item;
+    }
+
+    /**
+     * Chance (%) that the next drop hops to a uniform pick instead of the candidate nearest the
+     * cursor: 15% base plus the weather's erratic-click term
+     * ({@link WeatherModulation#mistakeProbabilityOffset()} — rain up to 3 points, gusts above
+     * 30 km/h up to 6), i.e. bad weather moves more erratically and hops more often. This is not
+     * an input-latency term, so it uses the mistake offset, not the speed factor.
+     */
+    static double dropHopChancePercent() {
+        final double baseHopPercent = 15.0;
+        return baseHopPercent + 100.0 * WeatherModulation.mistakeProbabilityOffset();
+    }
+
+    /**
+     * How many of the nearest candidates the "nearest" branch draws from: a 2..4 window whose
+     * tendency sits on 4. {@link Rs2Random#logNormalBounded(int, int, double)} puts its mass at its
+     * min, so the window is MIRRORED to move the mass to the far end — mostly 4, occasionally 3,
+     * rarely 2.
+     */
+    static int dropNeighborCount() {
+        final int nearestMin = 2;
+        final int nearestMax = 4;
+        return nearestMin + nearestMax
+                - Rs2Random.logNormalBounded(nearestMin, nearestMax, 1.0);
+    }
+
+    private static boolean rollDropHop() {
+        return Rs2Random.betweenInclusive(1, 100) <= dropHopChancePercent();
+    }
+
+    /** Slot anchors — one {@link Rs2Inventory#itemBounds} read per candidate, unreadable ones dropped. */
+    private static List<DropAnchor> anchors(List<Rs2ItemModel> candidates) {
+        List<DropAnchor> anchors = new java.util.ArrayList<>(candidates.size());
+        for (Rs2ItemModel candidate : candidates) {
+            Rectangle bounds = Rs2Inventory.itemBounds(candidate);
+            if (bounds != null) {
+                anchors.add(new DropAnchor(candidate, bounds));
+            }
+        }
+        return anchors;
+    }
+
+    /** True when the cursor sits within roughly two slot widths of a candidate. */
+    private static boolean anchorUsable(List<DropAnchor> anchors, Point cursor) {
+        final double reachSlots = 2.0;
+        for (DropAnchor anchor : anchors) {
+            double reach = reachSlots * anchor.extent;
+            if (anchor.distanceSquared(cursor) <= reach * reach) return true;
+        }
+        return false;
+    }
+
+    /** A candidate's slot geometry, resolved once per drop decision. */
+    private static final class DropAnchor {
+
+        private final Rs2ItemModel item;
+        private final double centreX;
+        private final double centreY;
+        private final double extent;
+
+        private DropAnchor(Rs2ItemModel item, Rectangle bounds) {
+            this.item = item;
+            this.centreX = bounds.getCenterX();
+            this.centreY = bounds.getCenterY();
+            this.extent = Math.max(bounds.getWidth(), bounds.getHeight());
+        }
+
+        private double distanceSquared(Point point) {
+            double dx = centreX - point.getX();
+            double dy = centreY - point.getY();
+            return dx * dx + dy * dy;
+        }
     }
 
     // ── Internals ──────────────────────────────────────────────────
