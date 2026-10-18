@@ -21,6 +21,8 @@ import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingLog;
 import net.runelite.client.plugins.microbot.ascript.fletching.*;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantActivity;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantItem;
+import net.runelite.client.plugins.microbot.ascript.mining.MiningAction;
+import net.runelite.client.plugins.microbot.ascript.mining.MiningOre;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MLMMiningSpotList;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingAction;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingTree;
@@ -851,6 +853,105 @@ public interface AScriptConfig extends Config {
             section = woodcuttingSection
     )
     default boolean woodcuttingAfk() {
+        return true;
+    }
+
+    // ── Mining ──────────────────────────────────────────────────
+
+    @ConfigSection(
+            name = "Mining",
+            description = "Mining settings",
+            position = 12,
+            closedByDefault = true
+    )
+    String miningSection = "mining";
+
+    @ConfigItem(
+            keyName = "miningOre",
+            name = "Ore",
+            description = "Ore to mine (ignored while Progressive is on; keep a pickaxe in the bank or equipped)",
+            position = 0,
+            section = miningSection
+    )
+    default MiningOre miningOre() {
+        return MiningOre.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "miningProgressive",
+            name = "Progressive mode",
+            description = "Pick the best ore for your level and travel to a known mine of that ore",
+            position = 1,
+            section = miningSection
+    )
+    default boolean miningProgressive() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "miningAction",
+            name = "Ore Handling",
+            description = "Drop the ore (powermine) or bank it when the inventory fills",
+            position = 2,
+            section = miningSection
+    )
+    default MiningAction miningAction() {
+        return MiningAction.DROP;
+    }
+
+    @Range(min = 5, max = 50)
+    @ConfigItem(
+            keyName = "miningRadius",
+            name = "Search Radius",
+            description = "How far (tiles) from the mining spot rocks are searched (and drift is tolerated)",
+            position = 3,
+            section = miningSection
+    )
+    default int miningRadius() {
+        return 20;
+    }
+
+    @ConfigItem(
+            keyName = "miningPickaxeSpec",
+            name = "Pickaxe Special Attack",
+            description = "Activate the dragon/infernal/crystal pickaxe special attack when worn and its energy is full",
+            position = 4,
+            section = miningSection
+    )
+    default boolean miningPickaxeSpec() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "miningMaxPlayers",
+            name = "Hop on crowding",
+            description = "Hop worlds when this many other players are mining nearby (0 = off)",
+            position = 5,
+            section = miningSection
+    )
+    default int miningMaxPlayers() {
+        return 0;
+    }
+
+    @ConfigItem(
+            keyName = "miningClayBracelet",
+            name = "Use Clay Bracelet",
+            description = "Withdraw and wear a bracelet of clay when clay mining with Banking",
+            position = 6,
+            section = miningSection
+    )
+    default boolean miningClayBracelet() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "miningAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds between batches",
+            position = 7,
+            section = miningSection
+    )
+    default boolean miningAfk() {
         return true;
     }
 
