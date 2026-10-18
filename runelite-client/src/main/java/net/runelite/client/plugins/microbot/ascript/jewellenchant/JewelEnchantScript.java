@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -42,6 +43,14 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  * Enchants jewellery using the Lvl-1 through Lvl-7 Enchant spells on the
  * Modern spellbank. Handles rune withdrawal, elemental staff equipping, and
  * the enchant spell cast + jewellery click sequence.
+ * <p>
+ * The elemental staff is taken from wherever it already is: the WORN one (kept
+ * as-is), else the staff the player carries in the inventory (worn by
+ * {@link #doAction} — with the bank open an inventory left-click is a deposit,
+ * never a Wear), else the best one in the bank. Only one staff can be worn, so
+ * "best" is the coverage of the level's staff-coverable runes and ties go to the
+ * item already at hand; a held staff that does not cover the spell's rune needs
+ * in full lets the bank's better staff win.
  * <p>
  * The cosmic rune stack is held as a locked inventory slot (like the jewellery
  * mould in {@code CraftingScript}) so the banking deposit never removes it —
@@ -155,12 +164,21 @@ public class JewelEnchantScript implements AModule {
 
         JewelEnchantLevel level = item.getEnchantLevel();
 
-        // Staff mode: the configured staff must be equipped. A level whose runes no
-        // staff supplies (Lvl-7 blood/soul) never requires one.
+        // Staff mode. A staff HELD in the inventory is worn by doAction — doBank can never
+        // equip it (with the bank open an inventory left-click is a deposit) — so it only
+        // justifies a bank trip when the bank holds a STRICTLY better one: a partial held
+        // staff is completed with withdrawn runes, never with a bank round trip. With
+        // nothing usable in hand the trip is what fetches a staff, and the orchestrator's
+        // missing-materials verdict then owns "no usable staff anywhere". The bank read here
+        // is the cached mirror — a wrong answer costs ONE extra bank cycle, which the live
+        // read at the bank corrects.
         if (config.jewelEnchantUseStaff()
                 && !staffCoverableRunes(level).isEmpty()
                 && !isWearingStaffFor(level)) {
-            return true;
+            ElementalStaff held = bestStaffInInventory(level);
+            if (held == null) return true;
+            ElementalStaff bankStaff = bankStaffFromMirror(level);
+            if (bankStaff != null && coverageOf(bankStaff, level) > coverageOf(held, level)) return true;
         }
 
         // Every elemental rune the (worn or to-be-equipped) staff does not supply
@@ -186,11 +204,14 @@ public class JewelEnchantScript implements AModule {
             return true;
         }
 
-        // Staff mode: no usable staff worn and none in the (now open) bank — stop
-        // with a message instead of looping on a staff that can never be equipped.
+        // Staff mode: no usable staff ANYWHERE — not worn, not held, not in the (now open)
+        // bank. Stop with a message instead of looping on a staff that can never be
+        // equipped. A staff merely HELD in the inventory counts as usable: doAction wears it
+        // once the bank closes, so it is never a reason to stop.
         if (config.jewelEnchantUseStaff()
                 && !staffCoverableRunes(level).isEmpty()
                 && !isWearingStaffFor(level)
+                && bestStaffInInventory(level) == null
                 && bestStaffInBank(level) == null) {
             return true;
         }
@@ -225,8 +246,9 @@ public class JewelEnchantScript implements AModule {
         if (config.jewelEnchantUseStaff()
                 && !staffCoverableRunes(level).isEmpty()
                 && !isWearingStaffFor(level)
+                && bestStaffInInventory(level) == null
                 && bestStaffInBank(level) == null) {
-            sb.append("no elemental staff (not worn, not in bank), ");
+            sb.append("no usable elemental staff (not worn, not held, not in bank), ");
         }
         for (Map.Entry<Runes, Integer> entry : runesNeededInInventory(config, level).entrySet()) {
             if (!Rs2Bank.hasBankItem(entry.getKey().getItemId(), entry.getValue())) {
@@ -257,6 +279,22 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
+        // 0. Staff plan — decided BEFORE the deposit. A usable staff held in the inventory
+        //    is worn by doAction once this cycle has closed the bank (it cannot be equipped
+        //    from here: with the bank open an inventory left-click is a deposit), so its slot
+        //    must survive the deposit below. A strictly better staff in the bank is the
+        //    alternative and is withdrawn-and-equipped at step 5. Ties go to the held staff —
+        //    the item already in the player's hands, and no bank action spent on it.
+        boolean wearHeld = false;
+        ElementalStaff heldStaff = null;
+        if (config.jewelEnchantUseStaff() && !staffCoverableRunes(level).isEmpty()
+                && !isWearingStaffFor(level)) {
+            heldStaff = bestStaffInInventory(level);
+            ElementalStaff bankStaff = bestStaffInBank(level);
+            wearHeld = heldStaff != null
+                    && (bankStaff == null || coverageOf(heldStaff, level) >= coverageOf(bankStaff, level));
+        }
+
         // 1. Lock the cosmic rune slot FIRST — if the runes are already in the
         //    inventory their slot gets locked before the deposit, so the blanket
         //    deposit below preserves them. If they are missing, ensureStackLocked
@@ -268,9 +306,16 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
-        // 2. Deposit the rest via the toolbar button; the locked cosmic slot is
-        //    preserved (a locked stack is only released when it is consumed empty).
-        if (!AScriptBank.depositAndWaitEmpty()) {
+        // 2. Deposit the rest through the keeper-aware sweep: the locked cosmic slot is
+        //    preserved (a locked stack is only released when it is consumed empty), and the
+        //    held staff joins the keep-set while it is pending its wear. depositAllExcept
+        //    locks its keepers only for the duration of the sweep and releases them itself,
+        //    so no lock is left behind on the player's staff. (depositAndWaitEmpty could not
+        //    do this — it empties every unlocked slot.)
+        Set<Integer> depositKeep = new HashSet<>();
+        depositKeep.add(Runes.COSMIC.getItemId());
+        if (wearHeld) depositKeep.add(heldStaff.getItemId());
+        if (!AScriptBank.depositAllExcept(depositKeep)) {
             log.warn("[JewelEnchant] deposit failed");
             return false;
         }
@@ -302,7 +347,10 @@ public class JewelEnchantScript implements AModule {
         //    window. The equip path interacts with the bank UI; with nothing left to
         //    withdraw, a state change mid-equip can no longer break the cycle. The
         //    early isWearingStaffFor() check also picks up a staff a human equipped
-        //    while the earlier steps ran.
+        //    while the earlier steps ran. A staff HELD in the inventory is not equipped
+        //    here at all — the bank interface would turn that click into a deposit;
+        //    equipStaff keeps it (step 0's plan) and doAction wears it once this cycle
+        //    has closed the bank.
         if (config.jewelEnchantUseStaff() && !staffCoverableRunes(level).isEmpty()) {
             if (!ensureBankOpen()) return false;
             if (!equipStaff(level)) {
@@ -326,6 +374,7 @@ public class JewelEnchantScript implements AModule {
         for (Runes rune : level.getRequiredRunes().keySet()) {
             keptIds.add(rune.getItemId());
         }
+        if (wearHeld) keptIds.add(heldStaff.getItemId()); // still pending its wear in doAction
         if (!AScriptBank.depositAllExcept(keptIds)) {
             log.warn("[JewelEnchant] contained-inventory sweep failed — retrying next cycle");
             return false;
@@ -380,6 +429,13 @@ public class JewelEnchantScript implements AModule {
         }
         jewelEnchantPostBatchBreakDone = false; // jewellery present again — the next empty state is a new batch end
         batchRanSinceBank = true;               // a batch is being worked — its end earns the closing break
+
+        // 0. Wear the elemental staff held in the inventory before anything else: the runes
+        //    it supplies are the ones needsBank may have left in the bank, and the wear can
+        //    only happen here, with the bank closed (the bank interface turns an inventory
+        //    left-click into a deposit). One tick consumed by the wear; the cast follows on
+        //    the next one.
+        if (!ensureStaffWorn(config, level)) return;
 
         // Cosmics ran out while jewellery remains — needsBank routes this state to the
         // bank cycle on the next tick. Never stop the run from here: the old hard stop
@@ -591,20 +647,54 @@ public class JewelEnchantScript implements AModule {
 
     /** True when a currently equipped staff supplies at least one rune of {@code level}. */
     private boolean isWearingStaffFor(JewelEnchantLevel level) {
-        for (ElementalStaff staff : ElementalStaff.values()) {
-            if (Rs2Equipment.isWearing(staff.getItemId()) && coversAny(staff, level)) {
-                return true;
-            }
-        }
-        return false;
+        return wornStaffFor(level) != null;
     }
 
-    /** True when {@code staff} supplies at least one staff-coverable rune of {@code level}. */
-    private boolean coversAny(ElementalStaff staff, JewelEnchantLevel level) {
+    /**
+     * The equipped staff supplying the most staff-coverable runes of {@code level}, or
+     * {@code null} when none supplies a single one. Only one staff can be worn, so this is
+     * that staff. A worn staff is never upgraded: the module keeps what the player has on
+     * and withdraws the runes it does not supply.
+     */
+    private ElementalStaff wornStaffFor(JewelEnchantLevel level) {
+        return bestStaffFor(id -> Rs2Equipment.isWearing(id), level);
+    }
+
+    /** Number of {@code level}'s staff-coverable runes {@code staff} supplies. */
+    private int coverageOf(ElementalStaff staff, JewelEnchantLevel level) {
+        int covered = 0;
         for (Runes rune : staffCoverableRunes(level)) {
-            if (staff.providesRune(rune)) return true;
+            if (staff.providesRune(rune)) covered++;
         }
-        return false;
+        return covered;
+    }
+
+    /**
+     * The staff covering the most of {@code level}'s staff-coverable runes among the ids
+     * {@code present} accepts, or {@code null} when none of them covers a single one
+     * (which is also what keeps a useless staff — an air staff for Lvl-5 — out of every
+     * "is a staff available?" answer). Ties keep the enum-declared order.
+     */
+    private ElementalStaff bestStaffFor(IntPredicate present, JewelEnchantLevel level) {
+        ElementalStaff best = null;
+        int bestCovered = 0;
+        for (ElementalStaff staff : ElementalStaff.values()) {
+            if (!present.test(staff.getItemId())) continue;
+            int covered = coverageOf(staff, level);
+            if (covered > bestCovered) {
+                bestCovered = covered;
+                best = staff;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * The best usable staff held in the inventory, or {@code null}. Inventory reads are
+     * plain container reads — no bank race-retry sleep — so the per-staff scan is free.
+     */
+    private ElementalStaff bestStaffInInventory(JewelEnchantLevel level) {
+        return bestStaffFor(id -> Rs2Inventory.hasItem(id), level);
     }
 
     /**
@@ -621,12 +711,22 @@ public class JewelEnchantScript implements AModule {
      * built for. Returns {@code null} when the bank holds no usable staff.
      */
     private ElementalStaff bestStaffInBank(JewelEnchantLevel level) {
-        ElementalStaff best = pickBestStaff(bankItemIds(), level);
+        ElementalStaff best = bankStaffFromMirror(level);
         if (best == null) {
             Rs2Random.waitEx(1200, 300);
-            best = pickBestStaff(bankItemIds(), level);
+            best = bankStaffFromMirror(level);
         }
         return best;
+    }
+
+    /**
+     * Mirror-only variant of {@link #bestStaffInBank(JewelEnchantLevel)} — the same read
+     * without the 1.2 s stale-mirror re-read. Used from {@link #needsBank}, which runs on
+     * every tick: a sleep there would stall the orchestrator loop.
+     */
+    private ElementalStaff bankStaffFromMirror(JewelEnchantLevel level) {
+        Set<Integer> ids = bankItemIds();
+        return bestStaffFor(ids::contains, level);
     }
 
     /** Item ids currently in the bank snapshot. */
@@ -634,40 +734,35 @@ public class JewelEnchantScript implements AModule {
         return Rs2Bank.getAll().map(Rs2ItemModel::getId).collect(Collectors.toSet());
     }
 
-    /** The bank staff covering the most staff-coverable runes of {@code level}. */
-    private ElementalStaff pickBestStaff(Set<Integer> bankIds, JewelEnchantLevel level) {
-        ElementalStaff best = null;
-        int bestCovered = 0;
-        for (ElementalStaff staff : ElementalStaff.values()) {
-            if (!bankIds.contains(staff.getItemId())) continue;
-            int covered = 0;
-            for (Runes rune : staffCoverableRunes(level)) {
-                if (staff.providesRune(rune)) covered++;
-            }
-            if (covered > bestCovered) {
-                bestCovered = covered;
-                best = staff;
-            }
-        }
-        return best;
+    /**
+     * The staff the module will actually wear for {@code level} this cycle: the WORN one
+     * (kept as-is), else the better of the held one and — when {@code includeBank} — the
+     * bank one. Only ONE staff can be worn, so "better" is coverage of the level's
+     * staff-coverable runes, and ties go to the item already at hand: a staff the player
+     * carries wins over a bank round trip, while a held staff that does not cover the
+     * spell's rune needs in full lets the bank's better staff win.
+     */
+    private ElementalStaff staffToWear(JewelEnchantLevel level, boolean includeBank) {
+        ElementalStaff worn = wornStaffFor(level);
+        if (worn != null) return worn;
+        ElementalStaff held = bestStaffInInventory(level);
+        ElementalStaff bankStaff = includeBank ? bankStaffFromMirror(level) : null;
+        if (held == null) return bankStaff;
+        if (bankStaff != null && coverageOf(bankStaff, level) > coverageOf(held, level)) return bankStaff;
+        return held;
     }
 
     /**
      * Elemental runes of {@code level} still missing from the inventory, given
-     * the runes a staff supplies for free: the worn one, plus — when no staff is
-     * worn yet — the one that {@link #equipStaff} would take from the open bank.
-     * Cosmic is handled separately by the callers.
+     * the runes the staff the module WILL wear supplies for free — the worn one,
+     * else the better of the held one and the one {@link #equipStaff} takes from
+     * the open bank. Cosmic is handled separately by the callers.
      */
     private Map<Runes, Integer> runesNeededInInventory(AScriptConfig config, JewelEnchantLevel level) {
         Set<Runes> covered = EnumSet.noneOf(Runes.class);
         if (config.jewelEnchantUseStaff()) {
-            // A bank staff only counts as coverage while nothing usable is worn:
-            // equipStaff keeps the worn staff, it does not upgrade it.
-            ElementalStaff bankStaff = Rs2Bank.isOpen() && !isWearingStaffFor(level)
-                    ? bestStaffInBank(level)
-                    : null;
-            for (ElementalStaff staff : ElementalStaff.values()) {
-                if (staff != bankStaff && !Rs2Equipment.isWearing(staff.getItemId())) continue;
+            ElementalStaff staff = staffToWear(level, Rs2Bank.isOpen());
+            if (staff != null) {
                 for (Runes rune : staffCoverableRunes(level)) {
                     if (staff.providesRune(rune)) covered.add(rune);
                 }
@@ -686,31 +781,93 @@ public class JewelEnchantScript implements AModule {
     }
 
     /**
-     * Equip a usable elemental staff for {@code level}: the worn one when it
-     * already supplies a required rune, otherwise the best one in the open bank.
+     * Staff step of {@link #doBank}: wear the staff this cycle's plan selected (step 0).
+     * The worn one is kept as-is; a strictly better one in the open bank is
+     * withdrawn-and-equipped; a usable staff HELD in the inventory is left for
+     * {@link #doAction}, which wears it once the bank is closed (with the bank open an
+     * inventory left-click is a deposit, never a Wear — the module must never spend a
+     * bank action trying to equip from the bags).
      *
-     * @return true when a staff supplying at least one required rune is worn
+     * @return true when a staff supplying at least one required rune is worn, or is held
+     *         and about to be worn; false only when no usable staff exists at all, which
+     *         the missing-materials verdict normally catches before this runs
      */
     private boolean equipStaff(JewelEnchantLevel level) {
         if (isWearingStaffFor(level)) return true;
 
-        ElementalStaff staff = bestStaffInBank(level);
-        if (staff == null) {
-            log.warn("[JewelEnchant] No elemental staff in bank for {}", level.getName());
-            return false;
+        ElementalStaff held = bestStaffInInventory(level);
+        ElementalStaff bankStaff = bestStaffInBank(level);
+        if (bankStaff != null && (held == null || coverageOf(bankStaff, level) > coverageOf(held, level))) {
+            Rs2Bank.withdrawAndEquip(bankStaff.getItemId());
+            if (!sleepUntil(() -> isWearingStaffFor(level), 3000)) {
+                log.warn("[JewelEnchant] Failed to equip {}", bankStaff.name());
+                return false;
+            }
+
+            // A staff swapped out by the equip lands back in the inventory. Leave it:
+            // the contained-inventory sweep in doBank() returns it, and a grid-targeted
+            // depositAll(id) is forbidden here — it dies silently on grid-silent machines,
+            // which would leave the stray in its slot anyway.
+            return true;
         }
 
-        Rs2Bank.withdrawAndEquip(staff.getItemId());
-        if (!sleepUntil(() -> isWearingStaffFor(level), 3000)) {
-            log.warn("[JewelEnchant] Failed to equip {}", staff.name());
-            return false;
+        if (held != null) {
+            // Worn by doAction once this cycle has closed the bank — see doBank's step 0.
+            log.debug("[JewelEnchant] Keeping the held {} — worn after the bank cycle", held.name());
+            return true;
         }
 
-        // A staff swapped out by the equip lands back in the inventory. Leave it:
-        // the toolbar deposit in doBank() step 1 returns it next cycle, and a
-        // grid-targeted depositAll(id) is forbidden here — it dies silently on
-        // grid-silent machines, which would leave the stray in its slot anyway.
-        return true;
+        log.warn("[JewelEnchant] No usable elemental staff for {}", level.getName());
+        return false;
+    }
+
+    /**
+     * Wear the elemental staff held in the inventory, so the runes it supplies do not have
+     * to be carried. Runs with the BANK CLOSED — with the bank open an inventory left-click
+     * is a deposit, never a Wear, which is exactly why this step lives in {@link #doAction}
+     * and not in {@link #doBank}. The click is the client mouse (no injected menu entries);
+     * a staff is a single held instance, so it resolves through {@link Rs2Inventory#get(int)}
+     * like a tool, not through the slot-randomising pick. ONE re-click covers a single lost
+     * click, mirroring {@link #selectSpell}.
+     *
+     * @return true when a staff is worn, when none is held (the bank cycle owns that state)
+     *         or when a cast is armed and the wear must wait a tick; false when the wear
+     *         failed, which counts as a failed attempt
+     */
+    private boolean ensureStaffWorn(AScriptConfig config, JewelEnchantLevel level) {
+        if (!config.jewelEnchantUseStaff() || staffCoverableRunes(level).isEmpty()) return true;
+        if (isWearingStaffFor(level)) return true;
+
+        ElementalStaff staff = bestStaffInInventory(level);
+        if (staff == null) return true; // nothing usable in hand — needsBank/doBank own that state
+
+        // Never left-click the inventory while a cast is armed: the click would cast the
+        // armed spell on the staff instead of wearing it. Skipping one tick lets the cast
+        // flow below consume the selection; the next tick wears the staff.
+        if (Rs2Inventory.isItemSelected()) return true;
+
+        Microbot.status = "WEARING — " + staff.name();
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (!Rs2Tab.switchTo(InterfaceTab.INVENTORY)) {
+                failEnchant("could not open the inventory tab to wear " + staff.name());
+                return false;
+            }
+            Rs2ItemModel held = Rs2Inventory.get(staff.getItemId());
+            Rectangle bounds = held == null ? null : Rs2Inventory.itemBounds(held);
+            if (bounds == null) {
+                log.warn("[JewelEnchant] No clickable inventory slot for {}", staff.name());
+                failEnchant("no clickable inventory slot for " + staff.name());
+                return false;
+            }
+            Microbot.getMouse().click(bounds);
+            if (sleepUntil(() -> isWearingStaffFor(level),
+                    Rs2Random.logNormalBounded(1200, 2200, weatherMultiplier))) {
+                log.debug("[JewelEnchant] Wore the held {}", staff.name());
+                return true;
+            }
+        }
+        failEnchant("could not wear " + staff.name());
+        return false;
     }
 
     /**
