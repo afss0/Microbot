@@ -93,7 +93,7 @@ public interface AScriptConfig extends Config {
             section = craftingSection
     )
     default boolean craftingAfk() {
-        return false;
+        return true;
     }
 
     @ConfigItem(
@@ -234,7 +234,7 @@ public interface AScriptConfig extends Config {
             section = fletchingSection
     )
     default boolean fletchingAfk() {
-        return false;
+        return true;
     }
 
     @ConfigItem(
@@ -677,6 +677,17 @@ public interface AScriptConfig extends Config {
             section = ammoniteCrabsSection
     )
     default boolean ammoniteCrabHopOnCrash() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "ammoniteCrabAfk",
+            name = "Random AFK",
+            description = "Take a randomized pause after a kill (log-normal 3-120 s, weather-modulated) to break up the machine-like continuity",
+            position = 8,
+            section = ammoniteCrabsSection
+    )
+    default boolean ammoniteCrabAfk() {
         return true;
     }
 

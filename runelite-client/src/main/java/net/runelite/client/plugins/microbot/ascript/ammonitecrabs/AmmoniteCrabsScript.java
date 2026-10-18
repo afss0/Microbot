@@ -67,6 +67,12 @@ public class AmmoniteCrabsScript implements AModule {
     private static final long HIJACK_TRIP_MS = 7_000;
     /** Cooldown after a spore pickup click that did not verify. */
     private static final long SPORE_RETRY_COOLDOWN_MS = 15_000;
+    /**
+     * Minimum gap between two random AFKs. The house value is 5 s, but a 1-HP crab dies every
+     * couple of seconds here, so a 5 s gap would AFK after nearly every kill and dominate the
+     * run — raised so breaks land every few kills instead.
+     */
+    private static final long AFK_MIN_GAP_MS = 30_000;
 
     public enum Phase { NONE, TRAVELING, FIGHTING, RESETTING, WALK_TO_BANK, HOPPING }
 
@@ -81,6 +87,13 @@ public class AmmoniteCrabsScript implements AModule {
     private long playerNearSinceMs = 0;
     /** Cooldown gate for a spore click that did not verify. */
     private long lastSporeAttemptMs = 0;
+    /** Timestamp of the last random AFK — {@link #AFK_MIN_GAP_MS} between AFKs. */
+    private long lastAfkTime = 0L;
+    /**
+     * Combat state of the previous fighting tick. The kill is read off the falling edge
+     * (was in combat, now not) — the single fire of the edge IS the once-per-kill guard.
+     */
+    private boolean wasInCombat = false;
 
     // -- AModule contract -------------------------------------
 
@@ -113,6 +126,8 @@ public class AmmoniteCrabsScript implements AModule {
         lastCombatMs = 0;
         playerNearSinceMs = 0;
         lastSporeAttemptMs = 0;
+        lastAfkTime = 0L;
+        wasInCombat = false;
         currentPhase = Phase.TRAVELING;
     }
 
@@ -272,6 +287,11 @@ public class AmmoniteCrabsScript implements AModule {
         }
 
         boolean inCombat = Rs2Player.isInCombat();
+        // The kill, as this module can observe it: the fight is passive (auto-retaliate), so
+        // no module action marks a crab dying — the falling edge of combat does. Consumed
+        // here unconditionally so an early return below never leaves a stale edge armed.
+        boolean killEdge = !inCombat && wasInCombat;
+        wasInCombat = inCombat;
         if (config.ammoniteCrabUseFood()) {
             Rs2Player.eatAt(EAT_AT_HP);
         }
@@ -291,6 +311,14 @@ public class AmmoniteCrabsScript implements AModule {
             lastCombatMs = System.currentTimeMillis();
         }
 
+        // Post-kill break, taken where the module would otherwise move on. lastCombatMs is
+        // then restarted: the break just spent real time out of combat, and without this the
+        // stale clock would read as aggro decay and send the next tick to RESETTING.
+        if (killEdge) {
+            postKillBreak(config);
+            lastCombatMs = System.currentTimeMillis();
+        }
+
         if (config.ammoniteCrabLootSpores() && !inCombat && !Rs2Player.isInteracting()) {
             lootSpores(loc);
         }
@@ -304,6 +332,27 @@ public class AmmoniteCrabsScript implements AModule {
         if (!inCombat && System.currentTimeMillis() - lastCombatMs > NO_COMBAT_RESET_MS) {
             Microbot.status = "RESETTING AGGRO";
             currentPhase = Phase.RESETTING;
+        }
+    }
+
+    /**
+     * Post-kill break — the house randomness pattern (Jewelry/Crafting shape, as shipped in
+     * Gem Crab Killer): a short randomized pause at every completed kill, then the
+     * toggle-gated random AFK (log-normal 3-120 s, weather-modulated, interruptible so
+     * blocking events still fire), a min-gap since the last AFK, status {@code AFK (Ns)}.
+     *
+     * The break fires once per kill because the caller only invokes it on the combat falling
+     * edge. An AFK here does NOT stop combat — the crabs keep attacking and the player keeps
+     * retaliating — what it removes is the module's own interventions (re-planting walk, spore
+     * looting, potion sips), which is the profile of a human standing AFK at the spot.
+     */
+    private void postKillBreak(AScriptConfig config) {
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
+        if (config.ammoniteCrabAfk() && System.currentTimeMillis() - lastAfkTime > AFK_MIN_GAP_MS) {
+            int afkMs = Rs2Random.logNormalBounded(3_000, 120_000, weatherMultiplier);
+            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+            AScriptSleep.sleepInterruptibly(afkMs);
+            lastAfkTime = System.currentTimeMillis();
         }
     }
 
