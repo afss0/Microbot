@@ -41,11 +41,11 @@ public class WidgetInvokeHandler extends AgentHandler {
 			return;
 		}
 
-		Number groupNum = (Number) request.get("groupId");
-		Number childNum = (Number) request.get("childId");
-		Number param0Num = (Number) request.get("param0");
-		String action = (String) request.get("action");
-		Number identifierNum = (Number) request.get("identifier");
+		Integer groupNum = getIntField(request, "groupId");
+		Integer childNum = getIntField(request, "childId");
+		Integer param0Num = getIntField(request, "param0");
+		String action = getStringField(request, "action");
+		Integer identifierNum = getIntField(request, "identifier");
 
 		if (groupNum == null || childNum == null) {
 			sendJson(exchange, 400, errorResponse("Required: groupId, childId"));

@@ -36,9 +36,9 @@ public class WidgetClickHandler extends AgentHandler {
 			return;
 		}
 
-		Number groupNum = (Number) request.get("groupId");
-		Number childNum = (Number) request.get("childId");
-		String text = (String) request.get("text");
+		Integer groupNum = getIntField(request, "groupId");
+		Integer childNum = getIntField(request, "childId");
+		String text = getStringField(request, "text");
 
 		Map<String, Object> response = new LinkedHashMap<>();
 		boolean clicked;

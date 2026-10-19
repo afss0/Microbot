@@ -1,6 +1,7 @@
 package net.runelite.client.plugins.microbot.agentserver.handler;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonParseException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import lombok.extern.slf4j.Slf4j;
@@ -65,20 +66,27 @@ public abstract class AgentHandler implements HttpHandler {
 
 		try {
 			handleRequest(exchange);
+		} catch (BadRequestException e) {
+			log.debug("Bad request for {}: {}", exchange.getRequestURI(), e.getMessage());
+			sendErrorResponse(exchange, 400, e.getMessage());
 		} catch (Exception e) {
 			if (isClientDisconnect(e)) {
 				log.debug("Client disconnected before {} response could be sent", exchange.getRequestURI());
 				return;
 			}
 			log.error("Error handling {}", exchange.getRequestURI(), e);
-			try {
-				sendJson(exchange, 500, errorResponse("Internal server error: " + e.getMessage()));
-			} catch (IOException ioe) {
-				if (!isClientDisconnect(ioe)) {
-					throw ioe;
-				}
-				log.debug("Client disconnected before error response could be sent for {}", exchange.getRequestURI());
+			sendErrorResponse(exchange, 500, "Internal server error: " + e.getMessage());
+		}
+	}
+
+	private void sendErrorResponse(HttpExchange exchange, int statusCode, String message) throws IOException {
+		try {
+			sendJson(exchange, statusCode, errorResponse(message));
+		} catch (IOException ioe) {
+			if (!isClientDisconnect(ioe)) {
+				throw ioe;
 			}
+			log.debug("Client disconnected before error response could be sent for {}", exchange.getRequestURI());
 		}
 	}
 
@@ -108,6 +116,9 @@ public abstract class AgentHandler implements HttpHandler {
 
 	public static boolean isClientDisconnect(Throwable t) {
 		while (t != null) {
+			if (t instanceof ClientDisconnectException) {
+				return true;
+			}
 			if (t instanceof java.io.IOException) {
 				String msg = t.getMessage();
 				if (msg != null) {
@@ -115,6 +126,8 @@ public abstract class AgentHandler implements HttpHandler {
 					if (lower.contains("broken pipe")
 							|| lower.contains("connection reset")
 							|| lower.contains("connection closed")
+							|| lower.contains("connection was aborted")
+							|| lower.contains("forcibly closed")
 							|| lower.contains("insufficient bytes written")) {
 						return true;
 					}
@@ -142,8 +155,14 @@ public abstract class AgentHandler implements HttpHandler {
 		byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
 		exchange.getResponseHeaders().set("Content-Type", "application/json");
 		exchange.sendResponseHeaders(statusCode, bytes.length);
+		writeBody(exchange, bytes);
+	}
+
+	protected static void writeBody(HttpExchange exchange, byte[] bytes) throws IOException {
 		try (OutputStream os = exchange.getResponseBody()) {
 			os.write(bytes);
+		} catch (IOException e) {
+			throw new ClientDisconnectException(e);
 		}
 	}
 
@@ -154,9 +173,7 @@ public abstract class AgentHandler implements HttpHandler {
 		byte[] bytes = "Not Found".getBytes(StandardCharsets.UTF_8);
 		exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
 		exchange.sendResponseHeaders(404, bytes.length);
-		try (OutputStream os = exchange.getResponseBody()) {
-			os.write(bytes);
-		}
+		writeBody(exchange, bytes);
 	}
 
 	protected Map<String, Object> errorResponse(String message) {
@@ -180,25 +197,62 @@ public abstract class AgentHandler implements HttpHandler {
 		return params;
 	}
 
+	@SuppressWarnings("unchecked")
 	protected Map<String, Object> readJsonBody(HttpExchange exchange) throws IOException {
 		String cl = exchange.getRequestHeaders().getFirst("Content-Length");
 		if (cl != null) {
 			try {
 				long advertised = Long.parseLong(cl.trim());
 				if (advertised > MAX_BODY_SIZE) {
-					throw new IllegalArgumentException("Request body too large");
+					throw new BadRequestException("Request body too large");
 				}
 			} catch (NumberFormatException ignored) {
 			}
 		}
 		byte[] bodyBytes = exchange.getRequestBody().readNBytes(MAX_BODY_SIZE + 1);
 		if (bodyBytes.length > MAX_BODY_SIZE) {
-			throw new IllegalArgumentException("Request body too large");
+			throw new BadRequestException("Request body too large");
 		}
 		String body = new String(bodyBytes, StandardCharsets.UTF_8);
-		@SuppressWarnings("unchecked")
-		Map<String, Object> parsed = gson.fromJson(body, LinkedHashMap.class);
-		return parsed;
+		Map<String, Object> parsed;
+		try {
+			parsed = gson.fromJson(body, LinkedHashMap.class);
+		} catch (JsonParseException e) {
+			throw new BadRequestException("Invalid JSON body");
+		}
+		return parsed != null ? parsed : new LinkedHashMap<>();
+	}
+
+	protected static Integer getIntField(Map<String, Object> body, String key) {
+		Object val = body.get(key);
+		if (val == null) return null;
+		if (val instanceof Number) return ((Number) val).intValue();
+		if (val instanceof String) {
+			try {
+				return Integer.parseInt(((String) val).trim());
+			} catch (NumberFormatException ignored) {
+			}
+		}
+		throw new BadRequestException("Field '" + key + "' must be a number");
+	}
+
+	protected static String getStringField(Map<String, Object> body, String key) {
+		Object val = body.get(key);
+		if (val == null) return null;
+		if (val instanceof String) return (String) val;
+		throw new BadRequestException("Field '" + key + "' must be a string");
+	}
+
+	protected static Boolean getBooleanField(Map<String, Object> body, String key) {
+		Object val = body.get(key);
+		if (val == null) return null;
+		if (val instanceof Boolean) return (Boolean) val;
+		if (val instanceof String) {
+			String s = ((String) val).trim();
+			if ("true".equalsIgnoreCase(s)) return Boolean.TRUE;
+			if ("false".equalsIgnoreCase(s)) return Boolean.FALSE;
+		}
+		throw new BadRequestException("Field '" + key + "' must be a boolean");
 	}
 
 	protected int getIntParam(Map<String, String> params, String key, int defaultValue) {
@@ -229,6 +283,18 @@ public abstract class AgentHandler implements HttpHandler {
 		String full = exchange.getRequestURI().getPath();
 		if (full.length() <= basePath.length()) return "";
 		return full.substring(basePath.length());
+	}
+
+	public static final class ClientDisconnectException extends IOException {
+		public ClientDisconnectException(IOException cause) {
+			super(cause.getMessage(), cause);
+		}
+	}
+
+	public static class BadRequestException extends IllegalArgumentException {
+		public BadRequestException(String message) {
+			super(message);
+		}
 	}
 
 	public static class HttpMethodException extends Exception {

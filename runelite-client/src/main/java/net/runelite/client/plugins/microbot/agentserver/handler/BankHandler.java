@@ -122,8 +122,8 @@ public class BankHandler extends AgentHandler {
 			return;
 		}
 
-		Boolean all = (Boolean) body.get("all");
-		String name = (String) body.get("name");
+		Boolean all = getBooleanField(body, "all");
+		String name = getStringField(body, "name");
 
 		boolean success;
 		if (Boolean.TRUE.equals(all) && (name == null || name.isEmpty())) {
@@ -157,9 +157,9 @@ public class BankHandler extends AgentHandler {
 			return;
 		}
 
-		String name = (String) body.get("name");
-		Number quantityNum = (Number) body.get("quantity");
-		Number idNum = (Number) body.get("id");
+		String name = getStringField(body, "name");
+		Integer quantityNum = getIntField(body, "quantity");
+		Integer idNum = getIntField(body, "id");
 
 		if (name == null && idNum == null) {
 			sendJson(exchange, 400, errorResponse("Provide either name or id"));

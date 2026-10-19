@@ -81,9 +81,14 @@ public class Rs2Slayer {
             {
                 return null;
             }
-            taskDBRow = (Integer) Microbot.getDBTableField(
+            Object[] bossTask = Microbot.getDBTableField(
                     bossRows.get(0),
-                    DBTableID.SlayerTaskSublist.COL_TASK, 0)[0];
+                    DBTableID.SlayerTaskSublist.COL_TASK, 0);
+            if (bossTask == null || bossTask.length == 0)
+            {
+                return null;
+            }
+            taskDBRow = (Integer) bossTask[0];
         }
         else
         {
@@ -99,10 +104,15 @@ public class Rs2Slayer {
             taskDBRow = taskRows.get(0);
         }
 
-        return (String) Microbot.getDBTableField(
+        Object[] taskName = Microbot.getDBTableField(
                 taskDBRow,
                 DBTableID.SlayerTask.COL_NAME_UPPERCASE,
-                0)[0];
+                0);
+        if (taskName == null || taskName.length == 0)
+        {
+            return null;
+        }
+        return (String) taskName[0];
     }
 
     /**

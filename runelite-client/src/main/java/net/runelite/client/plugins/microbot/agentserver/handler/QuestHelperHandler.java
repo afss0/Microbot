@@ -123,7 +123,7 @@ public class QuestHelperHandler extends AgentHandler
 		}
 
 		Map<String, Object> body = readJsonBody(exchange);
-		String name = (String) body.get("name");
+		String name = getStringField(body, "name");
 		if (name == null || name.isEmpty())
 		{
 			sendJson(exchange, 400, errorResponse("name is required"));
@@ -137,9 +137,16 @@ public class QuestHelperHandler extends AgentHandler
 			return;
 		}
 
+		PluginManager pluginManager = Microbot.getPluginManager();
+		if (pluginManager == null || !pluginManager.isActive(plugin))
+		{
+			sendJson(exchange, 409, errorResponse("Quest Helper plugin is not active"));
+			return;
+		}
+
 		if (!plugin.startQuestHelper(name))
 		{
-			sendJson(exchange, 404, errorResponse("Quest helper not found: " + name));
+			sendJson(exchange, 404, errorResponse("Quest helper not found or not loaded: " + name));
 			return;
 		}
 
@@ -173,7 +180,18 @@ public class QuestHelperHandler extends AgentHandler
 			return;
 		}
 
-		plugin.getQuestManager().shutDownQuest(true);
+		boolean stopped = Microbot.getClientThread()
+			.runOnClientThreadOptional(() ->
+			{
+				plugin.getQuestManager().shutDownQuest(true);
+				return true;
+			})
+			.orElse(false);
+		if (!stopped)
+		{
+			sendJson(exchange, 500, errorResponse("Failed to stop quest helper"));
+			return;
+		}
 
 		Map<String, Object> result = new LinkedHashMap<>();
 		result.put("success", true);

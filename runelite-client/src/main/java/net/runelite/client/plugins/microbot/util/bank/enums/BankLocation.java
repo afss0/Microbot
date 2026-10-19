@@ -154,7 +154,10 @@ public enum BankLocation {
             case FARMING_GUILD:
                 return Rs2Player.getSkillRequirement(Skill.FARMING, 45, true);
             case MINING_GUILD:
-                boolean inRegion = Rs2Player.getWorldLocation().getRegionID() == 12183 || Rs2Player.getWorldLocation().getRegionID() == 12184;
+                WorldPoint playerLocation = Rs2Player.getWorldLocation();
+                if (playerLocation == null) return false;
+                int regionId = playerLocation.getRegionID();
+                boolean inRegion = regionId == 12183 || regionId == 12184;
                 return inRegion && Rs2Player.getSkillRequirement(Skill.MINING, 60, true);
             case FISHING_GUILD:
                 return Rs2Player.getSkillRequirement(Skill.FISHING, 68, true);
@@ -219,22 +222,6 @@ public enum BankLocation {
             case VARLAMORE_WEST:
                 // Requires Children of the Sun
                 return Rs2Player.getQuestState(Quest.CHILDREN_OF_THE_SUN) == QuestState.FINISHED;
-            case LOVAKENGJ:
-            case HOSIDIUS:
-            case PISCARILIUS:
-            case ARCEUUS:
-            case WINTERTODT:
-            case SULPHUR_MINE:
-            case ZEAH_SAND_BANK:
-            case BLAST_MINE:
-            case SHAYZIEN_BANK:
-            case SHAYZIEN_CHEST:
-            case GREAT_KOUREND_CASTLE:
-            case HOSIDIUS_KITCHEN:
-            case VINERY_BANK:
-            case MOUNT_KARUULM:
-                // Requires Client of Kourend
-                return Rs2Player.getQuestState(Quest.CLIENT_OF_KOUREND) != QuestState.NOT_STARTED;
             case DWARF_MINE_BANK:
             case BLAST_FURNACE_BANK:
                 // Requires The Giant Dwarf

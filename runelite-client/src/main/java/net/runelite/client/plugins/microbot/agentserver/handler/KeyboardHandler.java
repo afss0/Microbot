@@ -37,8 +37,8 @@ public class KeyboardHandler extends AgentHandler {
 			return;
 		}
 
-		String text = (String) request.get("text");
-		String key = (String) request.get("key");
+		String text = getStringField(request, "text");
+		String key = getStringField(request, "key");
 
 		if (text == null && key == null) {
 			sendJson(exchange, 400, errorResponse("Required: text (string to type) or key (enter/escape/backspace)"));

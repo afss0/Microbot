@@ -29,6 +29,7 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
 import com.google.common.collect.ComparisonChain;
 import com.google.gson.Gson;
+import com.google.gson.JsonParseException;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -1259,7 +1260,7 @@ public class ConfigManager
 			// null and the empty string are treated identically in sendConfig and treated as an unset
 			// If a config value defaults to "" and the current value is null, it will cause an extra
 			// unset to be sent, so treat them as equal
-			boolean isInventorySetup = item.keyName().toLowerCase().contains("inventorysetup");
+			boolean isInventorySetup = method.getReturnType() == InventorySetup.class;
 			if (Objects.equals(current, valueString) || (Strings.isNullOrEmpty(current) && Strings.isNullOrEmpty(valueString)))
 			{
 				if (isInventorySetup) {
@@ -1274,9 +1275,16 @@ public class ConfigManager
 			if (current != null && !current.isBlank()) {
 				if (isInventorySetup) {
 					var setups = configInventorySetupDataManager.loadV3Setups(this);
-					InventorySetup currentObj = gson.fromJson(current, InventorySetup.class);
+					InventorySetup currentObj;
+					try {
+						currentObj = gson.fromJson(current, InventorySetup.class);
+					} catch (JsonParseException | IllegalStateException e) {
+						log.debug("Unable to parse inventory setup for {}.{}", group.value(), item.keyName(), e);
+						currentObj = null;
+					}
+					String currentName = currentObj == null ? null : currentObj.getName();
 					if (!setups.isEmpty() && setups.stream()
-							.noneMatch(x -> x.getName().equalsIgnoreCase(currentObj.getName()))) {
+							.noneMatch(x -> x.getName().equalsIgnoreCase(currentName))) {
 						setConfiguration(group.value(), item.keyName(), "");
 					}
 				}

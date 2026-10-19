@@ -97,14 +97,14 @@ public class NpcHandler extends AgentHandler {
 			return;
 		}
 
-		String action = (String) body.get("action");
+		String action = getStringField(body, "action");
 		if (action == null || action.isEmpty()) {
 			sendJson(exchange, 400, errorResponse("Missing required field: action"));
 			return;
 		}
 
-		String name = (String) body.get("name");
-		Number idNum = (Number) body.get("id");
+		String name = getStringField(body, "name");
+		Integer idNum = getIntField(body, "id");
 
 		Rs2NpcModel npc = null;
 		if (name != null && !name.isEmpty()) {

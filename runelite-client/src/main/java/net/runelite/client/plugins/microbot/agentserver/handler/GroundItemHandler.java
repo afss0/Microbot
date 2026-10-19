@@ -97,8 +97,8 @@ public class GroundItemHandler extends AgentHandler {
 			return;
 		}
 
-		String name = (String) body.get("name");
-		Number idNum = (Number) body.get("id");
+		String name = getStringField(body, "name");
+		Integer idNum = getIntField(body, "id");
 
 		Rs2TileItemModel item = null;
 		if (name != null && !name.isEmpty()) {

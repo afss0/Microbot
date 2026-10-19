@@ -66,7 +66,7 @@ public class SettingsHandler extends AgentHandler {
 			return;
 		}
 
-		Boolean enable = (Boolean) request.get("enable");
+		Boolean enable = getBooleanField(request, "enable");
 		if (enable == null) {
 			sendJson(exchange, 400, errorResponse("Required: enable (true/false)"));
 			return;
@@ -123,7 +123,7 @@ public class SettingsHandler extends AgentHandler {
 			return;
 		}
 
-		String key = (String) request.get("key");
+		String key = getStringField(request, "key");
 		Object value = request.get("value");
 		if (key == null || value == null) {
 			sendJson(exchange, 400, errorResponse("Required: key, value"));
@@ -192,8 +192,8 @@ public class SettingsHandler extends AgentHandler {
 			return;
 		}
 
-		String group = (String) request.get("group");
-		String key = (String) request.get("key");
+		String group = getStringField(request, "group");
+		String key = getStringField(request, "key");
 		Object value = request.get("value");
 
 		if (group == null || group.isEmpty() || key == null || key.isEmpty()) {

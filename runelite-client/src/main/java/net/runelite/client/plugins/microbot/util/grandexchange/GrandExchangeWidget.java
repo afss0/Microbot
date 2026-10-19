@@ -251,6 +251,10 @@ public class GrandExchangeWidget
 	static Widget getConfirm()
 	{
 		var parent = getOfferContainer();
+		if (parent == null || parent.getDynamicChildren() == null)
+		{
+			return null;
+		}
 
 		return Rs2Widget.findWidget("Confirm", Arrays.stream(parent.getDynamicChildren()).collect(Collectors.toList()), true);
 	}
@@ -276,6 +280,10 @@ public class GrandExchangeWidget
 	 */
 	static Widget getSlot(GrandExchangeSlots slot)
 	{
+		if (slot == null)
+		{
+			return null;
+		}
 		switch (slot)
 		{
 			case ONE:

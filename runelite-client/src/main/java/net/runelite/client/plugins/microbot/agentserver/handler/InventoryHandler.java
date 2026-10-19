@@ -77,14 +77,14 @@ public class InventoryHandler extends AgentHandler {
 			return;
 		}
 
-		String action = (String) body.get("action");
+		String action = getStringField(body, "action");
 		if (action == null || action.isEmpty()) {
 			sendJson(exchange, 400, errorResponse("Missing required field: action"));
 			return;
 		}
 
-		String name = (String) body.get("name");
-		Number idNum = (Number) body.get("id");
+		String name = getStringField(body, "name");
+		Integer idNum = getIntField(body, "id");
 
 		boolean success;
 		if (name != null && !name.isEmpty()) {
@@ -120,13 +120,13 @@ public class InventoryHandler extends AgentHandler {
 			return;
 		}
 
-		String name = (String) body.get("name");
+		String name = getStringField(body, "name");
 		if (name == null || name.isEmpty()) {
 			sendJson(exchange, 400, errorResponse("Missing required field: name"));
 			return;
 		}
 
-		Boolean all = (Boolean) body.get("all");
+		Boolean all = getBooleanField(body, "all");
 		boolean success;
 		if (Boolean.TRUE.equals(all)) {
 			success = Rs2Inventory.dropAll(name);

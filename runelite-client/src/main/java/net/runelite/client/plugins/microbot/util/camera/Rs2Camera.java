@@ -26,39 +26,29 @@ public class Rs2Camera {
     private static final int LEGACY_MAX_PITCH = 383;
 
     public static int angleToTile(Actor t) {
-        return Microbot.getClientThread().invoke(() -> {
-            var playerLocation = new Rs2PlayerModel().getWorldLocation();
-            int angle = (int) Math.toDegrees(Math.atan2(t.getWorldLocation().getY() - playerLocation.getY(),
-                    t.getWorldLocation().getX() - playerLocation.getX()));
-            return angle >= 0 ? angle : 360 + angle;
-        });
+        return Microbot.getClientThread().invoke(() -> angleFromPlayer(t.getWorldLocation().getX(), t.getWorldLocation().getY()));
     }
 
     public static int angleToTile(TileObject t) {
-        return Microbot.getClientThread().invoke(() -> {
-            var playerLocation = new Rs2PlayerModel().getWorldLocation();
-            int angle = (int) Math.toDegrees(Math.atan2(t.getWorldLocation().getY() - playerLocation.getY(),
-                    t.getWorldLocation().getX() - playerLocation.getX()));
-            return angle >= 0 ? angle : 360 + angle;
-        });
+        return Microbot.getClientThread().invoke(() -> angleFromPlayer(t.getWorldLocation().getX(), t.getWorldLocation().getY()));
     }
 
     public static int angleToTile(LocalPoint localPoint) {
-        return Microbot.getClientThread().invoke(() -> {
-            var playerLocation = new Rs2PlayerModel().getWorldLocation();
-            int angle = (int) Math.toDegrees(Math.atan2(localPoint.getY() - playerLocation.getY(),
-                    localPoint.getX() - playerLocation.getX()));
-            return angle >= 0 ? angle : 360 + angle;
-        });
+        return Microbot.getClientThread().invoke(() -> angleFromPlayer(localPoint.getX(), localPoint.getY()));
     }
 
     public static int angleToTile(WorldPoint worldPoint) {
-        return Microbot.getClientThread().invoke(() -> {
-            var playerLocation = new Rs2PlayerModel().getWorldLocation();
-            int angle = (int) Math.toDegrees(Math.atan2(worldPoint.getY() - playerLocation.getY(),
-                    worldPoint.getX() - playerLocation.getX()));
-            return angle >= 0 ? angle : 360 + angle;
-        });
+        return Microbot.getClientThread().invoke(() -> angleFromPlayer(worldPoint.getX(), worldPoint.getY()));
+    }
+
+    private static int angleFromPlayer(int targetX, int targetY) {
+        var playerLocation = new Rs2PlayerModel().getWorldLocation();
+        if (playerLocation == null) {
+            int facing = (int) (fromClientAngleUnits(readYawDirectly()) * (360.0 / LEGACY_ANGLE_UNITS));
+            return (facing + 90) % 360;
+        }
+        int angle = (int) Math.toDegrees(Math.atan2(targetY - playerLocation.getY(), targetX - playerLocation.getX()));
+        return angle >= 0 ? angle : 360 + angle;
     }
 
     public static void turnTo(final Actor actor) {
@@ -272,11 +262,14 @@ public class Rs2Camera {
     }
 
     public static boolean isTileOnScreen(TileObject tileObject) {
-        int viewportHeight = Microbot.getClient().getViewportHeight();
-        int viewportWidth = Microbot.getClient().getViewportWidth();
+        Client client = Microbot.getClient();
+        LocalPoint localPoint = tileObject.getLocalLocation();
+        if (!isInWorldViewScene(client, localPoint)) return false;
 
+        int viewportHeight = client.getViewportHeight();
+        int viewportWidth = client.getViewportWidth();
 
-        Polygon poly = Perspective.getCanvasTilePoly(Microbot.getClient(), tileObject.getLocalLocation());
+        Polygon poly = Perspective.getCanvasTilePoly(client, localPoint);
 
         if (poly == null) return false;
 
@@ -285,6 +278,8 @@ public class Rs2Camera {
 
     public static boolean isTileOnScreen(LocalPoint localPoint) {
         Client client = Microbot.getClient();
+        if (!isInWorldViewScene(client, localPoint)) return false;
+
         int viewportHeight = client.getViewportHeight();
         int viewportWidth = client.getViewportWidth();
 
@@ -298,6 +293,18 @@ public class Rs2Camera {
         // Optionally, check if the tile is in front of the camera
         Point canvasPoint = Perspective.localToCanvas(client, localPoint, client.getPlane());
         return canvasPoint != null;
+    }
+
+    private static boolean isInWorldViewScene(Client client, LocalPoint localPoint) {
+        if (localPoint == null) return false;
+        int sceneX = localPoint.getSceneX();
+        int sceneY = localPoint.getSceneY();
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            WorldView worldView = client.getWorldView(localPoint.getWorldView());
+            return worldView != null
+                    && sceneX >= 0 && sceneY >= 0
+                    && sceneX < worldView.getSizeX() && sceneY < worldView.getSizeY();
+        }).orElse(false);
     }
 
     // get the camera zoom

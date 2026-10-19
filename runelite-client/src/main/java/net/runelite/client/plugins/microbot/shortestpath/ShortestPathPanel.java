@@ -362,7 +362,7 @@ public class ShortestPathPanel extends PluginPanel
 		JButton startButton = new JButton("Start");
 		JButton stopButton = new JButton("Stop");
 
-		startButton.addActionListener(e -> startWalking(getSelectedSlayerMaster().getWorldPoint()));
+		startButton.addActionListener(e -> startWalking(getSlayerMasterTarget()));
 		stopButton.addActionListener(e -> stopWalking());
 
 		JPanel turaelSkipPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
@@ -720,6 +720,11 @@ public class ShortestPathPanel extends PluginPanel
 
 	void startWalking(WorldPoint point)
 	{
+		if (point == null)
+		{
+			Microbot.log("WebWalker: no valid destination to walk to.");
+			return;
+		}
 		Microbot.log("Web walking starting. Traveling to Custom Location (" + point.getX() + ", " + point.getY() + ", " + point.getPlane() + ").");
 		plugin.getShortestPathScript().setTriggerWalker(point);
 	}
@@ -1001,6 +1006,13 @@ public class ShortestPathPanel extends PluginPanel
 			return null;
 		}
 
+		return Microbot.getClientThread()
+			.runOnClientThreadOptional(() -> resolveClueLocation(clue, cluePlugin))
+			.orElse(null);
+	}
+
+	private static WorldPoint resolveClueLocation(ClueScroll clue, ClueScrollPlugin cluePlugin)
+	{
 		// Check if clue implements LocationClueScroll (single location)
 		if (clue instanceof LocationClueScroll)
 		{

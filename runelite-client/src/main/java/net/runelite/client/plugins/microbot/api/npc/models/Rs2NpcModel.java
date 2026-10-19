@@ -36,7 +36,7 @@ public class Rs2NpcModel extends Rs2ActorModel implements IEntity
     @Override
     public int getId()
     {
-        return npc.getId();
+        return Microbot.getClientThread().runOnClientThreadOptional(npc::getId).orElse(-1);
     }
 
     public int getIndex()
@@ -56,8 +56,13 @@ public class Rs2NpcModel extends Rs2ActorModel implements IEntity
      */
     public boolean isWithinDistanceFromPlayer(int maxDistance) {
         return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            return this.getLocalLocation().distanceTo(
-                    Microbot.getClient().getLocalPlayer().getLocalLocation()) <= maxDistance;
+            Player localPlayer = Microbot.getClient().getLocalPlayer();
+            LocalPoint playerLocation = localPlayer == null ? null : localPlayer.getLocalLocation();
+            LocalPoint npcLocation = this.getLocalLocation();
+            if (playerLocation == null || npcLocation == null) {
+                return false;
+            }
+            return npcLocation.distanceTo(playerLocation) <= maxDistance;
         }).orElse(false);
     }
 
@@ -69,8 +74,13 @@ public class Rs2NpcModel extends Rs2ActorModel implements IEntity
      */
     public int getDistanceFromPlayer() {
         return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            return this.getLocalLocation().distanceTo(
-                    Microbot.getClient().getLocalPlayer().getLocalLocation());
+            Player localPlayer = Microbot.getClient().getLocalPlayer();
+            LocalPoint playerLocation = localPlayer == null ? null : localPlayer.getLocalLocation();
+            LocalPoint npcLocation = this.getLocalLocation();
+            if (playerLocation == null || npcLocation == null) {
+                return Integer.MAX_VALUE;
+            }
+            return npcLocation.distanceTo(playerLocation);
         }).orElse(Integer.MAX_VALUE);
     }
 

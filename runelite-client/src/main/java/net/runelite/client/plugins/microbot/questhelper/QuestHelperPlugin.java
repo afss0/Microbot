@@ -481,7 +481,7 @@ public class QuestHelperPlugin extends Plugin
 	public boolean startQuestHelper(String questName)
 	{
 		QuestHelper questHelper = QuestHelperQuest.getByName(questName);
-		if (questHelper == null)
+		if (questHelper == null || questHelper.getQuest() == null || questHelper.getConfig() == null)
 		{
 			return false;
 		}

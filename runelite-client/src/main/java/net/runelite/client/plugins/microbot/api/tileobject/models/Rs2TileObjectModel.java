@@ -112,7 +112,7 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     public String getName() {
         return Microbot.getClientThread().invoke(() -> {
             ObjectComposition composition = Microbot.getClient().getObjectDefinition(tileObject.getId());
-            if (composition.getImpostorIds() != null) {
+            if (composition != null && composition.getImpostorIds() != null) {
                 composition = composition.getImpostor();
             }
             if (composition == null)
@@ -169,8 +169,21 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     public ObjectComposition getObjectComposition() {
         return Microbot.getClientThread().invoke(() -> {
             ObjectComposition composition = Microbot.getClient().getObjectDefinition(tileObject.getId());
-            if (composition.getImpostorIds() != null) {
-                composition = composition.getImpostor();
+            if (composition != null && composition.getImpostorIds() != null) {
+                ObjectComposition impostor = composition.getImpostor();
+                if (impostor != null) {
+                    composition = impostor;
+                }
+            }
+            return composition;
+        });
+    }
+
+    private ObjectComposition getVisibleObjectComposition() {
+        return Microbot.getClientThread().invoke(() -> {
+            ObjectComposition composition = Microbot.getClient().getObjectDefinition(tileObject.getId());
+            if (composition != null && composition.getImpostorIds() != null) {
+                return composition.getImpostor();
             }
             return composition;
         });
@@ -256,13 +269,12 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
             String objName = "";
             if (action != null) {
                 //performance improvement to only get compoisiton if action has been specified
-                var objComp = getObjectComposition();
-                String[] actions;
-                if (objComp.getImpostorIds() != null && objComp.getImpostor() != null) {
-                    actions = objComp.getImpostor().getActions();
-                } else {
-                    actions = objComp.getActions();
+                var objComp = getVisibleObjectComposition();
+                if (objComp == null) {
+                    log.warn("Failed to interact with object {} - object not currently visible", getId());
+                    return false;
                 }
+                String[] actions = objComp.getActions();
 
                 for (int i = 0; i < actions.length; i++) {
                     if (actions[i] == null) continue;

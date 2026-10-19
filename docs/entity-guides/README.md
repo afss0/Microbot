@@ -23,6 +23,12 @@ Route camera turns only for unreachable targets: [movement gotcha 23](movement.m
 
 Camera turns wait for the yaw to settle before returning: [movement gotcha 24](movement.md#24-a-camera-turn-is-finished-only-when-the-yaw-stops-changing).
 
+Scene tile loops on a boat worldview must use the tile array bounds: [movement gotcha 25](movement.md#25-bound-scene-tile-loops-by-the-tile-array-not-constantsscene_size).
+
+Instance location conversions must null-check `LocalPoint.fromWorld`: [movement gotcha 26](movement.md#26-null-check-localpointfromworld-before-converting-instance-coordinates).
+
+Bounds-check a `LocalPoint` against its worldview before projecting it to the canvas: [movement gotcha 27](movement.md#27-bounds-check-a-localpoint-against-its-own-worldview-before-projecting-it).
+
 ## Format
 
 Each entity guide is a numbered list of gotchas. Each entry follows this structure:

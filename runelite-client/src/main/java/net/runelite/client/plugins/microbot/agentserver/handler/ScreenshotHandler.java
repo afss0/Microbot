@@ -12,7 +12,6 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
@@ -76,9 +75,7 @@ public class ScreenshotHandler extends AgentHandler {
 		byte[] bytes = baos.toByteArray();
 		exchange.getResponseHeaders().set("Content-Type", "image/png");
 		exchange.sendResponseHeaders(200, bytes.length);
-		try (OutputStream os = exchange.getResponseBody()) {
-			os.write(bytes);
-		}
+		writeBody(exchange, bytes);
 	}
 
 	private BufferedImage captureFrame() {

@@ -68,7 +68,7 @@ public class LogoutHandler extends AgentHandler {
 
 		if (body != null) {
 			if (body.containsKey("wait")) {
-				wait = Boolean.TRUE.equals(body.get("wait"));
+				wait = Boolean.TRUE.equals(getBooleanField(body, "wait"));
 			}
 			if (body.containsKey("timeout")) {
 				Object raw = body.get("timeout");

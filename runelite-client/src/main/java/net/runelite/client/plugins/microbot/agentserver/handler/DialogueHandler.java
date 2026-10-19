@@ -119,8 +119,8 @@ public class DialogueHandler extends AgentHandler {
 			return;
 		}
 
-		String option = (String) body.get("option");
-		Number indexNum = (Number) body.get("index");
+		String option = getStringField(body, "option");
+		Integer indexNum = getIntField(body, "index");
 
 		Map<String, Object> response = new LinkedHashMap<>();
 		boolean success;

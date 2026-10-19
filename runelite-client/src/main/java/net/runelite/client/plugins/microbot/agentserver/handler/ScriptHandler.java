@@ -288,7 +288,7 @@ public class ScriptHandler extends AgentHandler {
 
 		} else if ("POST".equals(method)) {
 			Map<String, Object> body = readJsonBody(exchange);
-			String className = (String) body.get("className");
+			String className = getStringField(body, "className");
 			if (className == null || className.isEmpty()) {
 				sendJson(exchange, 400, errorResponse("className is required"));
 				return;
@@ -363,12 +363,12 @@ public class ScriptHandler extends AgentHandler {
 		PluginManager pm = getPluginManager();
 		if (pm == null) return null;
 
-		String className = (String) body.get("className");
+		String className = getStringField(body, "className");
 		if (className != null && !className.isEmpty()) {
 			return Microbot.getPlugin(className);
 		}
 
-		String name = (String) body.get("name");
+		String name = getStringField(body, "name");
 		if (name != null && !name.isEmpty()) {
 			return findPluginByName(name);
 		}

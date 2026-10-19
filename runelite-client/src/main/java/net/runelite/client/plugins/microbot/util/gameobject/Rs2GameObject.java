@@ -1562,10 +1562,11 @@ public class Rs2GameObject {
             return result.stream();
         }
 
-        int sceneSize = Constants.SCENE_SIZE;
+        int sizeX = tiles[z].length;
+        int sizeY = sizeX > 0 ? tiles[z][0].length : 0;
 
-        for (int x = 0; x < sceneSize; x++) {
-            for (int y = 0; y < sceneSize; y++) {
+        for (int x = 0; x < sizeX; x++) {
+            for (int y = 0; y < sizeY; y++) {
                 for (int h = 0; h <= z; h++) {
                     Tile tile = tiles[h][x][y];
                     if (tile == null) continue;
@@ -1828,7 +1829,10 @@ public class Rs2GameObject {
             int dy = playerLocal.getSceneY() - objectLocal.getSceneY();
             tooFar = Math.max(Math.abs(dx), Math.abs(dy)) > 51;
         } else {
-            tooFar = Rs2Player.getWorldLocation().distanceTo(object.getWorldLocation()) > 51;
+            WorldPoint playerWorld = Rs2Player.getWorldLocation();
+            WorldPoint objectWorld = object.getWorldLocation();
+            if (playerWorld == null || objectWorld == null) return false;
+            tooFar = playerWorld.distanceTo(objectWorld) > 51;
         }
         if (tooFar) {
             Microbot.log("Object with id " + object.getId() + " is not close enough to interact with. Walking to the object....");

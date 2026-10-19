@@ -286,6 +286,10 @@ public class MicrobotPluginListPanel extends MicrobotPluginPanel {
     }
 
     void openConfigurationPanel(MicrobotPluginConfigurationDescriptor plugin) {
+        if (plugin.getConfigDescriptor() == null) {
+            return;
+        }
+
         MicrobotConfigPanel panel = configPanelProvider.get();
         panel.init(plugin);
         muxer.pushState(this);

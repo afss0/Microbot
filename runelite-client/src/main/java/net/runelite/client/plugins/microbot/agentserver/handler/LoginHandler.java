@@ -140,14 +140,16 @@ public class LoginHandler extends AgentHandler {
 		int timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
 
 		if (body != null) {
-			if (body.containsKey("world")) {
-				targetWorld = ((Number) body.get("world")).intValue();
+			Integer world = getIntField(body, "world");
+			if (world != null) {
+				targetWorld = world;
 			}
 			if (body.containsKey("wait")) {
-				wait = Boolean.TRUE.equals(body.get("wait"));
+				wait = Boolean.TRUE.equals(getBooleanField(body, "wait"));
 			}
-			if (body.containsKey("timeout")) {
-				timeoutSeconds = Math.min(((Number) body.get("timeout")).intValue(), MAX_TIMEOUT_SECONDS);
+			Integer timeout = getIntField(body, "timeout");
+			if (timeout != null) {
+				timeoutSeconds = Math.min(timeout, MAX_TIMEOUT_SECONDS);
 				if (timeoutSeconds <= 0) timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
 			}
 		}
