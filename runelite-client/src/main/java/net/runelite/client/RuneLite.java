@@ -58,6 +58,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
+import javax.inject.Named;
 import javax.inject.Singleton;
 import javax.management.ObjectName;
 import javax.net.ssl.SSLContext;
@@ -76,63 +77,26 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.client.account.SessionManager;
 import net.runelite.client.config.ConfigManager;
-import net.runelite.client.config.RuneLiteConfig;
 import net.runelite.client.discord.DiscordService;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.externalplugins.ExternalPluginManager;
 import net.runelite.client.plugins.PluginManager;
-import net.runelite.client.plugins.microbot.Microbot;
-import net.runelite.client.plugins.microbot.externalplugins.MicrobotPluginManager;
-import net.runelite.client.plugins.microbot.recovery.RecoveryPrompt;
-import net.runelite.client.plugins.microbot.recovery.StartupRecovery;
-import net.runelite.client.proxy.ProxyChecker;
-import net.runelite.client.proxy.ProxyConfiguration;
 import net.runelite.client.rs.ClientLoader;
+import net.runelite.client.rs.auth.Account;
+import net.runelite.client.rs.auth.JagexAuthService;
+import net.runelite.client.rs.auth.Session;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.FatalErrorDialog;
 import net.runelite.client.ui.SplashScreen;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.OSType;
 import net.runelite.client.util.ReflectUtil;
-import net.runelite.client.util.CrashReportFormatter;
 import net.runelite.http.api.RuneLiteAPI;
 import okhttp3.Cache;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import org.slf4j.LoggerFactory;
-
-import javax.annotation.Nullable;
-import javax.inject.Provider;
-import javax.inject.Singleton;
-import javax.management.ObjectName;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
-import javax.swing.*;
-import java.applet.Applet;
-import java.awt.*;
-import java.io.File;
-import java.io.IOException;
-import java.lang.management.ManagementFactory;
-import java.lang.management.RuntimeMXBean;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.security.*;
-import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
-import java.util.List;
-import java.util.*;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
-
-import static java.nio.file.StandardCopyOption.COPY_ATTRIBUTES;
 
 @Singleton
 @Slf4j
@@ -149,7 +113,7 @@ public class RuneLite
 	public static final Path PLUGIN_DATA = new File(RuneLite.RUNELITE_DIR, "plugin-data").toPath();
 
 	private static final int MAX_OKHTTP_CACHE_SIZE = 20 * 1024 * 1024; // 20mb
-	public static String USER_AGENT = "RuneLite/" + RuneLiteProperties.getVersion();
+	public static String USER_AGENT = "RuneLite/" + RuneLiteProperties.getVersion() + "-" + RuneLiteProperties.getCommit() + (RuneLiteProperties.isDirty() ? "+" : "");
 
 	@Getter
 	private static Injector injector;
@@ -195,18 +159,22 @@ public class RuneLite
 	@Nullable
 	private TelemetryClient telemetryClient;
 
-    @Inject
-    private MicrobotPluginManager microbotPluginManager;
-
 	@Inject
 	private ScheduledExecutorService scheduledExecutorService;
 
-	public static void main(String[] args) throws Exception {
-        validateJavaVersion();
-        Locale.setDefault(Locale.ENGLISH);
+	@Inject
+	@Named("character")
+	@Nullable
+	private String character;
+
+	@Inject
+	private JagexAuthService jagexAuthService;
+
+	public static void main(String[] args) throws Exception
+	{
+		Locale.setDefault(Locale.ENGLISH);
 
 		final OptionParser parser = new OptionParser(false);
-        parser.accepts("clean-jagex-launcher", "Enable jagex launcher"); // will remove the credentials.properties file in .runelite folder
 		parser.accepts("developer-mode", "Enable developer tools");
 		parser.accepts("debug", "Show extra debugging output");
 		parser.accepts("safe-mode", "Disables external plugins and the GPU plugin");
@@ -215,108 +183,47 @@ public class RuneLite
 			.withRequiredArg()
 			.defaultsTo(RuneLiteProperties.getJavConfig());
 		parser.accepts("disable-telemetry", "Disable telemetry");
-        parser.accepts("disable-walker-update", "Disable updates for the static walker");
 		parser.accepts("profile", "Configuration profile to use").withRequiredArg();
+		parser.accepts("character", "Character name to use").withRequiredArg();
 		parser.accepts("noupdate", "Skips the launcher update");
-		parser.accepts("clean-randomdat", "Clean random dat file");
 
-        final ArgumentAcceptingOptionSpec<String> proxyInfo = parser.accepts("proxy", "Use a specified proxy. Format: scheme://user:pass@host:port")
-                .withRequiredArg().ofType(String.class);
-        final ArgumentAcceptingOptionSpec<File> sessionfile = parser.accepts("sessionfile", "Use a specified session file")
-                .withRequiredArg()
-                .withValuesConvertedBy(new ConfigFileConverter())
-                .defaultsTo(DEFAULT_SESSION_FILE);
+		final ArgumentAcceptingOptionSpec<File> sessionfile = parser.accepts("sessionfile", "Use a specified session file")
+			.withRequiredArg()
+			.withValuesConvertedBy(new ConfigFileConverter())
+			.defaultsTo(DEFAULT_SESSION_FILE);
 
 		final OptionSpec<Void> insecureWriteCredentials = parser.accepts("insecure-write-credentials", "Dump authentication tokens from the Jagex Launcher to a text file to be used for development");
 
 		parser.accepts("help", "Show this text").forHelp();
 		OptionSet options = parser.parse(args);
 
-        if (options.has("clean-jagex-launcher")) {
-            System.out.println("clean-jagex-launcher option is enabled. This will delete your credentials.properties file to allow logging in with a username/password");
-            System.out.println("You can disable this in your run configuration by removing -clean-jagex-launcher");
-            File myObj = new File(System.getProperty("user.home") + "/.runelite/credentials.properties");
-            if (myObj.delete()) {
-                System.out.println("Succesfully Deleted the file: " + myObj.getName());
-            } else {
-                System.out.println("Credentials.properties file was not found.");
-            }
-        }
-
-        if (options.has("help")) {
-            parser.printHelpOn(System.out);
-            System.exit(0);
-        }
-
-        final Logger logger = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-        logger.setLevel(Level.INFO);
-
-        if (options.has("debug")) {
-            logger.setLevel(Level.DEBUG);
-        }
-
-		if (options.has("clean-randomdat")) {
-			File randomDat = new File(System.getProperty("user.home"), "random.dat");
-
-			// If random.dat exists, remove it
-			if (randomDat.exists()) {
-				if (!randomDat.delete()) {
-					System.err.println("Failed to delete random.dat");
-				}
-			}
-
-			// Create a new random.dat file
-			try {
-				if (randomDat.createNewFile()) {
-					// Attempt to mark the file read‐only
-					boolean readOnlySuccess = randomDat.setReadOnly();
-					if (!readOnlySuccess) {
-						System.err.println("Failed to set random.dat to read‐only");
-					}
-				} else {
-					System.err.println("Failed to create new random.dat file");
-				}
-			} catch (IOException e) {
-				System.err.println("Error creating random.dat: " + e.getMessage());
-				e.printStackTrace();
-			}
+		if (options.has("help"))
+		{
+			parser.printHelpOn(System.out);
+			System.exit(0);
 		}
 
-		ProxyConfiguration.setupProxy(options, proxyInfo);
+		if (options.has("debug"))
+		{
+			final Logger logger = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+			logger.setLevel(Level.DEBUG);
+		}
 
-        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) ->
-        {
-            log.error("Uncaught exception:", throwable);
-            if (throwable instanceof AbstractMethodError) {
-                log.error("Classes are out of date; Build with maven again.");
-            }
-        });
+		Thread.setDefaultUncaughtExceptionHandler((thread, throwable) ->
+		{
+			log.error("Uncaught exception:", throwable);
+			if (throwable instanceof AbstractMethodError)
+			{
+				log.error("Classes are out of date; Build with Gradle again.");
+			}
+		});
 
 		final OkHttpClient okHttpClient = buildHttpClient(options.has("insecure-skip-tls-verification"));
 		RuneLiteAPI.CLIENT = okHttpClient;
 
 		SplashScreen.init();
-
-		SplashScreen.stage(0, "Setting up proxy", "Testing proxy address...");
-
-		if (options.has(proxyInfo)) {
-			String ip = ProxyChecker.getDetectedIp(okHttpClient);
-			if (ip.isEmpty()) {
-				Microbot.showMessage("Failed to detect external IP address, check your proxy settings. \n\n Make sure to use the format scheme://user:pass@host:port");
-				System.exit(1);
-			}
-
-			ClientUI.proxyMessage = "Proxy enabled (IP " + ip + ")";
-		}
-
-
-
-		final boolean safeMode = StartupRecovery.install(RUNELITE_DIR, RuneLiteProperties.getMicrobotVersion(),
-			options.has("safe-mode"), RecoveryPrompt.isEnabled(), new RecoveryPrompt()).isSafeMode();
-
 		SplashScreen.stage(0, "Preparing RuneScape", "");
 
-		boolean startupFailed = false;
 		try
 		{
 			final RuntimeConfigLoader runtimeConfigLoader = new RuntimeConfigLoader(okHttpClient);
@@ -360,11 +267,11 @@ public class RuneLite
 				clientLoader,
 				runtimeConfigLoader,
 				developerMode,
-				safeMode,
+				options.has("safe-mode"),
 				options.has("disable-telemetry"),
-				options.has("disable-walker-update"),
 				options.valueOf(sessionfile),
 				(String) options.valueOf("profile"),
+				(String) options.valueOf("character"),
 				options.has(insecureWriteCredentials),
 				options.has("noupdate")
 			));
@@ -377,88 +284,17 @@ public class RuneLite
 		}
 		catch (Exception e)
 		{
-			startupFailed = true;
 			log.error("Failure during startup", e);
-			StartupRecovery.startupFailed(e);
-			final String crashSummary = CrashReportFormatter.summarize(e);
-			final String crashDetails = CrashReportFormatter.buildReport(e);
 			SwingUtilities.invokeLater(() ->
-			{
-				if (SplashScreen.isOpen())
-				{
-					SplashScreen.showError("Microbot failed to start", crashSummary, crashDetails);
-				}
-				else
-				{
-					new FatalErrorDialog("Microbot has encountered an unexpected error during startup.")
-						.setContent(crashDetails)
-						.addCopyButton("Copy error details")
-						.addHelpButtons()
-						.open();
-				}
-			});
+				new FatalErrorDialog("RuneLite has encountered an unexpected error during startup.")
+					.addHelpButtons()
+					.open());
 		}
 		finally
 		{
-			if (!startupFailed)
-			{
-				SplashScreen.stop();
-			}
+			SplashScreen.stop();
 		}
 	}
-
-    private static void validateJavaVersion() {
-        // Get the Java version
-        String javaVersion = System.getProperty("java.version");
-
-        // Parse the major version
-        int majorVersion = getMajorJavaVersion(javaVersion);
-
-        // Check if the version is less than 11
-        if (majorVersion < 11) {
-            JOptionPane.showMessageDialog(
-                    null,
-                    "Your Java version is " + javaVersion + ".\n"
-                            + "This application requires Java 11 or higher." +
-                            "The application might not work correctly!\n\n"
-                            + "A webpage will now open where you can download the latest Java version.",
-                    "Unsupported Java Version",
-                    JOptionPane.ERROR_MESSAGE
-            );
-            if (Desktop.isDesktopSupported()) {
-                String osName = System.getProperty("os.name").toLowerCase();
-                String downloadLink;
-                // Map OS to download links
-                Map<String, String> downloadLinks = new HashMap<>();
-                downloadLinks.put("windows", "https://www.oracle.com/java/technologies/downloads/#jdk23-windows");
-                downloadLinks.put("mac", "https://www.oracle.com/java/technologies/downloads/#jdk23-mac");
-                downloadLinks.put("linux", "https://www.oracle.com/java/technologies/downloads/#jdk23-linux");
-
-                if (osName.contains("win")) {
-                    downloadLink = downloadLinks.get("windows");
-                } else if (osName.contains("mac")) {
-                    downloadLink = downloadLinks.get("mac");
-                } else if (osName.contains("nux") || osName.contains("nix")) {
-                    downloadLink = downloadLinks.get("linux");
-                } else {
-                    downloadLink = "https://www.oracle.com/java/technologies/downloads/";
-                    System.out.println("OS not recognized, defaulting to general download page.");
-                }
-
-                try {
-                    if (Desktop.isDesktopSupported()) {
-                        Desktop.getDesktop().browse(new URI(downloadLink));
-                    } else {
-                        System.err.println("Desktop operations are not supported on this platform.");
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            } else {
-                System.err.println("Desktop is not supported on this platform.");
-            }
-        }
-    }
 
 	public void start() throws Exception
 	{
@@ -468,12 +304,12 @@ public class RuneLite
 		setupSystemProps();
 		setupCompilerControl();
 
-		// Start the applet
 		copyJagexCache();
 
 		System.setProperty("jagex.disableBouncyCastle", "true");
 		System.setProperty("jagex.userhome", RUNELITE_DIR.getAbsolutePath());
 
+		// Start the applet
 		client.initialize();
 
 		SplashScreen.stage(.57, null, "Loading configuration");
@@ -483,15 +319,6 @@ public class RuneLite
 
 		// Load user configuration
 		configManager.load();
-
-		for (String plugin : StartupRecovery.takePendingDisables())
-		{
-			configManager.setConfiguration(RuneLiteConfig.GROUP_NAME, plugin, false);
-			log.info("Startup recovery disabled plugin {}", plugin);
-		}
-
-		// Initialize MicrobotPluginManager after configManager is loaded
-		microbotPluginManager.init();
 
 		// Update check requires ConfigManager to be ready before it runs
 		Updater updater = injector.getInstance(Updater.class);
@@ -503,9 +330,7 @@ public class RuneLite
 		pluginManager.loadSideLoadPlugins();
 		externalPluginManager.loadExternalPlugins();
 
-        microbotPluginManager.loadSideLoadPlugins();
-
-        SplashScreen.stage(.70, null, "Finalizing configuration");
+		SplashScreen.stage(.70, null, "Finalizing configuration");
 
 		// Plugins have provided their config, so set default config
 		// to main settings
@@ -527,7 +352,6 @@ public class RuneLite
 		eventBus.register(clientUI);
 		eventBus.register(pluginManager);
 		eventBus.register(externalPluginManager);
-		eventBus.register(microbotPluginManager);
 		eventBus.register(overlayManager);
 		eventBus.register(configManager);
 		eventBus.register(discordService);
@@ -543,6 +367,8 @@ public class RuneLite
 		clientUI.show();
 
 		client.unblockStartup();
+
+		setCharacter();
 
 		if (telemetryClient != null)
 		{
@@ -898,29 +724,44 @@ public class RuneLite
 			}
 		};
 
-        SSLContext sc = SSLContext.getInstance("TLS");
-        sc.init(null, new TrustManager[]{trustManager}, new SecureRandom());
-        okHttpClientBuilder.sslSocketFactory(sc.getSocketFactory(), trustManager);
-    }
-    // endregion
+		SSLContext sc = SSLContext.getInstance("TLS");
+		sc.init(null, new TrustManager[]{trustManager}, new SecureRandom());
+		okHttpClientBuilder.sslSocketFactory(sc.getSocketFactory(), trustManager);
+	}
+	// endregion
 
-    /**
-     * Extracts the major Java version from the full version string.
-     * @param version the full Java version string
-     * @return the major version as an integer
-     */
-    private static int getMajorJavaVersion(String version) {
-        try {
-            // Java 9 and above have version strings like "11.0.2"
-            if (version.startsWith("1.")) {
-                // Java 8 or earlier versions have strings like "1.8.0_202"
-                return Integer.parseInt(version.split("\\.")[1]);
-            } else {
-                // For Java 9 and above
-                return Integer.parseInt(version.split("\\.")[0]);
-            }
-        } catch (NumberFormatException e) {
-            return -1; // Invalid version
-        }
-    }
+	private void setCharacter()
+	{
+		if (character == null)
+		{
+			return;
+		}
+
+		jagexAuthService.loadFromStore()
+			.thenRun(() ->
+			{
+				int numChars = 0;
+				for (Session session : jagexAuthService.getSessions())
+				{
+					Account[] accounts = jagexAuthService.getAccounts(session.getSessionId());
+					if (accounts == null)
+					{
+						continue;
+					}
+
+					numChars += accounts.length;
+					for (Account account : accounts)
+					{
+						if (account.getDisplayName().equalsIgnoreCase(character))
+						{
+							log.info("Switching to character {}", account.getDisplayName());
+							jagexAuthService.switchJagexAccount(session.getSessionId(), Long.toString(account.getAccountId()), account.getDisplayName());
+							return;
+						}
+					}
+				}
+
+				log.info("Unable to find character {} ({} sessions and {} characters total)", character, jagexAuthService.getSessions().size(), numChars);
+			});
+	}
 }
