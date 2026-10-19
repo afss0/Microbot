@@ -97,7 +97,7 @@ public final class MiningLocations {
                         fremennikIslesQuests(), new HashMap<>(), new HashMap<>())));
 
         LOCATIONS.put(MiningOre.RUNITE, List.of(
-                new MiningLocation(new WorldPoint(3046, 9756, 0), "Mining Guild", false,
+                new MiningLocation(new WorldPoint(3046, 9756, 0), "Mining Guild", true,
                         new HashMap<>(), miningGuildSkills(), new HashMap<>()),
                 new MiningLocation(new WorldPoint(2917, 9907, 0), "Heroes' Guild Mine", true,
                         heroesQuests(), new HashMap<>(), new HashMap<>()),
