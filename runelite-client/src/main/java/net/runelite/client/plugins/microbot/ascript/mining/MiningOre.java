@@ -28,12 +28,12 @@ public enum MiningOre {
     MITHRIL("mithril rocks", "Mithril ore", 55, new int[]{ItemID.MITHRIL_ORE}),
     ADAMANTITE("adamantite rocks", "Adamantite ore", 70, new int[]{ItemID.ADAMANTITE_ORE}),
     BASALT("Basalt rocks", "Basalt", 72, new int[]{ItemID.BASALT}),
-    // Salts (Cam Torum, Varlamore): the ROCK names are hub-parity; the product ids map
-    // Urt/Efh/Te to the gameval RED/BLUE/GREEN salt items — VERIFY against the wiki
-    // (Urt salt page) + live before shipping.
-    URT_SALT("Urt salt rocks", "Urt salt", 72, new int[]{ItemID.RED_SALT}),
+    // Salts (Salt Mine beneath Weiss, Varlamore): the ROCK names are hub-parity; the product
+    // ids are wiki-verified — Urt salt = GREEN_SALT (22597), Te salt = RED_SALT (22593),
+    // Efh salt = BLUE_SALT (22595). The colour follows the salt's examine, not the rock name.
+    URT_SALT("Urt salt rocks", "Urt salt", 72, new int[]{ItemID.GREEN_SALT}),
     EFH_SALT("Efh salt rocks", "Efh salt", 72, new int[]{ItemID.BLUE_SALT}),
-    TE_SALT("Te salt rocks", "Te salt", 72, new int[]{ItemID.GREEN_SALT}),
+    TE_SALT("Te salt rocks", "Te salt", 72, new int[]{ItemID.RED_SALT}),
     RUNITE("runite rocks", "Runite ore", 85, new int[]{ItemID.RUNITE_ORE});
 
     private final String rockName;    // object name for the query
