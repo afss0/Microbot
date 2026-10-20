@@ -30,6 +30,13 @@ public class LampUtility {
     /** Total bound for waiting on the sustained-idle window before a lamp use is skipped. */
     private static final long IDLE_GATE_TIMEOUT_MS = 30_000;
 
+    /**
+     * Shorter idle bound while banking is yielding to the lamp: every tick spent waiting here is
+     * a tick the bank path cannot run, so the attempt is cut to a short window and its failure is
+     * counted (see the breaker) — a handful of them end the yield instead of starving banking.
+     */
+    private static final long BANK_YIELD_IDLE_TIMEOUT_MS = 5_000;
+
     private static final Map<Skill, Integer> SKILL_WIDGET_MAP = new EnumMap<>(Skill.class);
 
     // ── Idle gate (change B) ────────────────────────────────────────────
@@ -126,14 +133,20 @@ public class LampUtility {
         // The Rub op is unavailable in bank mode — never attempt it. The bank paths yield
         // to the lamp before opening, so reaching here with the bank open means an accept
         // flow ran over an open bank: bail and let the normal retry path sort it out.
+        // Counted: this branch used to return false without touching the breaker, so a bank
+        // that never closed kept the event (and the client-wide script gate) requeued forever.
         if (Rs2Bank.isOpen()) {
+            noteUseFailure();
             return false;
         }
 
         // Change B: never interrupt an activity that is already running — wait for the
         // sustained-idle window first. This covers every call site, including the Genie and
-        // Count Check accept paths.
-        if (!awaitIdleWindow(IDLE_GATE_TIMEOUT_MS)) {
+        // Count Check accept paths. While banking is yielding the window is short and its
+        // failure counts, so the breaker can end a yield that cannot be served.
+        long idleTimeout = bankYieldPending ? BANK_YIELD_IDLE_TIMEOUT_MS : IDLE_GATE_TIMEOUT_MS;
+        if (!awaitIdleWindow(idleTimeout)) {
+            noteUseFailure();
             return false;
         }
 
