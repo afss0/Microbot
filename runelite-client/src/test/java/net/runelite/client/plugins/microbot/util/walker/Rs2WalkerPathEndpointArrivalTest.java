@@ -124,16 +124,40 @@ public class Rs2WalkerPathEndpointArrivalTest
 		assertNotEquals(REACHED_ENDPOINT, Rs2Walker.getLastRouteClearReason());
 	}
 
+	/**
+	 * Fork policy (see {@code Rs2Walker#tightFinishThreshold}): arrival is purely distance-based.
+	 * A pass that begins standing on the final path endpoint arrives whenever that endpoint is
+	 * within the configured finish distance of the goal — the upstream 1–2 tile cap for a route
+	 * ending short of the goal (and its {@code isGoalReachable} guard) was removed in 949fa939b2.
+	 * So standing 3 tiles from a distance=5 goal is ARRIVED, not EXIT.
+	 */
 	@Test
-	public void endpointShortOfTheTightFinishThresholdDoesNotArrive()
+	public void endpointShortOfTheConfiguredFinishDistanceArrives()
 	{
 		WorldPoint farTarget = new WorldPoint(3230, 3214, 0);
 		Rs2Walker.currentTarget = farTarget;
 
 		WalkerState state = Rs2Walker.processWalkForTesting(farTarget, 5);
 
-		assertEquals(WalkerState.EXIT, state);
+		assertEquals(WalkerState.ARRIVED, state);
 		assertEquals(REACHED_ENDPOINT, Rs2Walker.getLastRouteClearReason());
 		assertNull(Rs2Walker.currentTarget);
+	}
+
+	/**
+	 * Pins the passthrough itself: the finish distance is exactly what the config asks for, even
+	 * when the path ends within {@code TIGHT_PATH_GOAL_GAP} of the goal (the case the old cap
+	 * narrowed to 1–2 tiles).
+	 */
+	@Test
+	public void tightFinishThresholdNeverNarrowsTheConfiguredDistance()
+	{
+		WorldPoint goal = new WorldPoint(3230, 3214, 0);
+		WorldPoint pathLast = new WorldPoint(3227, 3214, 0);
+
+		assertEquals(3, goal.distanceTo2D(pathLast));
+		assertEquals(10, Rs2Walker.tightFinishThreshold(goal, pathLast, 10));
+		assertEquals(5, Rs2Walker.tightFinishThreshold(goal, pathLast, 5));
+		assertEquals(0, Rs2Walker.tightFinishThreshold(goal, pathLast, 0));
 	}
 }
