@@ -43,6 +43,16 @@ Used during merges to verify nothing is lost.
 - **What:** Adds `bindAllInterfaces` config option to bind agent server to `0.0.0.0` instead of `127.0.0.1`, allowing connections from other machines on the network (e.g. via Tailscale).
 - **Security:** `AgentHandler` bypasses loopback check when enabled. Config warning recommends firewall or Tailscale ACL.
 
+## Entity API
+
+### Tile-Object Impostor Resolution (`Rs2TileObjectModel`)
+- **File:** `Rs2TileObjectModel.java`
+- **What:** Three fork fixes for multiloc objects whose impostor shape is not resolved yet — restored 2026-10-20 after `7224ac34c8` (the feat/custom recompaction) brought back the upstream bodies:
+  - `getName()` null-guards the object composition (an unresolved impostor dereferenced null → NPE in the interact path).
+  - `getObjectComposition()` keeps the base composition when `getImpostor()` is null, instead of replacing it with null (a multiloc whose shape is not resolved used to read as "no composition").
+  - `getVisibleObjectComposition()` returns the impostor only when it is resolved, and is the composition `interact()` uses — so `getImpostor()`/`getImpostorIds()` are read on the client thread instead of from a script thread (the client-thread guardrail flags the latter).
+- **Tests:** `Rs2TileObjectModelCompositionTest`, `ClientThreadGuardrailTest`.
+
 ## Walker
 
 ### Unconditional Finish Distance (no exceptions)
@@ -217,7 +227,7 @@ Used during merges to verify nothing is lost.
   - The enchant dispatch verifies the spell actually armed before the inventory left-click: `Rs2Inventory.isItemSelected()` (true for a selected spell; guardrail-baselined util, not a raw client call) with a bounded wait + one re-click — an unarmed click degrades to WEAR under the cursor (second half of the report).
   - Landed-cast confirmation switched from "raw count dropped" to "ENCHANTED side count rose": `JewelEnchantItem` carries `enchantedIds` (every charge variant per piece, wiki-verified; ornamente/imbued excluded) and `JewelEnchantScript.enchantedCount()` sums them — a misclick-wear drops the raw count and must no longer read as a successful enchant.
   - Merge check: `grep "depositAllExcept" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1`
-  - Merge check: `grep "getEnchantedIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantItem.java | head -1`
+  - Merge check: `grep "enchantedIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantItem.java | head -1`
 - **aScript Jewel Enchant staff sourcing: inventory-first, bank only when strictly better (Oct 2026):**
   - The module treated the elemental staff as "worn or in the bank" only — `isWearingStaffFor` read the equipment slot, `bestStaffInBank` the bank snapshot — so a staff the player was CARRYING counted as no staff at all. Starting the script with a compatible staff in the inventory opened the bank, found no staff there and hard-stopped on the missing-materials verdict: "Sapphire ring enchant: no elemental staff (not worn, not in bank)", 21 s into the first bank cycle (live 2026-10-18 15:31, container 1).
   - One resolution now feeds every staff decision (`staffToWear` over `bestStaffFor`): worn > held > bank, where "better" is the coverage of the level's staff-coverable runes and ties go to the item already at hand — so a held staff that does not cover the spell's rune needs in full lets a strictly better bank staff win. A worn staff is still never upgraded.
@@ -273,6 +283,7 @@ grep -r "WeatherModulation" runelite-client/src/main/java/ | head -5
 grep -r "detectable automation" runelite-client/src/main/java/ | head -5
 grep -r "bindAllInterfaces" runelite-client/src/main/java/ | head -5
 grep "return Math.max(0, configuredChebyshev);" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "getVisibleObjectComposition" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1
 grep -r "Skip the tile" runelite-client/src/main/java/ | head -5
 grep "microbot_afss0" settings.gradle.kts
 grep "return 15" runelite-client/src/main/java/net/runelite/client/plugins/microbot/shortestpath/ShortestPathConfig.java | head -1
@@ -306,7 +317,7 @@ ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/wo
 grep "WOODCUTTING_ANIMATION_IDS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/WoodcuttingScript.java | head -1
 # aScript jewel-enchant contained-inventory sweep + armed-cast gate (2026-10-16)
 grep "depositAllExcept" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1
-grep "getEnchantedIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantItem.java | head -1
+grep "enchantedIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantItem.java | head -1
 # aScript Ammonite random-AFK layer + unified Afk defaults (2026-10-18)
 grep "ammoniteCrabAfk" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/ammonitecrabs/AmmoniteCrabsScript.java | head -1
 grep "AFK_MIN_GAP_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/ammonitecrabs/AmmoniteCrabsScript.java | head -1
