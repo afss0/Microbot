@@ -108,6 +108,12 @@ public class CraftingScript implements AModule {
      */
     @Override
     public String validateSelection(AScriptConfig config) {
+        if (currentPhase == Phase.NONE) {
+            // Selected with no activity: the activity enum defaults to NONE, so this is the
+            // first-run state of the module — report it instead of idling silently.
+            return config.scriptSelection() == ScriptType.CRAFTING
+                    ? "no crafting activity selected" : null;
+        }
         switch (currentPhase) {
             case GEMS:
                 if (config.gemType() == CraftingGem.NONE) return "no gem selected";
@@ -538,7 +544,7 @@ public class CraftingScript implements AModule {
 
     @Override
     public void doAction(AScriptConfig config) {
-        if (!Microbot.isLoggedIn()) return;
+        if (!Microbot.isLoggedIn() || exitRequested) return;
 
         // Ensure fresh weather data (cached for 30 min, safe to call every tick)
         WeatherModulation.ensureFresh();
