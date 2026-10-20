@@ -169,12 +169,11 @@ public class BlockingEventManager
             return true;
         }
 
-        BlockingEvent event = eventQueue.poll();    
+        BlockingEvent event = pollValidEvent();
         if (event == null)
         {
             return false;
         }
-
 
         if (!isRunning.compareAndSet(false, true))
         {
@@ -211,5 +210,38 @@ public class BlockingEventManager
         });
 
         return true;
+    }
+
+    /**
+     * Polls the queue until an event that still validates comes out.
+     * <p>
+     * {@code execute() == false} re-queues an event, so the queue can hold one whose condition
+     * disappeared while it waited (a lamp consumed elsewhere, a random event despawned, the bank
+     * closed). Trusting the queue entry would run a no-op forever and hold the script-pause gate
+     * with it: re-validating here drops the stale entry instead, and the scheduler re-enqueues it
+     * on a later pass if the condition comes back. A {@code validate()} that throws is treated as
+     * "not valid this pass" — the scheduler already logs the exception on its own path.
+     */
+    private BlockingEvent pollValidEvent()
+    {
+        BlockingEvent event;
+        while ((event = eventQueue.poll()) != null)
+        {
+            try
+            {
+                if (event.validate())
+                {
+                    return event;
+                }
+            }
+            catch (Exception ex)
+            {
+                Microbot.log("Error re-validating BlockingEvent (" + event.getName() + ") at dequeue", Level.ERROR, ex);
+            }
+
+            pendingEvents.remove(event);
+            log.debug("BlockingEvent {} is no longer valid at dequeue — dropped", event.getName());
+        }
+        return null;
     }
 }
