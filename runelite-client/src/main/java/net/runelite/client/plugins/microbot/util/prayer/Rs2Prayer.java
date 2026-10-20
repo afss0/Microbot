@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.MenuAction;
 import net.runelite.api.Skill;
 import net.runelite.api.annotations.Component;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -25,11 +26,11 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 public class Rs2Prayer {
     
     @Component
-    private static final int QUICK_PRAYER_SELECT_COMPONENT_ID = 5046276;
+    private static final int QUICK_PRAYER_SELECT_COMPONENT_ID = InterfaceID.Quickprayer.BUTTONS;
     @Component
-    private static final int QUICK_PRAYER_DONE_BUTTON_COMPONENT_ID = 5046277;
+    private static final int QUICK_PRAYER_DONE_BUTTON_COMPONENT_ID = InterfaceID.Quickprayer.CLOSE;
     @Component
-    private static final int QUICK_PRAYER_ORB_COMPONENT_ID = 10485779;
+    private static final int QUICK_PRAYER_ORB_COMPONENT_ID = InterfaceID.Orbs.PRAYERBUTTON;
 
 	/**
 	 * Toggles a prayer on or off. If the prayer is already in the desired state, no action is taken.

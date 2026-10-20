@@ -98,7 +98,8 @@ public final class UdsHttp1Parser {
             // absolute URI. Prefix with a dummy scheme/authority so URI parsing accepts it,
             // then strip back to path + query so handlers see what they expect.
             URI wrapped = URI.create("http://localhost" + (rawTarget.startsWith("/") ? rawTarget : "/" + rawTarget));
-            return new URI(null, null, wrapped.getPath(), wrapped.getQuery(), null);
+            String rawQuery = wrapped.getRawQuery();
+            return URI.create(wrapped.getRawPath() + (rawQuery != null ? "?" + rawQuery : ""));
         } catch (Exception e) {
             throw new IOException("Malformed request target: " + rawTarget, e);
         }

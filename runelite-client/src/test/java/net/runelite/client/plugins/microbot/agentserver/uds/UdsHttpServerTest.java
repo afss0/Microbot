@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.agentserver.uds;
 import com.google.gson.Gson;
 import com.sun.net.httpserver.HttpExchange;
 import net.runelite.client.plugins.microbot.agentserver.handler.AgentHandler;
+import net.runelite.client.plugins.microbot.agentserver.handler.AgentHandlerQueryTest;
 import org.junit.After;
 import org.junit.Assume;
 import org.junit.Before;
@@ -21,6 +22,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +55,7 @@ public class UdsHttpServerTest {
         executor = Executors.newFixedThreadPool(2);
         server = new UdsHttpServer(socketPath, executor);
         server.createContext("/ping", new PingHandler(new Gson()));
+        server.createContext("/query", new AgentHandlerQueryTest.QueryEchoHandler());
         AgentHandler.setTokenSupplier(null);
         server.start();
     }
@@ -107,6 +110,19 @@ public class UdsHttpServerTest {
     public void malformedRequestYields400() throws Exception {
         String response = roundTrip("not-a-real-request\r\n\r\n");
         assertTrue("expected 400, got: " + response, response.startsWith("HTTP/1.1 400"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void queryValuesAreDecodedOnce() throws Exception {
+        String response = roundTrip("GET /query?q=100%25&pair=a%26b%3Dc&plus=1%2B1&item%20name=Iron+ore HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        assertTrue("expected 200, got: " + response, response.startsWith("HTTP/1.1 200"));
+        Map<String, String> params = new Gson().fromJson(response.substring(response.indexOf("\r\n\r\n") + 4), Map.class);
+        assertEquals("100%", params.get("q"));
+        assertEquals("a&b=c", params.get("pair"));
+        assertEquals("1+1", params.get("plus"));
+        assertEquals("Iron ore", params.get("item name"));
+        assertEquals(4, params.size());
     }
 
     @Test

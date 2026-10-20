@@ -184,14 +184,14 @@ public abstract class AgentHandler implements HttpHandler {
 
 	protected Map<String, String> parseQuery(URI uri) {
 		Map<String, String> params = new LinkedHashMap<>();
-		String query = uri.getQuery();
+		String query = uri.getRawQuery();
 		if (query == null) return params;
 		for (String pair : query.split("&")) {
 			String[] kv = pair.split("=", 2);
 			if (kv.length == 2) {
-				params.put(kv[0], URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
+				params.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8), URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
 			} else if (kv.length == 1) {
-				params.put(kv[0], "");
+				params.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8), "");
 			}
 		}
 		return params;

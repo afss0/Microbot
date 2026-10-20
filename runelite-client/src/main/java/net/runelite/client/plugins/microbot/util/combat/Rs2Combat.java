@@ -17,6 +17,7 @@ import net.runelite.client.plugins.microbot.util.magic.Rs2Magic;
 import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
+import java.awt.Rectangle;
 import java.util.List;
 import java.util.Map;
 
@@ -111,11 +112,16 @@ public class Rs2Combat {
         int currentSpecEnergy = Microbot.getClientThread().runOnClientThreadOptional(
                 () -> Microbot.getClient().getVarpValue(VarPlayer.SPECIAL_ATTACK_PERCENT)
         ).orElse(0);
-        if (Rs2Widget.isHidden(10485795)) return false;
+        Rectangle specBounds = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget widget = Microbot.getClient().getWidget(10485795);
+            if (widget == null || widget.isHidden()) return null;
+            return widget.getBounds();
+        }).orElse(null);
+        if (specBounds == null) return false;
         if (currentSpecEnergy < specialAttackEnergyRequired) return false;
         if (state == getSpecState()) return true;
 
-        Microbot.getMouse().click(Rs2Widget.getWidget(10485795).getBounds());
+        Microbot.getMouse().click(specBounds);
 
         log("Used special attack");
 
