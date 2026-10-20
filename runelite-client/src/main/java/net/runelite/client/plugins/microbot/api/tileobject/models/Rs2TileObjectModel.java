@@ -128,7 +128,7 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     public String getName() {
         return Microbot.getClientThread().invoke(() -> {
             ObjectComposition composition = Microbot.getClient().getObjectDefinition(tileObject.getId());
-            if (composition.getImpostorIds() != null) {
+            if (composition != null && composition.getImpostorIds() != null) {
                 composition = composition.getImpostor();
             }
             if (composition == null)
@@ -189,7 +189,30 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
                 return null;
             }
             if (composition.getImpostorIds() != null) {
-                composition = composition.getImpostor();
+                ObjectComposition impostor = composition.getImpostor();
+                if (impostor != null) {
+                    composition = impostor;
+                }
+                // An unresolved impostor (multiloc shape not loaded yet) keeps the base
+                // composition: the object IS the base until the client resolves the shape.
+            }
+            return composition;
+        });
+    }
+
+    /**
+     * The composition the object is currently showing — the impostor for a multiloc whose shape
+     * is resolved, the base otherwise, and {@code null} when the impostor is hidden.
+     * <p>
+     * Reads the client on its own thread: this is the variant interaction code may call from a
+     * script thread, so it must not touch {@link ObjectComposition#getImpostor()} directly
+     * (that call is client-thread-only — see the client-thread guardrail test).
+     */
+    private ObjectComposition getVisibleObjectComposition() {
+        return Microbot.getClientThread().invoke(() -> {
+            ObjectComposition composition = Microbot.getClient().getObjectDefinition(tileObject.getId());
+            if (composition != null && composition.getImpostorIds() != null) {
+                return composition.getImpostor();
             }
             return composition;
         });
@@ -275,17 +298,12 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
             String objName = "";
             if (action != null) {
                 //performance improvement to only get compoisiton if action has been specified
-                var objComp = getObjectComposition();
+                var objComp = getVisibleObjectComposition();
                 if (objComp == null) {
-                    log.warn("Failed to get object composition for object {}", getId());
+                    log.warn("Failed to interact with object {} - object not currently visible", getId());
                     return false;
                 }
-                String[] actions;
-                if (objComp.getImpostorIds() != null && objComp.getImpostor() != null) {
-                    actions = objComp.getImpostor().getActions();
-                } else {
-                    actions = objComp.getActions();
-                }
+                String[] actions = objComp.getActions();
 
                 for (int i = 0; i < actions.length; i++) {
                     if (actions[i] == null) continue;
