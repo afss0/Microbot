@@ -227,6 +227,8 @@ public class LiveCollisionPersistenceTest {
         final Process north = startWriter(dir, "north");
         final Process east = startWriter(dir, "east");
         try {
+            awaitWriterReady(dir, "north");
+            awaitWriterReady(dir, "east");
             try (FileChannel channel = FileChannel.open(stripeLock,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE);
                  FileLock ignored = channel.lock()) {
@@ -262,6 +264,7 @@ public class LiveCollisionPersistenceTest {
         final Path stripeLock = locks.resolve("regions-" + Math.floorMod(REGION_ID, 64) + ".lock");
         final Process peer = startWriter(dir, "north-reset");
         try {
+            awaitWriterReady(dir, "north-reset");
             try (FileChannel channel = FileChannel.open(stripeLock,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE);
                  FileLock ignored = channel.lock()) {
@@ -433,6 +436,11 @@ public class LiveCollisionPersistenceTest {
         final boolean north = args[1].startsWith("north");
         final LiveCollisionPersistence writer = new LiveCollisionPersistence(dir);
         try {
+            // Announce readiness only once this writer's I/O thread exists and the classes it needs are
+            // loaded. The parent takes the region lock only after every writer signalled, so the retry
+            // budget of the faster sibling cannot be spent waiting for the slower one's JVM startup.
+            writer.ioBarrierForTest().get(30, TimeUnit.SECONDS);
+            Files.write(dir.toPath().resolve(args[1] + "-ready"), new byte[0]);
             if (System.in.read() < 0) {
                 throw new IllegalStateException("missing start signal");
             }
@@ -485,13 +493,30 @@ public class LiveCollisionPersistenceTest {
         assertEquals(Boolean.FALSE, view.edge(3200, 3200, 0, FLAG_NORTH));
     }
 
+    /**
+     * Startup allowance for a forked writer JVM. It is deliberately generous (vs the 10s
+     * in-test deadlines): under the full {@code runUnitTests} suite the machine is running
+     * many Gradle workers at once, and a JVM that needs seconds longer to reach {@code main}
+     * must not look like a broken writer.
+     */
+    private static final long WRITER_STARTUP_TIMEOUT_SECONDS = 60;
+
+    private void awaitWriterReady(File dir, String edge) throws Exception {
+        awaitFile(dir.toPath().resolve(edge + "-ready"),
+                "writer " + edge + " did not finish starting up",
+                WRITER_STARTUP_TIMEOUT_SECONDS);
+    }
+
     private void awaitRegion(Path target) throws Exception {
-        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        awaitFile(target, "pending region should be retried after the lock path recovers", 10);
+    }
+
+    private void awaitFile(Path target, String message, long timeoutSeconds) throws Exception {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
         while (!Files.isRegularFile(target) && System.nanoTime() < deadline) {
             Thread.sleep(20);
         }
-        assertTrue("pending region should be retried after the lock path recovers",
-                Files.isRegularFile(target));
+        assertTrue(message, Files.isRegularFile(target));
     }
 
     private LiveCollisionView load(File dir) {
