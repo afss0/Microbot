@@ -159,7 +159,6 @@ public class RuneLiteDebug {
         parser.accepts("disable-telemetry", "Disable telemetry");
         parser.accepts("disable-walker-update", "Disable updates for the static walker");
         parser.accepts("profile", "Configuration profile to use").withRequiredArg();
-        parser.accepts("character", "Character name to use").withRequiredArg();
         parser.accepts("noupdate", "Skips the launcher update");
 
         final ArgumentAcceptingOptionSpec<String> proxyInfo = parser.accepts("proxy", "Use a proxy server for your runelite session")
@@ -269,7 +268,7 @@ public class RuneLiteDebug {
                     options.has("disable-walker-update"),
                     options.valueOf(sessionfile),
                     (String) options.valueOf("profile"),
-                    (String) options.valueOf("character"),
+                    null,
                     options.has(insecureWriteCredentials),
                     options.has("noupdate")
             ));

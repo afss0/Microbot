@@ -914,31 +914,11 @@ public class RuneLite
 			}
 		};
 
-		SSLContext sc = SSLContext.getInstance("TLS");
-		sc.init(null, new TrustManager[]{trustManager}, new SecureRandom());
-		okHttpClientBuilder.sslSocketFactory(sc.getSocketFactory(), trustManager);
-	}
-	// endregion
-
-    /**
-     * Extracts the major Java version from the full version string.
-     * @param version the full Java version string
-     * @return the major version as an integer
-     */
-    private static int getMajorJavaVersion(String version) {
-        try {
-            // Java 9 and above have version strings like "11.0.2"
-            if (version.startsWith("1.")) {
-                // Java 8 or earlier versions have strings like "1.8.0_202"
-                return Integer.parseInt(version.split("\\.")[1]);
-            } else {
-                // For Java 9 and above
-                return Integer.parseInt(version.split("\\.")[0]);
-            }
-        } catch (NumberFormatException e) {
-            return -1; // Invalid version
-        }
+        SSLContext sc = SSLContext.getInstance("TLS");
+        sc.init(null, new TrustManager[]{trustManager}, new SecureRandom());
+        okHttpClientBuilder.sslSocketFactory(sc.getSocketFactory(), trustManager);
     }
+    // endregion
 
 	private void setCharacter()
 	{
@@ -962,7 +942,7 @@ public class RuneLite
 					numChars += accounts.length;
 					for (Account account : accounts)
 					{
-						if (account.getDisplayName().equalsIgnoreCase(character))
+						if (character.equalsIgnoreCase(account.getDisplayName()))
 						{
 							log.info("Switching to character {}", account.getDisplayName());
 							jagexAuthService.switchJagexAccount(session.getSessionId(), Long.toString(account.getAccountId()), account.getDisplayName());
@@ -974,4 +954,24 @@ public class RuneLite
 				log.info("Unable to find character {} ({} sessions and {} characters total)", character, jagexAuthService.getSessions().size(), numChars);
 			});
 	}
+
+    /**
+     * Extracts the major Java version from the full version string.
+     * @param version the full Java version string
+     * @return the major version as an integer
+     */
+    private static int getMajorJavaVersion(String version) {
+        try {
+            // Java 9 and above have version strings like "11.0.2"
+            if (version.startsWith("1.")) {
+                // Java 8 or earlier versions have strings like "1.8.0_202"
+                return Integer.parseInt(version.split("\\.")[1]);
+            } else {
+                // For Java 9 and above
+                return Integer.parseInt(version.split("\\.")[0]);
+            }
+        } catch (NumberFormatException e) {
+            return -1; // Invalid version
+        }
+    }
 }
