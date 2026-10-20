@@ -118,6 +118,13 @@ public class AScript extends Script {
     private static final int MISSING_CONFIRMATION_TICKS = 3;
     /** Hard bound on the confirmation wait — an unreadable mirror must not hold the tick. */
     private static final int MISSING_MAX_TICKS = 12;
+    /** Consecutive unexpected exceptions in the scheduled loop before the run stops. */
+    private int consecutiveTickErrors = 0;
+    private static final int MAX_TICK_ERRORS = 5;
+    /** Selection the run counters belong to — a switch must start them from zero. */
+    private ScriptType lastSelection = ScriptType.NONE;
+    /** Last "waiting for configuration" message logged — the hold logs once per change. */
+    private String lastSelectionError = null;
     /** Track if the player was logged in at least once — triggers the logout watcher. */
     private boolean playerWasLoggedIn = false;
     /** Prevent repeated logout notifications. */
@@ -154,8 +161,20 @@ public class AScript extends Script {
 
                 if (!super.run()) return; // heartbeat / pause guard
                 tick();
+                consecutiveTickErrors = 0;
             } catch (Exception ex) {
                 log.error("[AScript] Unexpected error in scheduled loop", ex);
+                // A loop that throws every tick automates nothing: stop loudly after a bound
+                // instead of logging forever with the config still enabled.
+                try {
+                    if (++consecutiveTickErrors >= MAX_TICK_ERRORS) {
+                        consecutiveTickErrors = 0;
+                        stopWithMessage("aScript Stopped — Loop Errors",
+                                MAX_TICK_ERRORS + " consecutive exceptions in the script loop — see the client log");
+                    }
+                } catch (Exception stopEx) {
+                    log.error("[AScript] Could not stop the script after repeated loop errors", stopEx);
+                }
             }
         }, 0, 600, TimeUnit.MILLISECONDS);
 
@@ -163,16 +182,26 @@ public class AScript extends Script {
     }
 
     private void tick() {
+        ScriptType selection = config == null ? ScriptType.NONE : config.scriptSelection();
+        if (selection != lastSelection) {
+            // A different module starts from zero: a bank/missing/eat streak earned by the
+            // previous selection must never decide the new one's fate.
+            lastSelection = selection;
+            lastSelectionError = null;
+            resetRunCounters();
+        }
+
         // 1. Config check
-        if (config == null || !config.enabled() || config.scriptSelection() == ScriptType.NONE) {
+        if (config == null || !config.enabled() || selection == ScriptType.NONE) {
             currentPhase = Phase.DISABLED;
             stopRequested = false;
-            consecutiveBankFailures = 0;
-            consecutiveBankOpenFailures = 0;
-            consecutiveBankCloseFailures = 0;
-            consecutiveMissingVerdicts = 0;
-            consecutiveEatFailures = 0;
-            eatThreshold = 0;
+            // No phase resolution runs on this path, so the NONE -> active edge is armed here:
+            // a self-stopped module leaves wasActive == true, and without this the user's
+            // reselect would never clear its exit flag (doAction would return forever).
+            for (AModule mod : MODULES) {
+                wasActive.put(mod, false);
+            }
+            resetRunCounters();
             return;
         }
 
@@ -222,17 +251,37 @@ public class AScript extends Script {
             wasActive.put(mod, active);
         }
 
-        // 3. Validate selection (first error wins)
+        // 3. Validate the selection (first error wins). Every module is asked, not only the
+        //    active ones: a module whose activity is unset resolves to NONE, and that is
+        //    precisely the state its validateSelection reports on (the activity enums default
+        //    to NONE, so this is the first-run state of a freshly selected module).
         String selectionError = null;
+        AModule invalidModule = null;
         for (AModule mod : MODULES) {
-            if (!mod.isActive()) continue;
-            selectionError = mod.validateSelection(config);
-            if (selectionError != null) break;
+            String error = mod.validateSelection(config);
+            if (error != null) {
+                selectionError = error;
+                invalidModule = mod;
+                break;
+            }
         }
         if (selectionError != null) {
+            if (invalidModule != null && !invalidModule.isActive()) {
+                // Selected but not configured yet. This is a config hold, not a failure: the
+                // run starts as soon as the user picks the activity, so the plugin must not
+                // disable itself in the middle of the config panel.
+                if (!selectionError.equals(lastSelectionError)) {
+                    lastSelectionError = selectionError;
+                    log.info("[AScript] Waiting for configuration: {}", selectionError);
+                }
+                Microbot.status = "CONFIGURE — " + selectionError;
+                currentPhase = Phase.IDLE;
+                return;
+            }
             stopWithMessage("aScript Stopped", selectionError);
             return;
         }
+        lastSelectionError = null;
 
         // 4. Find the active module that needs the bank (at most one). A module may
         //    report that it is not ready for the bank cycle yet (readyForBank): it still
@@ -348,6 +397,9 @@ public class AScript extends Script {
                 }
             }
         } else {
+            // Assume no module runs this tick; only an actual dispatch promotes the phase. This
+            // also clears a sticky CRAFTING left behind by a module that just became inactive.
+            currentPhase = Phase.IDLE;
             for (AModule mod : MODULES) {
                 if (mod.isActive()) {
                     currentPhase = Phase.CRAFTING;
@@ -355,11 +407,17 @@ public class AScript extends Script {
                     break;
                 }
             }
-            // No active module → IDLE
-            if (currentPhase != Phase.CRAFTING) {
-                currentPhase = Phase.IDLE;
-            }
         }
+    }
+
+    /** Zeroes every run counter — on a selection change, a disable, and in {@link #shutdown()}. */
+    private void resetRunCounters() {
+        consecutiveBankFailures = 0;
+        consecutiveBankOpenFailures = 0;
+        consecutiveBankCloseFailures = 0;
+        consecutiveMissingVerdicts = 0;
+        consecutiveEatFailures = 0;
+        eatThreshold = 0;
     }
 
     // ── QOL: auto-eat ───────────────────────────────────────
@@ -552,11 +610,10 @@ public class AScript extends Script {
     @Override
     public void shutdown() {
         stopRequested = false;
-        consecutiveBankFailures = 0;
-        consecutiveBankOpenFailures = 0;
-        consecutiveBankCloseFailures = 0;
-        consecutiveEatFailures = 0;
-        eatThreshold = 0;
+        resetRunCounters();
+        consecutiveTickErrors = 0;
+        lastSelection = ScriptType.NONE;
+        lastSelectionError = null;
         playerWasLoggedIn = false;
         logoutHandled = false;
         for (AModule mod : MODULES) {
