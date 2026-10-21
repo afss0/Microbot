@@ -3567,7 +3567,14 @@ public class Rs2Bank {
     }
 
     /**
-     * Toggles the lock state of the given bank inventory item.
+     * Toggles the lock state of the given bank inventory item — the slot-addressed primitive
+     * every lock/unlock of a SPECIFIC slot goes through.
+     * <p>
+     * Public because a caller that must protect one exact slot (same-name duplicates: 27 rings
+     * in 27 slots) cannot use {@link #toggleItemLock(String, boolean)}: the name lookup resolves
+     * the first matching item, so it would toggle that one slot repeatedly. Such callers resolve
+     * the item with {@code Rs2Inventory.getItemInSlot(slot)} and pass it here. No behaviour change
+     * for existing callers.
      * <p>
      * Checks preconditions: the item must be non-null, the bank must be open,
      * the inventory must contain the item, and the bank’s lock UI options must be enabled.
@@ -3589,7 +3596,7 @@ public class Rs2Bank {
      * @param rs2Item the inventory item model to lock or unlock
      * @return true if the lock state changed (detected via varbit change); false otherwise
      */
-    private static boolean toggleItemLock(Rs2ItemModel rs2Item)
+    public static boolean toggleItemLock(Rs2ItemModel rs2Item)
     {
         if (rs2Item == null || !isOpen() || !Rs2Inventory.hasItem(rs2Item.getId())) return false;
 
