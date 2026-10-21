@@ -452,11 +452,38 @@ public class CraftingScript implements AModule {
         // Deposit via toolbar button
         if (!AScriptBank.depositAndWaitEmpty()) return false;
 
-        if (!AScriptBank.withdrawVerified(staff.getItemName())) {
+        // Reserve the slots for BOTH materials before any click. Battlestaves are not
+        // stackable, so a first withdraw that fills the bag leaves the orbs nothing to land
+        // on — Rs2Bank.withdrawAll bails on a full inventory. The batch is capped at half the
+        // free slots (13 is the classic half-bag batch): that is the pair budget, so the same
+        // count of orbs always fits whether they arrive stacked or not, and locked slots
+        // (tool, XP lamp) shrink the batch instead of failing the cycle.
+        int freeSlots = AScriptBank.freeSlots();
+        int batch = Math.min(13, freeSlots / 2);
+        if (batch < 1) {
+            AScriptNotify.notify("Banking Failed", "No free inventory slots for staff making ("
+                    + freeSlots + " free — a locked slot is holding the rest)");
+            return false;
+        }
+
+        // Never ask for more than the bank can serve on either side: the withdraw dispatch
+        // resolves its bank row by the requested amount, so an over-request finds no row and
+        // dispatches nothing. A short stack here means a smaller batch, not a failed cycle.
+        batch = Math.min(batch, Math.min(AScriptBank.bankQuantity(staff.getItemName()),
+                AScriptBank.bankQuantity(staff.getOrb())));
+        if (batch < 1) {
+            AScriptNotify.notify("Banking Failed",
+                    "No " + staff.getItemName() + " / " + staff.getOrb() + " pair in bank");
+            return false;
+        }
+
+        if (!AScriptBank.ensureBankOpen()) return false;
+        if (!AScriptBank.withdrawVerified(staff.getItemName(), batch)) {
             AScriptNotify.notify("Banking Failed", "No " + staff.getItemName() + " in bank");
             return false;
         }
-        if (!AScriptBank.withdrawVerified(staff.getOrb())) {
+        if (!AScriptBank.ensureBankOpen()) return false;
+        if (!AScriptBank.withdrawVerified(staff.getOrb(), batch)) {
             AScriptNotify.notify("Banking Failed", "No " + staff.getOrb() + " in bank");
             return false;
         }
@@ -520,15 +547,38 @@ public class CraftingScript implements AModule {
             return false; // waitForInventoryChanges timed out — retry next tick
         }
 
-        // Withdraw bar
-        if (!AScriptBank.withdrawVerified(Integer.toString(item.getJewelryType().getMetalBarId()))) {
+        // Withdraw bar. Bars are NOT stackable, so the bar count has to leave the gem stack a
+        // slot: one slot is reserved for it up front (cut gems stack into a single slot). Free
+        // slots already exclude the locked mould and any XP lamp, so a locked slot shrinks the
+        // batch instead of filling the bag and making the gem withdraw impossible.
+        String barRef = Integer.toString(item.getJewelryType().getMetalBarId());
+        int freeSlots = AScriptBank.freeSlots();
+        int batch = Math.min(AScriptBank.bankQuantity(barRef), Math.max(0, freeSlots - 1));
+        if (item.hasGem()) {
+            // One gem per bar is consumed — never withdraw bars the gems cannot match.
+            batch = Math.min(batch, AScriptBank.bankQuantity(Integer.toString(item.getGem().getCutItemID())));
+        }
+        if (batch < 1) {
+            AScriptNotify.notify("Banking Failed", item.hasGem()
+                    ? "No " + item.getJewelryType().getLabel() + " bar / " + item.getGem().getCutItemName()
+                      + " pair in bank for " + item.getName()
+                    : "No " + item.getJewelryType().getLabel() + " in bank for " + item.getName());
+            return false;
+        }
+
+        if (!AScriptBank.ensureBankOpen()) return false;
+        if (!AScriptBank.withdrawVerified(barRef, batch)) {
             AScriptNotify.notify("Banking Failed", "No " + item.getJewelryType().getLabel() + " in bank");
             return false;
         }
 
-        // If gem jewelry, withdraw cut gems
+        // If gem jewelry, withdraw cut gems — and verify the count, not just the presence:
+        // withdrawVerified(name, batch) confirms the inventory count delta, so a gem stack that
+        // only partly landed (or landed as banknotes) fails here instead of starting a batch
+        // that stalls on its second bar.
         if (item.hasGem()) {
-            if (!AScriptBank.withdrawVerified(Integer.toString(item.getGem().getCutItemID()))) {
+            if (!AScriptBank.ensureBankOpen()) return false;
+            if (!AScriptBank.withdrawVerified(Integer.toString(item.getGem().getCutItemID()), batch)) {
                 AScriptNotify.notify("Banking Failed", "No " + item.getGem().getCutItemName() + " in bank");
                 return false;
             }

@@ -179,6 +179,34 @@ public final class AScriptBank {
     }
 
     /**
+     * Re-check the bank window before a withdraw step (the Jewel Enchant {@code ensureBankOpen()}
+     * pattern, shared here). A bank that closed mid-cycle must surface as a RETRY, never as a
+     * silent material miss: the withdraw helpers read the bank mirror, and against a closed
+     * window that mirror is empty or stale, so a missing material and a closed window look
+     * identical from the outside. The caller returns {@code false} and the orchestrator retries
+     * on a later tick, with this WARN naming the real cause.
+     *
+     * @return true when the bank is open (reopening it when it had closed); false when it is
+     *         closed and could not be reopened — the caller must retry next cycle
+     */
+    public static boolean ensureBankOpen() {
+        if (Rs2Bank.isOpen()) {
+            return true;
+        }
+        log.warn("[AScriptBank] Bank window closed mid-cycle — reopening before the next withdraw step");
+        if (!Rs2Bank.openBank()) {
+            log.warn("[AScriptBank] Bank could not be reopened — retrying next cycle");
+            return false;
+        }
+        if (!sleepUntil(Rs2Bank::isOpen, WITHDRAW_VERIFY_TIMEOUT_MS)) {
+            log.warn("[AScriptBank] Bank reopen did not confirm within {} ms — retrying next cycle",
+                    WITHDRAW_VERIFY_TIMEOUT_MS);
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Withdraw up to {@code quantity} of {@code name} from the bank and verify the AMOUNT that
      * landed, not merely that the item is present. Use for stackable items where a specific
      * amount is needed (e.g. 14 unstrung bows + 14 bow strings for stringing).
@@ -302,6 +330,16 @@ public final class AScriptBank {
      */
     private static boolean withdrawWithRetry(String nameOrId, BooleanSupplier dispatch, String describe,
                                              BooleanSupplier landed) {
+        if (!Rs2Bank.isOpen()) {
+            // A closed window is NOT evidence that the bank lacks the item: the mirror those
+            // reads consult is empty or stale while the bank is closed, so failing silently here
+            // reports a missing material for what is really a mid-cycle close. Surface it as a
+            // retry (the caller returns false and re-runs the cycle, reopening the bank), with a
+            // line naming the cause — never a silent miss.
+            log.warn("[AScriptBank] Cannot withdraw {} — the bank window is closed; retrying next cycle",
+                    describe);
+            return false;
+        }
         if (!hasBankItem(nameOrId)) {
             return false; // bank lacks it — nothing to dispatch (silent, as before)
         }
@@ -773,6 +811,47 @@ public final class AScriptBank {
         return Rs2Inventory.items().anyMatch(item ->
                 !item.isNoted() && item.getName() != null
                         && item.getName().toLowerCase().contains(name.toLowerCase()));
+    }
+
+    /**
+     * Free inventory slots right now — the reservation basis for every multi-material withdraw.
+     * <p>
+     * Locked slots (held tools, the mould, the XP lamp) count as OCCUPIED, which is the point:
+     * a locked anchor must shrink the batch instead of letting the first withdraw fill the bag
+     * and make the second material unwithdrawable ({@code Rs2Bank.withdrawAll} bails on a full
+     * inventory).
+     *
+     * @return number of empty inventory slots (0 when the bag is full)
+     */
+    public static int freeSlots() {
+        return Rs2Inventory.emptySlotCount();
+    }
+
+    /**
+     * Units of {@code nameOrId} the bank holds right now (0 when absent or when no bank snapshot
+     * is loaded). Public front door for the amount planning a module does BEFORE a withdraw: a
+     * batch has to be computed from what the bank actually holds instead of a hardcoded 14 or 13,
+     * because the withdraw dispatch itself resolves the bank row by the requested amount — a
+     * request for more than the stack holds finds no row at all and dispatches nothing.
+     *
+     * @param nameOrId item name (substring match, shortest display name wins — the same row the
+     *                 withdraw would click) or numeric id as a string
+     * @return units available in the bank, stacked rows summed
+     */
+    public static int bankQuantity(String nameOrId) {
+        int quantity = availableBankQuantity(nameOrId);
+        if (quantity > 0) {
+            return quantity;
+        }
+        // The bank mirror is refreshed by bank container events, so one raw read can return 0
+        // right after the bank opens or after a deposit. The retrying {@link #hasBankItem}
+        // family gives the mirror its window; when it confirms the item, one bounded re-read
+        // corrects the amount instead of the caller concluding "no materials" from a stale row.
+        if (!hasBankItem(nameOrId)) {
+            return 0;
+        }
+        sleepUntil(() -> availableBankQuantity(nameOrId) > 0, 1000);
+        return availableBankQuantity(nameOrId);
     }
 
     /**
