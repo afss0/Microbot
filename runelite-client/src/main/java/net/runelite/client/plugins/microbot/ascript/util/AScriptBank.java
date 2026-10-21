@@ -235,6 +235,15 @@ public final class AScriptBank {
         if (held >= quantity) {
             return true;
         }
+        if (!Rs2Bank.isOpen()) {
+            // Same rule as {@link #withdrawWithRetry}: a closed window is not evidence that the
+            // bank lacks the item. The amount read below consults a bank mirror that is empty or
+            // stale while the bank is closed, so it would report a missing material for what is
+            // really a mid-cycle close. Surface it as a retry instead.
+            log.warn("[AScriptBank] Cannot withdraw {} x{} — the bank window is closed; retrying next cycle",
+                    name, quantity);
+            return false;
+        }
         int missing = quantity - held;
         int available = availableBankQuantity(name);
         if (available <= 0) {
