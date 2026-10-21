@@ -343,24 +343,29 @@ public class FletchingScript implements AModule {
         // both sides: the withdraw resolves its bank row by the requested amount, so asking for
         // 14 against a 9-stack finds no row at all and dispatches nothing.
         int freeSlots = AScriptBank.freeSlots();
-        int capacity = freeSlots / 2;
-        int batch = Math.min(capacity, Math.min(AScriptBank.bankQuantity(bow.getUnstrungName()),
-                AScriptBank.bankQuantity("bow string")));
+        int unstrung = AScriptBank.bankQuantity(bow.getUnstrungName());
+        int strings = AScriptBank.bankQuantity("bow string");
+        int batch = Math.min(freeSlots / 2, Math.min(unstrung, strings));
         if (batch < 1) {
-            AScriptNotify.notify("Banking Failed",
-                    "No " + bow.getUnstrungName() + " / bow string pair in bank");
+            // Bank-cycle failures are counted by the orchestrator ("Bank Cycle Failed"), so this
+            // path logs + reports status instead of raising a per-retry Discord verdict.
+            log.warn("[Fletching] No stringing batch for {} — {} free slot(s), {} unstrung, {} string",
+                    bow.getUnstrungName(), freeSlots, unstrung, strings);
+            Microbot.status = "No " + bow.getUnstrungName() + " / bow string pair in bank";
             return false;
         }
 
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(bow.getUnstrungName(), batch)) {
-            AScriptNotify.notify("Banking Failed", "No " + bow.getUnstrungName() + " in bank");
+            log.warn("[Fletching] Could not withdraw {} x{} — retrying next cycle", bow.getUnstrungName(), batch);
+            Microbot.status = "Withdraw failed: " + bow.getUnstrungName();
             return false;
         }
 
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified("bow string", batch)) {
-            AScriptNotify.notify("Banking Failed", "No bow string in bank");
+            log.warn("[Fletching] Could not withdraw bow string x{} — retrying next cycle", batch);
+            Microbot.status = "Withdraw failed: bow string";
             return false;
         }
         return true;
