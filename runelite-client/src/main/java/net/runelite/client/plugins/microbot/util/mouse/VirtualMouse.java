@@ -106,20 +106,27 @@ public class VirtualMouse extends Mouse {
         }
     }
 
+    /**
+     * Weather-based click error: a small offset in bad conditions, shared by every click path.
+     * Returns the same instance when the roll does not fire, so callers can test identity
+     * instead of re-comparing coordinates.
+     */
+    private static Point weatherAdjustedClickPoint(Point point) {
+        double errorChance = WeatherModulation.mistakeProbabilityOffset();
+        if (errorChance <= 0 || !Rs2Random.diceFractional(errorChance)) {
+            return point;
+        }
+        return new Point(
+                point.getX() + Rs2Random.between(-3, 3),
+                point.getY() + Rs2Random.between(-3, 3)
+        );
+    }
+
     public Mouse click(Point point, boolean rightClick) {
         if (point == null) return this;
 
         // Weather-based click error — slight offset in bad conditions
-        final Point clickPoint;
-        double errorChance = WeatherModulation.mistakeProbabilityOffset();
-        if (errorChance > 0 && Rs2Random.diceFractional(errorChance)) {
-            clickPoint = new Point(
-                    point.getX() + Rs2Random.between(-3, 3),
-                    point.getY() + Rs2Random.between(-3, 3)
-            );
-        } else {
-            clickPoint = point;
-        }
+        final Point clickPoint = weatherAdjustedClickPoint(point);
 
         mouseSyncOnStart();
         interactionInProgress = true;
@@ -155,26 +162,33 @@ public class VirtualMouse extends Mouse {
                     if (shouldMoveNaturally(point)) {
                         Microbot.naturalMouse.moveTo(point.getX(), point.getY());
 
-                    if (Rs2UiHelper.hasActor(entry)) {
-                        Rectangle rectangle = Rs2UiHelper.getActorClickbox(entry.getActor());
-                        if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
-                            newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
-                            Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+                        if (Rs2UiHelper.hasActor(entry)) {
+                            Rectangle rectangle = Rs2UiHelper.getActorClickbox(entry.getActor());
+                            if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
+                                newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
+                                Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+                            }
+                        }
+
+                        if (Rs2UiHelper.isGameObject(entry)) {
+                            Rectangle rectangle = Rs2UiHelper.getObjectClickbox(entry.getGameObject());
+                            if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
+                                newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
+                                Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
+                            }
                         }
                     }
 
-                    if (Rs2UiHelper.isGameObject(entry)) {
-                        Rectangle rectangle = Rs2UiHelper.getObjectClickbox(entry.getGameObject());
-                        if (!Rs2UiHelper.isMouseWithinRectangle(rectangle)) {
-                            newPoint = Rs2UiHelper.getClickingPoint(rectangle, true);
-                            Microbot.naturalMouse.moveTo(newPoint.getX(), newPoint.getY());
-
-                        }
+                    // The weather offset applies to the FINAL target (the clickbox point resolved
+                    // above), so an entry click carries the same misclick model as a plain point
+                    // click; the pointer walks to the missed point, as a human's would.
+                    Point clickPoint = weatherAdjustedClickPoint(newPoint);
+                    if (clickPoint != newPoint && shouldMoveNaturally(newPoint)) {
+                        Microbot.naturalMouse.moveTo(clickPoint.getX(), clickPoint.getY());
                     }
-                }
 
-                Microbot.targetMenu = entry;
-                handleClick(emit, newPoint, rightClick);
+                    Microbot.targetMenu = entry;
+                    handleClick(emit, clickPoint, rightClick);
                 });
             } finally {
                 interactionInProgress = false;
