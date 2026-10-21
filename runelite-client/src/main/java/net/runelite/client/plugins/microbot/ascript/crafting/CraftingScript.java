@@ -452,39 +452,46 @@ public class CraftingScript implements AModule {
         // Deposit via toolbar button
         if (!AScriptBank.depositAndWaitEmpty()) return false;
 
-        // Reserve the slots for BOTH materials before any click. Battlestaves are not
-        // stackable, so a first withdraw that fills the bag leaves the orbs nothing to land
-        // on — Rs2Bank.withdrawAll bails on a full inventory. The batch is capped at half the
-        // free slots (13 is the classic half-bag batch): that is the pair budget, so the same
-        // count of orbs always fits whether they arrive stacked or not, and locked slots
-        // (tool, XP lamp) shrink the batch instead of failing the cycle.
+        // Reserve slots for BOTH materials before any click. Battlestaves and orbs are both
+        // non-stackable, so one pair costs TWO inventory slots: with the old withdraw-all the
+        // first material filled the bag and Rs2Bank.withdrawAll bailed on a full inventory for
+        // the second. The batch is capped at half the free slots (13 = the classic half-bag
+        // batch) so the same count of orbs always fits, and free slots already exclude a held
+        // tool or the XP lamp — a locked slot shrinks the batch instead of failing the cycle.
         int freeSlots = AScriptBank.freeSlots();
+        int staffs = AScriptBank.bankQuantity(staff.getItemName());
+        int orbs = AScriptBank.bankQuantity(staff.getOrb());
         int batch = Math.min(13, freeSlots / 2);
         if (batch < 1) {
-            AScriptNotify.notify("Banking Failed", "No free inventory slots for staff making ("
-                    + freeSlots + " free — a locked slot is holding the rest)");
+            // No Discord verdict here: a bank cycle that cannot proceed is counted by the
+            // orchestrator (consecutiveBankFailures -> "Bank Cycle Failed"), and a notify from
+            // this path would fire once per retry.
+            log.warn("[Crafting] No staff-making batch — only {} free inventory slot(s)", freeSlots);
+            Microbot.status = "No free inventory slots for staff making";
             return false;
         }
 
         // Never ask for more than the bank can serve on either side: the withdraw dispatch
         // resolves its bank row by the requested amount, so an over-request finds no row and
         // dispatches nothing. A short stack here means a smaller batch, not a failed cycle.
-        batch = Math.min(batch, Math.min(AScriptBank.bankQuantity(staff.getItemName()),
-                AScriptBank.bankQuantity(staff.getOrb())));
+        batch = Math.min(batch, Math.min(staffs, orbs));
         if (batch < 1) {
-            AScriptNotify.notify("Banking Failed",
-                    "No " + staff.getItemName() + " / " + staff.getOrb() + " pair in bank");
+            log.warn("[Crafting] No {} ({}) / {} ({}) pair in the bank — retrying next cycle",
+                    staff.getItemName(), staffs, staff.getOrb(), orbs);
+            Microbot.status = "No " + staff.getItemName() + " / " + staff.getOrb() + " pair in bank";
             return false;
         }
 
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(staff.getItemName(), batch)) {
-            AScriptNotify.notify("Banking Failed", "No " + staff.getItemName() + " in bank");
+            log.warn("[Crafting] Could not withdraw {} x{} — retrying next cycle", staff.getItemName(), batch);
+            Microbot.status = "Withdraw failed: " + staff.getItemName();
             return false;
         }
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(staff.getOrb(), batch)) {
-            AScriptNotify.notify("Banking Failed", "No " + staff.getOrb() + " in bank");
+            log.warn("[Crafting] Could not withdraw {} x{} — retrying next cycle", staff.getOrb(), batch);
+            Microbot.status = "Withdraw failed: " + staff.getOrb();
             return false;
         }
         return true;
@@ -559,16 +566,19 @@ public class CraftingScript implements AModule {
             batch = Math.min(batch, AScriptBank.bankQuantity(Integer.toString(item.getGem().getCutItemID())));
         }
         if (batch < 1) {
-            AScriptNotify.notify("Banking Failed", item.hasGem()
-                    ? "No " + item.getJewelryType().getLabel() + " bar / " + item.getGem().getCutItemName()
-                      + " pair in bank for " + item.getName()
-                    : "No " + item.getJewelryType().getLabel() + " in bank for " + item.getName());
+            // Bank-cycle failures are counted by the orchestrator ("Bank Cycle Failed"), so this
+            // path logs + reports status instead of raising a per-retry Discord verdict.
+            log.warn("[Crafting] No {} batch for {} — {} free slot(s)",
+                    item.getJewelryType().getLabel(), item.getName(), freeSlots);
+            Microbot.status = "No " + item.getJewelryType().getLabel() + " batch for " + item.getName();
             return false;
         }
 
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(barRef, batch)) {
-            AScriptNotify.notify("Banking Failed", "No " + item.getJewelryType().getLabel() + " in bank");
+            log.warn("[Crafting] Could not withdraw {} bar x{} — retrying next cycle",
+                    item.getJewelryType().getLabel(), batch);
+            Microbot.status = "Withdraw failed: " + item.getJewelryType().getLabel();
             return false;
         }
 
@@ -579,7 +589,9 @@ public class CraftingScript implements AModule {
         if (item.hasGem()) {
             if (!AScriptBank.ensureBankOpen()) return false;
             if (!AScriptBank.withdrawVerified(Integer.toString(item.getGem().getCutItemID()), batch)) {
-                AScriptNotify.notify("Banking Failed", "No " + item.getGem().getCutItemName() + " in bank");
+                log.warn("[Crafting] Could not withdraw {} x{} — retrying next cycle",
+                        item.getGem().getCutItemName(), batch);
+                Microbot.status = "Withdraw failed: " + item.getGem().getCutItemName();
                 return false;
             }
         }
