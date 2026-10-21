@@ -196,8 +196,10 @@ public class CraftingScript implements AModule {
         // A finished cut stack that "Fletch into Bolt Tips" still has to process is work sitting in
         // the inventory, not a missing material. Reporting a bank need here would take the bank
         // branch, deposit the cut gems and return before doAction() — the option would silently do
-        // nothing. The count is exact ("Ruby" must not resolve an "Uncut ruby" stack).
-        if (config.fletchIntoBoltTips() && countMaterial(gem.getName(), true) > 0
+        // nothing. The count is exact ("Ruby" must not resolve an "Uncut ruby" stack), and the gem
+        // must actually have a bolt-tip recipe: without that gate a cut zenyte would hold the tick
+        // in the IDLE path forever (never banking for more uncut) and then fail three times.
+        if (config.fletchIntoBoltTips() && gem.isBoltTips() && countMaterial(gem.getName(), true) > 0
                 && AScriptBank.hasUnnotedItem("chisel")) {
             return false;
         }
@@ -777,7 +779,7 @@ public class CraftingScript implements AModule {
             return true;
         }
 
-        if (config.fletchIntoBoltTips()) {
+        if (config.fletchIntoBoltTips() && gem.isBoltTips()) {
             final String cutRef = gem.getName();
             int cutCount = countMaterial(cutRef, true);
             if (cutCount > 0 && AScriptBank.hasUnnotedItem("chisel")) {
