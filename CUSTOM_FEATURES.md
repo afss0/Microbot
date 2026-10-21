@@ -269,6 +269,14 @@ Used during merges to verify nothing is lost.
   - Merge check: `grep "AScriptPick.last" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantScript.java | head -1`
 - **Documentation:** `ascript/AGENTS.md` — structure, adding modules, anti-detection patterns, weather modulation, banking pitfalls
 
+- **aScript multi-material withdraws: inventory-slot reservation + bank-truth batch sizing (Oct 2026):**
+  - `withdrawVerified(name)` routes to `withdrawAll`, which bails on a full inventory (`Rs2Bank`). With two non-stackable materials per batch the first withdraw filled the bag and the second could never land: Staff Making withdrew every battlestaff (orbs got nothing), gem jewelry withdrew every bar, and Fletching stringing hardcoded 14+14 against a bank stack that may be smaller (`findBankItem(..., amount)` returns null for a short stack, so the dispatch found no row at all and clicked nothing).
+  - New `AScriptBank` helpers: `freeSlots()` (= `Rs2Inventory.emptySlotCount()`, so a held tool / XP lamp is already net of the count), `bankQuantity(nameOrId)` (bank units for pre-withdraw planning, with one bounded re-read on a stale mirror) and `ensureBankOpen()` (the Jewel Enchant pattern, shared: reopen a mid-cycle close once, otherwise treat it as a retry).
+  - `bankStaffs()`: `batch = min(13, freeSlots/2, staffs, orbs)` — battlestaves AND orbs are non-stackable, so a pair costs two slots; 13 is the classic half-bag batch. Both withdraws verify their count. `bankJewelry()`: bars capped at `freeSlots - 1` (one slot reserved for the cut-gem stack, one gem per bar) and the gem count verified. `FletchingScript.bankBows()`: `batch = min(freeSlots/2, unstrung, bow strings)` with both sides verified. A locked tool/lamp slot therefore shrinks the batch instead of failing the cycle.
+  - A closed bank window is reported as a RETRY, never as a missing material: `ensureBankOpen()` runs before each withdraw step, `withdrawWithRetry` and `withdrawVerified(name, quantity)` both guard `Rs2Bank.isOpen()` first, and the batch-planning / withdraw-failure paths log the real cause + set `Microbot.status` instead of raising a per-retry "No X in bank" Discord verdict (the orchestrator's confirmed missing-materials verdict and its "Bank Cycle Failed" counter own the stop).
+  - Merge check: `grep "public static int freeSlots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1`
+  - Merge check: `grep "AScriptBank.freeSlots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java | head -1`
+  - Merge check: `grep "AScriptBank.bankQuantity" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingScript.java | head -1`
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
@@ -352,4 +360,8 @@ grep "MINING_ANIMATION_IDS" runelite-client/src/main/java/net/runelite/client/pl
 grep "MINING(\"Mining\")" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/ScriptType.java | head -1
 grep "new MiningScript()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
 grep "default MiningOre miningOre" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -1
+# aScript multi-material withdraws: slot reservation + bank-truth batch sizing (2026-10-21)
+grep "public static int freeSlots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1
+grep "AScriptBank.freeSlots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java | head -1
+grep "AScriptBank.bankQuantity" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingScript.java | head -1
 ```
