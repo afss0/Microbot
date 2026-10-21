@@ -72,6 +72,23 @@ Used during merges to verify nothing is lost.
 - **File:** `ShortestPathConfig.java`
 - **What:** `recalculateDistance` 10→15, `reachedDistance` 5→10. More lenient thresholds reduce unnecessary path recalculations.
 
+### Banked Transport Withdrawal — Note Mode + Confirmation
+- **Files:** `Rs2Walker.java` → `walkWithBankingState()` / `prepareTransportLoadoutAtBank()`; `banking/WithdrawNoteModePolicy.java`; `banking/TransportWithdrawalConfirmation.java`
+- **What:** Restored 2026-10-20 after `7224ac34c8` dropped the wiring (the policy classes survived, only their tests referenced them):
+  - `WithdrawNoteModePolicy` — when the loadout needs a non-stackable transport item while the bank is in noted-withdraw mode, the withdrawal switches to item mode first (`Rs2Bank.setWithdrawAsItem()`) and the player's setting is restored in a `finally`. Without it the item arrives as banknotes the route cannot consume and the walk exits.
+  - `TransportWithdrawalConfirmation` — the withdrawal is confirmed from the carried inventory quantity of both the requested and the actually withdrawn id (a noted withdrawal lands as a different id) over an 8 s window, instead of trusting the menu dispatch. The equip step resolves the provider across the same id set.
+- **Tests:** `WithdrawNoteModePolicyTest`, `TransportWithdrawalConfirmationTest`.
+
+### Route Camera Policy
+- **Files:** `Rs2Walker.java` → `alignCameraTowardWalkTarget()`; `geometry/RouteCameraPolicy.java`
+- **What:** Restored 2026-10-20. The camera turns only when the target is not clickable in the scene (or a recent scene click on it failed), before the turn throttle and view-variation gates — instead of turning after every click behind an unconditional `distance < 4` early return plus a 1.2 s throttle.
+- **Tests:** `RouteCameraPolicyTest`.
+
+### Ranged First-Route Interaction
+- **Files:** `Rs2Walker.java` → `checkFirstRouteInteractionAtRange()` / `handleFirstRouteInteractionAtRange()`; `RouteSceneObjectSnapshot.java`; `RouteObjectRangePolicy.java`
+- **What:** Restored 2026-10-20 after `7224ac34c8` dropped the pass from `processWalk` (leaving both policy classes and their tests orphaned, plus `collectRouteTransportsForInteractionScan()` callerless). Before an active minimap interim yields the tail pass, the walker selects the first pending route interaction from one bounded scene snapshot (`RouteSceneObjectSnapshot.capture`) and gates ranged transport dispatch on `RouteObjectRangePolicy.isRangedObjectDispatchEligible` (object-executor transports, plus short fence/railing agility shortcuts). While that pass owns the interaction, the segment handler loop and the interim continuation click are suppressed.
+- **Tests:** `RouteSceneObjectSnapshotTest`, `RouteObjectRangePolicyTest`, `FirstRouteInteractionWiringTest`.
+
 ## Mouse Sync
 
 ### Cursor Synchronization with User
@@ -284,6 +301,12 @@ grep -r "detectable automation" runelite-client/src/main/java/ | head -5
 grep -r "bindAllInterfaces" runelite-client/src/main/java/ | head -5
 grep "return Math.max(0, configuredChebyshev);" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
 grep "getVisibleObjectComposition" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1
+# walker: banked transport note mode + confirmation, route camera policy, ranged first-route interaction (2026-10-20)
+grep "WithdrawNoteModePolicy.shouldSwitchToItemMode" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "TransportWithdrawalConfirmation.start" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "RouteCameraPolicy.decide" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "RouteSceneObjectSnapshot.capture" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "RouteObjectRangePolicy.isRangedObjectDispatchEligible" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
 grep -r "Skip the tile" runelite-client/src/main/java/ | head -5
 grep "microbot_afss0" settings.gradle.kts
 grep "return 15" runelite-client/src/main/java/net/runelite/client/plugins/microbot/shortestpath/ShortestPathConfig.java | head -1
