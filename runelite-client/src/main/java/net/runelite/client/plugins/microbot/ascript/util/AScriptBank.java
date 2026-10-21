@@ -10,16 +10,19 @@ import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.settings.Rs2Settings;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
+import static net.runelite.client.plugins.microbot.util.Global.sleepUntilTrue;
 
 /**
  * Shared banking helpers for aScript modules.
@@ -31,6 +34,11 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *       never grid-targeted {@code depositAll(String/id)}.</li>
  *   <li>Verify every withdraw landed in inventory before returning, so a failed
  *       withdraw never advances to CRAFTING with an empty inventory.</li>
+ *   <li>Treat a bank-slot lock as a verification postcondition: every anchor (tool,
+ *       mould, rune stack, keeper set) must be confirmed locked through
+ *       {@code Rs2Bank.isLockedSlot(slot)} before a deposit runs around it, and a cycle
+ *       that needs locking refuses to start when the bank's slot locking cannot be
+ *       enabled — see {@link #ensureSlotLockingCapability()}.</li>
  * </ul>
  * New modules should call these instead of re-implementing the pattern.
  * <p>
@@ -67,21 +75,167 @@ public final class AScriptBank {
         // static utility
     }
 
+    // ── Slot-lock capability (P1-30) ──────────────────────────
+
     /**
-     * Withdraw {@code quantity} of {@code name} from the bank and verify it landed
-     * in the inventory. Use for stackable items where a specific amount is needed
-     * (e.g. 14 unstrung bows + 14 bow strings for stringing).
+     * Why a locked-anchor bank cycle cannot run, in the words the stop message uses. A bank
+     * cycle that must keep an anchor (tool, mould, rune stack, keeper set) has one hard
+     * precondition: bank slot locking has to be ON, otherwise the toolbar "Deposit inventory"
+     * button sweeps the anchor away and the module either loses its tool or loops forever
+     * re-withdrawing it. {@link Rs2Bank#toggleItemLock} returns {@code false} in that state,
+     * and treating that as "carry on" is what produced the endless "Bank Cycle Failed" runs.
+     */
+    private static final String SLOT_LOCKING_REQUIRED =
+            "bank slot locking is disabled — enable it in the bank settings"
+                    + " (bank menu → Locks → 'Ignore inventory locks' OFF and"
+                    + " 'Show inventory locks' ON); the bank cycle needs it to keep tool/material slots";
+
+    /**
+     * Set by the first locking-dependent helper that finds slot locking unavailable, consumed by
+     * the orchestrator's bank phase ({@code AScript.tick}) so the run stops with a distinct
+     * message instead of retrying a deposit that would sweep the anchor on every tick.
+     */
+    private static volatile String bankCapabilityFailure;
+
+    /**
+     * Ensure the bank can actually lock inventory slots. When the settings are off this clicks
+     * the bank's own Locks panel ({@link Rs2Settings#enableBankSlotLocking()}, needs the bank
+     * open) and re-checks; when it still cannot be enabled the capability failure is recorded
+     * for the orchestrator and {@code false} is returned, so the caller refuses to start the
+     * cycle rather than deposit with no protection.
+     *
+     * @return true when slot locking is enabled and usable
+     */
+    public static boolean ensureSlotLockingCapability() {
+        if (tryEnableSlotLocking()) {
+            return true;
+        }
+        bankCapabilityFailure = SLOT_LOCKING_REQUIRED;
+        log.warn("[AScriptBank] {}", SLOT_LOCKING_REQUIRED);
+        return false;
+    }
+
+    /**
+     * Enable bank slot locking when it is off, without recording a capability failure.
+     * Best-effort protection (the XP lamp) uses this: an unprotected lamp makes a deposit
+     * incomplete but cannot lose anything, so it must not stop the run.
+     */
+    private static boolean tryEnableSlotLocking() {
+        if (Rs2Settings.isBankSlotLockingEnabled()) {
+            return true;
+        }
+        return Rs2Bank.isOpen() && Rs2Settings.enableBankSlotLocking();
+    }
+
+    /**
+     * Take (and clear) the recorded slot-lock capability failure, if any. The orchestrator's
+     * bank phase calls this to stop the run with a dedicated message; a null answer means no
+     * capability gap was detected since the last call.
+     *
+     * @return the failure description, or {@code null} when there is nothing to report
+     */
+    public static String takeBankCapabilityFailure() {
+        String failure = bankCapabilityFailure;
+        bankCapabilityFailure = null;
+        return failure;
+    }
+
+    /**
+     * Sets the bank-slot lock of the inventory item in {@code slot} to {@code locked} and treats
+     * {@link Rs2Bank#isLockedSlot(int)} as the POSTCONDITION — the dispatch's own return value is
+     * only a varbit-change proxy, so it never decides on its own.
+     * <p>
+     * Slot-addressed on purpose. {@link Rs2Bank#toggleItemLock(String, boolean)} resolves the
+     * FIRST inventory item carrying that display name, so with same-name duplicates (e.g. 27
+     * rings) calling it once per duplicate always toggles that first slot — locking it, then
+     * unlocking it, leaving the other 26 unlocked. Callers that must protect (or release) a
+     * specific stack have to name the slot, which is what this does.
+     * <p>
+     * Preconditions: the bank is open (the bank-inventory widget must be loaded) and bank slot
+     * locking is enabled in the bank settings ({@code Rs2Settings.enableBankSlotLocking()}).
+     *
+     * @param slot   inventory slot index (0-based, 0–27)
+     * @param locked desired state after the call ({@code true} = lock, {@code false} = unlock)
+     * @return true once {@code isLockedSlot(slot) == locked}; false when the slot is out of
+     *         range/empty, the bank is closed, or the state did not confirm
+     */
+    private static boolean setSlotLocked(int slot, boolean locked) {
+        if (slot < 0 || slot >= 28 || !Rs2Bank.isOpen()) return false;
+        if (Rs2Bank.isLockedSlot(slot) == locked) return true;
+
+        Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+        if (item == null || item.getId() <= 0) return false;
+
+        // Two dispatches at most: the varbit can flip before the slot widget's actions update,
+        // in which case the first confirmation wait times out on a lock that did land. The
+        // toggle's own return value is only a varbit-change proxy, so it never decides on its
+        // own — only a lock state that also failed to change makes the dispatch a no-op.
+        for (int attempt = 0; attempt < 2; attempt++) {
+            boolean toggled = Rs2Bank.toggleItemLock(item);
+            if (sleepUntilTrue(() -> Rs2Bank.isLockedSlot(slot) == locked, 100, 1000)) return true;
+            if (!toggled) return false;
+        }
+        return Rs2Bank.isLockedSlot(slot) == locked;
+    }
+
+    /**
+     * Withdraw up to {@code quantity} of {@code name} from the bank and verify the AMOUNT that
+     * landed, not merely that the item is present. Use for stackable items where a specific
+     * amount is needed (e.g. 14 unstrung bows + 14 bow strings for stringing).
+     * <p>
+     * Quantity semantics (P1-18): the available bank quantity is read first and
+     * {@code min(available, needed)} is withdrawn — a 14 request against a 9-stack strings 9 and
+     * returns {@code false} after reporting the shortfall, instead of dispatching a 14 that the
+     * bank cannot serve and leaving the caller to advance with 9. The verification is an
+     * inventory count delta (the pre-call amount plus the dispatched amount), because a
+     * presence check passes as soon as the first unit lands.
      * <p>
      * The verify runs in two windows (main + grace) and an unconfirmed dispatch is
      * retried with exponential backoff — see {@link #withdrawWithRetry}.
      *
      * @param name item name (or numeric id as a string) to withdraw
-     * @param quantity exact number to withdraw
-     * @return true if withdrawn and verified in inventory; false on failure
+     * @param quantity number of units needed (0 or less is a no-op {@code true})
+     * @return true when the inventory holds at least {@code quantity} of {@code name} after the
+     *         call; false on a failed withdraw, or when the bank could only serve part of it
+     *         (the part that was available is still withdrawn and stays in the inventory)
      */
     public static boolean withdrawVerified(String name, int quantity) {
-        return withdrawWithRetry(name, () -> withdrawBankItemX(name, quantity),
-                name + " x" + quantity);
+        if (quantity <= 0) {
+            return true;
+        }
+        int held = inventoryQuantity(name);
+        if (held >= quantity) {
+            return true;
+        }
+        int missing = quantity - held;
+        int available = availableBankQuantity(name);
+        if (available <= 0) {
+            log.warn("[AScriptBank] Cannot withdraw {} x{}: the bank holds none [{}]",
+                    name, quantity, resolution(name));
+            return false;
+        }
+        int toWithdraw = Math.min(available, missing);
+        int target = held + toWithdraw;
+        boolean withdrawn = withdrawWithRetry(name, () -> withdrawBankItemX(name, toWithdraw),
+                name + " x" + toWithdraw, () -> inventoryQuantity(name) >= target);
+        if (!withdrawn) {
+            // A landing that arrived as BANKNOTES is not a verification failure to hide: the game
+            // notes multi-withdraws when the bank is set to "Withdraw as note", and a noted stack
+            // can never be acted on. Say so instead of letting the module report a bare timeout.
+            if (inventoryQuantity(name, true) >= target) {
+                log.warn("[AScriptBank] {} arrived as BANKNOTES ({} units, none usable) — set the"
+                                + " bank withdraw mode to 'Withdraw as item'", name,
+                        inventoryQuantity(name, true));
+            }
+            return false;
+        }
+        if (toWithdraw < missing) {
+            log.warn("[AScriptBank] {} shortfall: wanted {} more, the bank held {} — withdrew {},"
+                            + " the inventory now holds {} of {}",
+                    name, missing, available, toWithdraw, inventoryQuantity(name), quantity);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -131,6 +285,23 @@ public final class AScriptBank {
      *         failed or the bank lacks the item
      */
     private static boolean withdrawWithRetry(String nameOrId, BooleanSupplier dispatch, String describe) {
+        return withdrawWithRetry(nameOrId, dispatch, describe, () -> hasInventoryItem(nameOrId));
+    }
+
+    /**
+     * {@link #withdrawWithRetry(String, BooleanSupplier, String)} with a caller-supplied success
+     * predicate: the amount-based withdraw confirms on a count delta, the all/one variants on
+     * presence. Everything else (bank-presence pre-check, main + grace windows, backoff before
+     * re-checking, never re-opening the bank) is shared.
+     *
+     * @param nameOrId item name (or numeric id as a string) to withdraw
+     * @param dispatch performs one withdraw dispatch and reports whether it had an item to click
+     * @param describe label for the log lines
+     * @param landed reports whether the dispatch landed (presence or amount, per caller)
+     * @return true once {@code landed} holds; false when every attempt failed or the bank lacks it
+     */
+    private static boolean withdrawWithRetry(String nameOrId, BooleanSupplier dispatch, String describe,
+                                             BooleanSupplier landed) {
         if (!hasBankItem(nameOrId)) {
             return false; // bank lacks it — nothing to dispatch (silent, as before)
         }
@@ -140,7 +311,7 @@ public final class AScriptBank {
                 // BEFORE re-checking, so an in-flight withdraw is never double-dispatched.
                 long backoffMs = (long) WITHDRAW_RETRY_BACKOFF_BASE_MS << (attempt - 2);
                 Rs2Random.waitEx(backoffMs, backoffMs / 4.0);
-                if (hasInventoryItem(nameOrId)) {
+                if (landed.getAsBoolean()) {
                     log.debug("[AScriptBank] Withdraw {} landed during backoff — not re-dispatching", describe);
                     return true;
                 }
@@ -153,12 +324,12 @@ public final class AScriptBank {
             // cannot have changed its answer — retrying it is futile, and that is worth saying).
             int epochBefore = Rs2Bank.getBankLiveEpoch();
             boolean dispatched = dispatch.getAsBoolean();
-            if (sleepUntil(() -> hasInventoryItem(nameOrId), WITHDRAW_VERIFY_TIMEOUT_MS)) {
+            if (sleepUntil(landed::getAsBoolean, WITHDRAW_VERIFY_TIMEOUT_MS)) {
                 return true;
             }
             // Grace re-check: the observed failure mode is a landing that takes longer than
             // the verify window under transient lag — confirm it before failing the attempt.
-            if (sleepUntil(() -> hasInventoryItem(nameOrId), WITHDRAW_GRACE_TIMEOUT_MS)) {
+            if (sleepUntil(landed::getAsBoolean, WITHDRAW_GRACE_TIMEOUT_MS)) {
                 log.debug("[AScriptBank] Withdraw {} landed during the grace window (late landing)", describe);
                 return true;
             }
@@ -271,20 +442,23 @@ public final class AScriptBank {
 
     private static boolean ensureLocked(String nameOrId, boolean withdrawWholeStack,
             Collection<String> keepLocked) {
-        // Already holding the item — make sure its slot is locked.
+        // Already holding the item — the lock is the only thing left to establish (and confirm).
         Rs2ItemModel held = getInventoryItem(nameOrId);
         if (held != null) {
-            if (!Rs2Bank.isLockedSlot(held.getSlot())) {
-                toggleLockByItem(held);
-            }
-            return true;
+            return lockHeld(held, nameOrId);
         }
 
-        // Item not in inventory: release any locked slot that holds a DIFFERENT item
-        // (and is not in the caller's keep-list — those belong to this same bank cycle),
-        // then blanket-deposit via the toolbar button (which ignores still-locked
-        // slots, so the just-unlocked stray goes back to the bank), withdraw the
-        // item, and lock its slot.
+        // The item is missing, so this call is going to release strays and withdraw it: both
+        // halves depend on bank slot locking. Refuse the cycle up front when it is unavailable
+        // instead of depositing an unprotected inventory (the old behaviour, which lost tools).
+        if (!ensureSlotLockingCapability()) {
+            return false;
+        }
+
+        // Release any locked slot that holds a DIFFERENT item (and is not in the caller's
+        // keep-list — those belong to this same bank cycle), then blanket-deposit via the
+        // toolbar button (which ignores still-locked slots, so the just-unlocked stray goes
+        // back to the bank), withdraw the item, and lock its slot.
         String nameLc = nameOrId.toLowerCase();
         for (int slot : Rs2Bank.findLockedSlots()) {
             Rs2ItemModel stray = Rs2Inventory.getItemInSlot(slot);
@@ -292,7 +466,12 @@ public final class AScriptBank {
             if (stray.getId() == ItemID.LAMP) continue; // never release the lamp — it must survive deposits
             if (isToolMatch(stray, nameOrId, nameLc)) continue; // already the item (race) — leave it
             if (isKeptLocked(stray, keepLocked)) continue; // owned by the caller's cycle — never a stray
-            Rs2Bank.toggleItemLock(stray.getName(), false); // unlock so the toolbar deposit removes it
+            // Slot-addressed: unlocking by name would release the wrong duplicate.
+            if (!setSlotLocked(slot, false)) {
+                log.warn("[AScriptBank] could not unlock stray '{}' in slot {} — bank cycle refused",
+                        stray.getName(), slot);
+                return false;
+            }
         }
         if (!depositAll()) return false; // depositAll() button ignores locked slots; stray is now gone
 
@@ -303,10 +482,38 @@ public final class AScriptBank {
             return false;
         }
         Rs2ItemModel item = getInventoryItem(nameOrId);
-        if (item != null && !Rs2Bank.isLockedSlot(item.getSlot())) {
-            toggleLockByItem(item);
+        if (item == null) {
+            log.warn("[AScriptBank] '{}' is absent right after a confirmed withdraw — cannot lock its slot",
+                    nameOrId);
+            return false;
         }
-        return hasInventoryItem(nameOrId);
+        return lockHeld(item, nameOrId);
+    }
+
+    /**
+     * Make sure {@code item}'s inventory slot is LOCKED and confirm the lock landed (P1-16).
+     * Returns {@code false} when the lock cannot be established — the caller must not deposit
+     * around an unprotected anchor, and a silent {@code true} here is what let the tool be
+     * swept. Also re-checks that the item is still in the inventory afterwards: a lock on a
+     * slot the item has already left protects nothing.
+     *
+     * @param item    the inventory item that must end up locked
+     * @param nameOrId the caller's lookup key, for the final presence check and log lines
+     * @return true when the slot is locked and the item is still held
+     */
+    private static boolean lockHeld(Rs2ItemModel item, String nameOrId) {
+        int slot = item.getSlot();
+        if (!Rs2Bank.isLockedSlot(slot) && !toggleLockByItem(item)) {
+            log.warn("[AScriptBank] could not lock slot {} for '{}' — bank cycle refused",
+                    slot, item.getName());
+            return false;
+        }
+        if (!hasInventoryItem(nameOrId)) {
+            log.warn("[AScriptBank] '{}' left slot {} after locking it — bank cycle refused",
+                    nameOrId, slot);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -355,7 +562,14 @@ public final class AScriptBank {
         if (lamp == null || Rs2Bank.isLockedSlot(lamp.getSlot())) {
             return;
         }
-        if (!Rs2Bank.toggleItemLock(lamp.getName(), true)) { // exact name — never match "Empty Oil Lamp"
+        // Slot-addressed + verified: a name lookup ("lamp") can resolve "Empty oil lamp" and a
+        // toggle that is not confirmed leaves the deposit stalling on an unprotected lamp.
+        // Best effort only — an unprotected lamp cannot be lost, so this never stops the run.
+        if (!tryEnableSlotLocking()) {
+            log.warn("[AScriptBank] bank slot locking is off — the lamp slot cannot be protected");
+            return;
+        }
+        if (!setSlotLocked(lamp.getSlot(), true)) {
             log.warn("[AScriptBank] Failed to lock the lamp slot — the deposit may stall on it");
         }
     }
@@ -437,17 +651,26 @@ public final class AScriptBank {
             return true;
         }
 
-        // Lock the keepers so the toolbar deposit spares them. A keeper that cannot be
-        // locked aborts the sweep with nothing deposited — better a retry next cycle
-        // than a deposit with a gap in the keep-set.
+        // Keepers are protected by locking their OWN slots, one toggle per slot: they are often
+        // same-name duplicates (27 identical rings), and a name-addressed toggle always hits the
+        // first duplicate — locking it repeatedly and leaving every other copy exposed to the
+        // toolbar deposit. Without the capability there is no way to protect them at all, so the
+        // sweep refuses (nothing deposited) and the orchestrator stops with the capability
+        // message instead of retrying a deposit that would empty the keep-set.
+        if (!keepers.isEmpty() && !ensureSlotLockingCapability()) {
+            log.warn("[AScriptBank] depositAllExcept declined: {} keeper(s) cannot be locked —"
+                    + " nothing deposited", keepers.size());
+            return false;
+        }
         List<Rs2ItemModel> lockedNow = new ArrayList<>();
         for (Rs2ItemModel keeper : keepers) {
-            if (!Rs2Bank.toggleItemLock(keeper.getName(), true)) {
+            if (!setSlotLocked(keeper.getSlot(), true)) {
                 for (Rs2ItemModel locked : lockedNow) {
-                    Rs2Bank.toggleItemLock(locked.getName(), false);
+                    setSlotLocked(locked.getSlot(), false);
                 }
-                log.warn("[AScriptBank] could not lock keeper {} — sweep aborted, nothing deposited",
-                        keeper.getName());
+                log.warn("[AScriptBank] could not lock keeper {} in slot {} — sweep aborted,"
+                                + " nothing deposited",
+                        keeper.getName(), keeper.getSlot());
                 return false;
             }
             lockedNow.add(keeper);
@@ -467,10 +690,17 @@ public final class AScriptBank {
             return true;
         }, 3000);
 
-        // Always release the keeper locks this call established.
+        // Always release the keeper locks this call established — again by slot, and only while
+        // the slot still holds the same item (a deposit can leave the surviving items where they
+        // were, but never assume it: releasing a slot that now holds something else would strip
+        // a lock another cycle owns).
         for (Rs2ItemModel locked : lockedNow) {
-            if (Rs2Bank.isLockedSlot(locked.getSlot())) {
-                Rs2Bank.toggleItemLock(locked.getName(), false);
+            Rs2ItemModel now = Rs2Inventory.getItemInSlot(locked.getSlot());
+            if (now != null && now.getId() == locked.getId()
+                    && Rs2Bank.isLockedSlot(locked.getSlot())
+                    && !setSlotLocked(locked.getSlot(), false)) {
+                log.warn("[AScriptBank] could not release keeper lock on slot {} ('{}')",
+                        locked.getSlot(), locked.getName());
             }
         }
 
@@ -567,6 +797,69 @@ public final class AScriptBank {
     }
 
     /**
+     * Units of {@code nameOrId} currently in the inventory, stacked entries counted by quantity
+     * rather than by slot — a 14-string withdraw lands as ONE slot holding 14, so
+     * {@link Rs2Inventory#count(String)} (which counts slots) would confirm nothing.
+     * Banknotes are excluded: a noted stack is not material the module can use, and including
+     * it would make the amount verification pass on a stack the module cannot act on.
+     */
+    private static int inventoryQuantity(String nameOrId) {
+        return inventoryQuantity(nameOrId, false);
+    }
+
+    /**
+     * {@link #inventoryQuantity(String)} with an explicit banknote policy: {@code includeNoted}
+     * counts banknotes too, which is only meaningful for a diagnostic (the amount check must not
+     * accept notes — a noted stack cannot be crafted/fletched with).
+     *
+     * @param nameOrId    item name (substring match) or numeric id as a string
+     * @param includeNoted whether banknote units count
+     * @return units held, stacked entries summed by quantity
+     */
+    private static int inventoryQuantity(String nameOrId, boolean includeNoted) {
+        if (isNumeric(nameOrId)) {
+            int id = Integer.parseInt(nameOrId);
+            return Rs2Inventory.items()
+                    .filter(item -> item.getId() == id && (includeNoted || !item.isNoted()))
+                    .mapToInt(Rs2ItemModel::getQuantity)
+                    .sum();
+        }
+        String nameLc = nameOrId.toLowerCase();
+        return Rs2Inventory.items()
+                .filter(item -> item.getName() != null && (includeNoted || !item.isNoted())
+                        && item.getName().toLowerCase().contains(nameLc))
+                .mapToInt(Rs2ItemModel::getQuantity)
+                .sum();
+    }
+
+    /**
+     * Units of {@code nameOrId} available in the bank right now (0 when absent or when no bank
+     * snapshot is loaded). Name lookups resolve the same row {@code Rs2Bank.findBankItem} would
+     * click — the shortest matching display name — so the amount read and the withdraw dispatch
+     * cannot disagree about which stack they mean.
+     */
+    private static int availableBankQuantity(String nameOrId) {
+        List<Rs2ItemModel> rows = Rs2Bank.bankItems();
+        if (rows == null || rows.isEmpty()) {
+            return 0;
+        }
+        if (isNumeric(nameOrId)) {
+            int id = Integer.parseInt(nameOrId);
+            return rows.stream()
+                    .filter(item -> item.getId() == id)
+                    .mapToInt(Rs2ItemModel::getQuantity)
+                    .sum();
+        }
+        String nameLc = nameOrId.toLowerCase();
+        Rs2ItemModel row = rows.stream()
+                .filter(item -> item.getName() != null
+                        && item.getName().toLowerCase().contains(nameLc))
+                .min(Comparator.comparingInt(item -> item.getName().length()))
+                .orElse(null);
+        return row == null ? 0 : row.getQuantity();
+    }
+
+    /**
      * Check if {@code stray} matches the target tool.  For numeric IDs, compare
      * the item's ID; for names, use the existing substring-on-display-name check.
      */
@@ -617,14 +910,23 @@ public final class AScriptBank {
     }
 
     /**
-     * Toggle the bank-slot lock for an inventory item using its display name.
-     * {@code Rs2Bank.toggleItemLock(String, boolean)} resolves by name, so
-     * passing a numeric id-as-string (e.g. "5525") would fail silently.  This
-     * helper uses the item model's actual display name to avoid that.
+     * Lock the inventory slot holding {@code item} and CONFIRM the lock landed.
+     * <p>
+     * P2 asked for {@code Rs2Bank.toggleItemLock(name, exact = true)} here. Exactness does not
+     * fix the defect that matters: the name lookup resolves the FIRST inventory item with that
+     * display name, so with same-name duplicates "exact" still toggles the wrong slot (and a
+     * second call toggles it back). The lock is therefore slot-addressed
+     * ({@link #setSlotLocked(int, boolean)}), and — unlike the old body, whose result was
+     * discarded — a lock that does not confirm makes this return {@code false} so the caller
+     * refuses the cycle instead of depositing around an unprotected anchor.
+     *
+     * @param item inventory item whose slot must be locked
+     * @return true when the slot is locked afterwards; false when it cannot be locked
      */
-    private static void toggleLockByItem(Rs2ItemModel item) {
-        if (item != null && item.getName() != null) {
-            Rs2Bank.toggleItemLock(item.getName(), false);
-        }
+    private static boolean toggleLockByItem(Rs2ItemModel item) {
+        if (item == null) return false;
+        if (Rs2Bank.isLockedSlot(item.getSlot())) return true;
+        if (!ensureSlotLockingCapability()) return false;
+        return setSlotLocked(item.getSlot(), true);
     }
 }

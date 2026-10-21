@@ -20,6 +20,7 @@ import net.runelite.client.plugins.microbot.ascript.gemcrabkiller.GemCrabKillerS
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantScript;
 import net.runelite.client.plugins.microbot.ascript.mining.MiningScript;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingScript;
@@ -378,8 +379,27 @@ public class AScript extends Script {
 
         // 5. Dispatch
         if (bankModule != null) {
+            // A bank cycle that needs a locked anchor (tool, mould, rune stack, keeper set) cannot
+            // run without bank slot locking: AScriptBank refuses those cycles and records why, so
+            // report it here once with a dedicated message instead of burning the generic
+            // "doBank failed" retries on a capability gap the user has to fix in the bank settings.
+            String capabilityFailure = AScriptBank.takeBankCapabilityFailure();
+            if (capabilityFailure != null) {
+                stopWithMessage("aScript Stopped — Bank Slot Locking Disabled", capabilityFailure);
+                return;
+            }
             currentPhase = Phase.BANKING;
             boolean banked = bankModule.doBank(config);
+            if (!banked) {
+                // A helper refuses a locking-dependent cycle and records why (AScriptBank); report
+                // it on THIS tick with the dedicated message instead of spending the generic
+                // doBank-failure retries on a capability gap the user has to fix in bank settings.
+                String cycleCapabilityFailure = AScriptBank.takeBankCapabilityFailure();
+                if (cycleCapabilityFailure != null) {
+                    stopWithMessage("aScript Stopped — Bank Slot Locking Disabled", cycleCapabilityFailure);
+                    return;
+                }
+            }
             if (banked) {
                 consecutiveBankFailures = 0;
                 consecutiveBankOpenFailures = 0;
