@@ -79,6 +79,8 @@ import net.runelite.client.plugins.microbot.util.walker.door.Rs2WalkerAwaits;
 import net.runelite.client.plugins.microbot.util.walker.door.model.AwaitTicket;
 import net.runelite.client.plugins.microbot.util.walker.door.model.DoorResolution;
 import net.runelite.client.plugins.microbot.util.walker.banking.Rs2WalkerBankingPlanner;
+import net.runelite.client.plugins.microbot.util.walker.banking.TransportWithdrawalConfirmation;
+import net.runelite.client.plugins.microbot.util.walker.banking.WithdrawNoteModePolicy;
 import net.runelite.client.plugins.microbot.util.walker.awaits.Rs2WalkerRuntimeAwaits;
 import net.runelite.client.plugins.microbot.util.walker.puzzles.DraynorBasementSolver;
 import net.runelite.client.plugins.microbot.util.walker.stall.Rs2WalkerStallPolicy;
@@ -10540,58 +10542,36 @@ public class Rs2Walker {
 
             // Step 3: Withdraw missing transport items
             Map<Integer, Integer> missingItemsWithQuantities = transportLoadout.getWithdrawals();
-            if (!missingItemsWithQuantities.isEmpty()) {
-                log.debug("Withdrawing transport items with quantities: " + missingItemsWithQuantities);
-
-                for (Map.Entry<Integer, Integer> entry : missingItemsWithQuantities.entrySet()) {
-                    if (!Rs2Bank.hasBankItem(entry.getKey(), entry.getValue())) {
-                        log.warn("Required transport item {} unavailable at bank (need {}) — falling back direct",
-                                entry.getKey(), entry.getValue());
-                        return fallbackDirectFromBank(finalTarget, distance, "bank-quantity-changed");
-                    }
+            for (Map.Entry<Integer, Integer> entry : missingItemsWithQuantities.entrySet()) {
+                if (!Rs2Bank.hasBankItem(entry.getKey(), entry.getValue())) {
+                    log.warn("Required transport item {} unavailable at bank (need {}) — falling back direct",
+                            entry.getKey(), entry.getValue());
+                    return fallbackDirectFromBank(finalTarget, distance, "bank-quantity-changed");
                 }
-
-                // Withdraw the correct amount of each unique item
-                for (Map.Entry<Integer, Integer> entry : missingItemsWithQuantities.entrySet()) {
-                    int itemId = entry.getKey();
-                    int amountNeeded = entry.getValue();
-                    int currentCount = Rs2Inventory.count(itemId);
-                    int amountToWithdraw = Math.max(0, amountNeeded );
-
-                    if (amountToWithdraw > 0) {
-                        if (Rs2Bank.hasBankItem(itemId, amountToWithdraw)) {
-                            log.debug("Withdrawing {} x {} (item ID: {})", amountToWithdraw, itemId, itemId);
-                            if (!Rs2Bank.withdrawX(itemId, amountToWithdraw)
-                                    || !sleepUntil(() -> Rs2Inventory.count(itemId)
-                                            >= currentCount + amountToWithdraw, 3000)) {
-                                log.warn("Failed to withdraw required transport item {} x{}",
-                                        itemId, amountToWithdraw);
-                                return WalkerState.EXIT;
-                            }
-                        } else {
-                            log.warn("Required transport item {} not found in bank (need {} but bank has less)",
-                                    itemId, amountToWithdraw);
-                            return WalkerState.EXIT;
-                        }
-                    } else {
-                        log.debug("Already have enough of item {}: {} (need {})", itemId, currentCount, amountNeeded);
-                    }
-                }
-
-                // Wait a bit for all withdrawals to complete
-                sleepTickJitter(1);
             }
 
-            for (Integer equipmentItemId : transportLoadout.getEquipmentItemIds()) {
-                if (Rs2Equipment.isWearing(equipmentItemId)) {
-                    continue;
+            // Noted withdraw mode turns a non-stackable transport item into banknotes, which the
+            // route cannot consume: switch to item mode for the withdrawal and restore the player's
+            // setting afterwards.
+            boolean restoreNotedMode = WithdrawNoteModePolicy.shouldSwitchToItemMode(
+                    WithdrawNoteModePolicy.requiresItemMode(missingItemsWithQuantities.keySet(), itemId -> {
+                        Rs2ItemModel row = Rs2Bank.getBankItemForSavedId(itemId);
+                        return row != null && row.isStackable();
+                    }),
+                    Rs2Bank.hasWithdrawAsNote());
+            String preparationFailure;
+            try {
+                preparationFailure = prepareTransportLoadoutAtBank(transportLoadout, restoreNotedMode);
+            } finally {
+                if (restoreNotedMode && !Rs2Bank.setWithdrawAsNote()) {
+                    log.warn("Failed to restore bank noted withdraw mode");
                 }
-                if (!Rs2Inventory.hasItem(equipmentItemId)
-                        || !Rs2Bank.wearItem(equipmentItemId)
-                        || !sleepUntil(() -> Rs2Equipment.isWearing(equipmentItemId), 3000)) {
-                    log.warn("Failed to equip required transport provider {}", equipmentItemId);
-                    return WalkerState.EXIT;
-                }
+            }
+            if (BANK_PREPARATION_EQUIP_FAILED.equals(preparationFailure)) {
+                return WalkerState.EXIT;
+            }
+            if (preparationFailure != null) {
+                return fallbackDirectFromBank(finalTarget, distance, preparationFailure);
             }
 
             // Step 4: Close bank
@@ -10613,6 +10593,68 @@ public class Rs2Walker {
             log.error("Error in banking workflow: " + e.getMessage(), e);
             return WalkerState.EXIT;
         }
+    }
+
+    private static final String BANK_PREPARATION_EQUIP_FAILED = "equip-failed";
+
+    /**
+     * Withdraws the route's transport items and equips their providers. Returns {@code null} when the
+     * loadout is ready, {@link #BANK_PREPARATION_EQUIP_FAILED} when the walk itself must abort, or a
+     * reason string when the banking detour should fall back to a direct walk.
+     *
+     * <p>The withdrawal is confirmed against the carried quantity of both the requested and the
+     * actually withdrawn id (a noted withdrawal lands as a different id), instead of assuming that a
+     * successful menu dispatch means the items arrived.
+     */
+    private static String prepareTransportLoadoutAtBank(Rs2TransportLoadout transportLoadout,
+                                                        boolean switchToItemMode) {
+        if (switchToItemMode && !Rs2Bank.setWithdrawAsItem()) {
+            log.warn("Failed to switch bank to item withdraw mode — falling back direct");
+            return "withdraw-note-mode";
+        }
+
+        Map<Integer, Set<Integer>> withdrawnItemIds = new HashMap<>();
+        for (Map.Entry<Integer, Integer> entry : transportLoadout.getWithdrawals().entrySet()) {
+            int itemId = entry.getKey();
+            int amountToWithdraw = Math.max(0, entry.getValue());
+            if (amountToWithdraw == 0) {
+                continue;
+            }
+            Rs2ItemModel bankRow = Rs2Bank.getBankItemForSavedId(itemId);
+            TransportWithdrawalConfirmation confirmation = TransportWithdrawalConfirmation.start(
+                    itemId, bankRow == null ? -1 : bankRow.getId(), amountToWithdraw,
+                    Rs2Inventory::itemQuantity);
+            log.debug("Withdrawing {} x {} (target quantity {})",
+                    amountToWithdraw, confirmation.getItemIds(), confirmation.getTargetQuantity());
+            if (Rs2Bank.withdrawX(itemId, amountToWithdraw)) {
+                sleepUntil(() -> confirmation.evaluate(Rs2Inventory::itemQuantity, Rs2Bank.isOpen())
+                                != TransportWithdrawalConfirmation.State.PENDING,
+                        TransportWithdrawalConfirmation.TIMEOUT_MS);
+            }
+            if (confirmation.evaluate(Rs2Inventory::itemQuantity, true)
+                    != TransportWithdrawalConfirmation.State.CONFIRMED) {
+                log.warn("Failed to withdraw required transport item {} x{} (carried {} of {}) — falling back direct",
+                        itemId, amountToWithdraw, confirmation.carriedQuantity(Rs2Inventory::itemQuantity),
+                        confirmation.getTargetQuantity());
+                return "withdraw-failed";
+            }
+            withdrawnItemIds.put(itemId, confirmation.getItemIds());
+        }
+
+        for (Integer equipmentItemId : transportLoadout.getEquipmentItemIds()) {
+            Set<Integer> providerIds = WithdrawNoteModePolicy.providerItemIds(equipmentItemId, withdrawnItemIds);
+            if (providerIds.stream().anyMatch(Rs2Equipment::isWearing)) {
+                continue;
+            }
+            Integer carriedId = providerIds.stream().filter(Rs2Inventory::hasItem).findFirst().orElse(null);
+            if (carriedId == null
+                    || !Rs2Bank.wearItem(carriedId)
+                    || !sleepUntil(() -> Rs2Equipment.isWearing(carriedId), 3000)) {
+                log.warn("Failed to equip required transport provider {}", providerIds);
+                return BANK_PREPARATION_EQUIP_FAILED;
+            }
+        }
+        return null;
     }
 
     /**
