@@ -2055,12 +2055,17 @@ public class Rs2Walker {
                     return WalkerState.ARRIVED;
                 }
             }
+            doorAttemptLedger.beginTailPass();
+            FirstRouteInteractionResult firstInteractionAtRange = checkFirstRouteInteractionAtRange(
+                    rawPath, indexOfStartPoint, smoothedToRaw, walkLoop, clearedInterimTarget);
+            if (firstInteractionAtRange == FirstRouteInteractionResult.HANDLED) { processWalkTail--; continue; }
             // Continuation clicks are for flowing ALONG the route after an interim clears. Off-path they
             // are actively harmful: the click keeps the player moving, movement defers the off-path
             // recalc, the interim goes stale, and the next continuation click sustains the spiral — the
             // walker can run minutes in the wrong corridor without ever replanning. Off-path, do nothing
             // here: the player stops, the "moving" deferral ends, and OFFPATH_RECALC replans properly.
             if (clearedInterimTarget
+                    && firstInteractionAtRange == FirstRouteInteractionResult.NONE
                     && isNearPath(walkLoop.playerLoc)
                     && !walkLoop.interacting
                     && !walkLoop.animating
@@ -2114,7 +2119,6 @@ public class Rs2Walker {
             boolean inInstance = Microbot.getClient().getTopLevelWorldView().isInstance();
             WalkExit exit = WalkExit.END_OF_PATH;
             String offPathDeferDetail = "";
-            doorAttemptLedger.beginTailPass();
             ObstaclePolicy startupPolicy = obstaclePolicyForCurrentPhase();
 
             // Re-capture: the widget dialogs above sleep for seconds when they fire.
@@ -2300,7 +2304,8 @@ public class Rs2Walker {
                     break;
                 }
                 int segDistance = currentWorldPoint.distanceTo2D(playerNearSeg);
-                if (segDistance <= HANDLER_RANGE) {
+                if (segDistance <= HANDLER_RANGE
+                        && firstInteractionAtRange == FirstRouteInteractionResult.NONE) {
                     int rawI = (i < smoothedToRaw.length) ? smoothedToRaw[i] : 0;
                     int rawEnd = rawEndForSmoothedIndex(i, smoothedToRaw, rawPath, path);
                     SegmentTransportContext transportContext = segmentTransportContext(
@@ -6979,6 +6984,152 @@ public class Rs2Walker {
     // --- Upstream interop bridges (rev 241, PR #1876). Consumed via static import
     // (`import static ...Rs2Walker.*`) by Rs2WalkerDoors and the route-interaction wiring
     // tests; ported verbatim from chsami/main (ba4127053e, b4d76b3ecc).
+
+    private enum FirstRouteInteractionResult {
+        NONE,
+        PENDING,
+        HANDLED
+    }
+
+    private static FirstRouteInteractionResult checkFirstRouteInteractionAtRange(
+            List<WorldPoint> rawPath, int smoothedIndex, int[] smoothedToRaw,
+            WalkLoopSnapshot walkLoop, boolean clearedInterimTarget) {
+        if (rawPath == null || rawPath.size() < 2 || !rangedTransportDispatchEnabled()
+                || !(walkLoop.moving || routeState.interimTargetWp != null
+                || currentWalkerPhase() == WalkerPhase.STARTUP || clearedInterimTarget)
+                || walkLoop.interacting || walkLoop.animating
+                || isDoorInteractionSettling() || isTransportInteractionSettling()
+                || isRecoveryMovementInFlight()) {
+            return FirstRouteInteractionResult.NONE;
+        }
+        int rawAnchor = rawIndexForSmoothedIndex(smoothedIndex, smoothedToRaw, rawPath);
+        return handleFirstRouteInteractionAtRange(rawPath, rawAnchor, walkLoop.playerLoc,
+                walkLoop.closestReachableTiles,
+                obstaclePolicyForCurrentPhase().segmentDoorTimeoutMs());
+    }
+
+    /**
+     * Check the first route interaction before an active minimap interim yields the pass. The
+     * smoothed-segment loop cannot establish route order: an empty segment consumed its old ranged
+     * permission, while a later visible door or ladder remained untouched until the approach ended.
+     * The player-origin reachable snapshot already used to select the route index supplies the
+     * near-side proof here, so this adds no second collision search to the moving path.
+     */
+    private static FirstRouteInteractionResult handleFirstRouteInteractionAtRange(
+            List<WorldPoint> rawPath, int rawAnchor, WorldPoint playerLoc,
+            Map<WorldPoint, Integer> reachable, long doorTimeoutMs) {
+        if (rawPath == null || rawPath.size() < 2 || playerLoc == null
+                || reachable == null || reachable.isEmpty()
+                || !playerLoc.equals(Rs2Player.getWorldLocation())) {
+            return FirstRouteInteractionResult.NONE;
+        }
+        boolean inInstance = Microbot.getClientThread()
+                .runOnClientThreadOptional(() -> Microbot.getClient().getTopLevelWorldView().isInstance())
+                .orElse(Boolean.TRUE);
+        if (inInstance) {
+            return FirstRouteInteractionResult.NONE;
+        }
+
+        Optional<Rs2RouteResult> activeRoute = Rs2PathApi.getActiveRoute();
+        if (activeRoute.isEmpty() || !activeRoute.get().getPath().equals(rawPath)) {
+            return FirstRouteInteractionResult.NONE;
+        }
+        int anchor = WalkerPathGeometry.rawPathForwardAnchorIndex(rawPath, playerLoc,
+                Math.max(0, rawAnchor - 2), ROUTE_PROGRESS_FORWARD_SEARCH_TILES,
+                () -> getClosestTileIndex(rawPath, playerLoc), reachable);
+        int startEdge = FirstRouteInteractionSelector.scanStartEdge(rawPath, anchor, playerLoc,
+                routeState.lastTransportOriginLocation, routeState.lastTransportDestinationLocation,
+                isRecentTransportEdgeWindow());
+        Map<Integer, Rs2TransportEdge> selectedTransports = collectRouteTransportsForInteractionScan(
+                activeRoute.get().getSteps(), startEdge, anchor, HANDLER_RANGE + 4);
+        long sceneCaptureStartedAtMs = System.currentTimeMillis();
+        List<RouteSceneObjectSnapshot.Entry> sceneObjects = RouteSceneObjectSnapshot.capture(
+                rawPath, startEdge, HANDLER_RANGE + 4, playerLoc, HANDLER_RANGE);
+        long sceneCaptureMs = System.currentTimeMillis() - sceneCaptureStartedAtMs;
+        if (sceneCaptureMs >= 250) {
+            WebWalkLog.spInfo("route_scene_capture_slow | ms={} startEdge={} objects={} at={}",
+                    sceneCaptureMs, startEdge, sceneObjects.size(), playerLoc);
+        }
+        if (sceneObjects.isEmpty() && selectedTransports.isEmpty()) {
+            return FirstRouteInteractionResult.NONE;
+        }
+        Map<Integer, RouteSceneObjectSnapshot.Entry> sceneDoorByEdge = new HashMap<>();
+        FirstRouteInteractionSelector.Selection selection = FirstRouteInteractionSelector.selectFirst(rawPath, startEdge,
+                HANDLER_RANGE + 4, playerLoc, reachable, HANDLER_RANGE,
+                edge -> {
+                    Rs2TransportEdge transport = selectedTransports.get(edge);
+                    if (transport != null) {
+                        return RouteObjectRangePolicy.isRangedObjectDispatchEligible(transport);
+                    }
+                    WorldPoint from = rawPath.get(edge);
+                    WorldPoint to = rawPath.get(edge + 1);
+                    if (Rs2DoorGeometry.crossedDoorAxis(from, to, playerLoc)) {
+                        return false;
+                    }
+                    RouteSceneObjectSnapshot.Entry closest = null;
+                    int closestDistance = Integer.MAX_VALUE;
+                    for (RouteSceneObjectSnapshot.Entry entry : sceneObjects) {
+                        if (Rs2WalkerDoors.isPendingRouteDoorObject(entry.object(), entry.location(),
+                                from, to, playerLoc, HANDLER_RANGE)) {
+                            int objectDistance = entry.location().distanceTo2D(playerLoc);
+                            if (objectDistance < closestDistance) {
+                                closest = entry;
+                                closestDistance = objectDistance;
+                            }
+                        }
+                    }
+                    if (closest != null) {
+                        sceneDoorByEdge.put(edge, closest);
+                    }
+                    return closest != null;
+                }, selectedTransports::containsKey);
+        if (selection.kind() == FirstRouteInteractionSelector.Kind.NONE) {
+            return FirstRouteInteractionResult.NONE;
+        }
+
+        int firstEdge = selection.edgeIndex();
+        if (selection.kind() == FirstRouteInteractionSelector.Kind.BLOCKED_TRANSPORT) {
+            WorldPoint origin = rawPath.get(firstEdge);
+            if (origin != null && origin.getPlane() == playerLoc.getPlane()
+                    && origin.distanceTo2D(playerLoc) <= RAW_TRANSPORT_DISPATCH_MAX_DISTANCE
+                    && handleTransports(rawPath, firstEdge)) {
+                return FirstRouteInteractionResult.HANDLED;
+            }
+            return FirstRouteInteractionResult.PENDING;
+        }
+
+        Rs2TransportEdge transport = selectedTransports.get(firstEdge);
+        if (transport != null) {
+            WorldPoint origin = rawPath.get(firstEdge);
+            WorldPoint destination = rawPath.get(firstEdge + 1);
+            int originDistance = origin.distanceTo2D(playerLoc);
+            int maxRange = transport.getType() == Rs2TransportType.AGILITY_SHORTCUT
+                    ? 6 : HANDLER_RANGE;
+            boolean allowed = shouldDispatchTransportAtRange(originDistance,
+                    RAW_TRANSPORT_DISPATCH_MAX_DISTANCE, maxRange, true, true, false,
+                    isDoorInteractionSettling() || isTransportInteractionSettling(),
+                    rangedTransportEdgeFailedRecently(origin, destination),
+                    rangedTransportDispatchEnabled());
+            if (!allowed) {
+                return FirstRouteInteractionResult.PENDING;
+            }
+            WorldPoint before = Rs2Player.getWorldLocation();
+            if (handleTransports(rawPath, firstEdge, true)) {
+                if (didCurrentTileTransportProgress(before, destination, currentTarget)) {
+                    return FirstRouteInteractionResult.HANDLED;
+                }
+                markRangedTransportEdgeFailed(origin, destination);
+            }
+            return FirstRouteInteractionResult.PENDING;
+        }
+
+        RouteSceneObjectSnapshot.Entry door = sceneDoorByEdge.get(firstEdge);
+        if (door == null) {
+            return FirstRouteInteractionResult.PENDING;
+        }
+        return handleVerifiedFirstRouteDoorAtRange(rawPath, firstEdge, doorTimeoutMs)
+                ? FirstRouteInteractionResult.HANDLED : FirstRouteInteractionResult.PENDING;
+    }
 
     /** Skip a backtracked transport only after its exact edge has an observed crossing. */
     static int rawScanStartEdge(List<WorldPoint> rawPath, int anchor, WorldPoint playerLoc,
