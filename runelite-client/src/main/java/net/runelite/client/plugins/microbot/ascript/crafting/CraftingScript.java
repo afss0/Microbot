@@ -193,6 +193,14 @@ public class CraftingScript implements AModule {
         if (amethyst) {
             return !Rs2Inventory.hasItem(21347) || !AScriptBank.hasUnnotedItem("chisel");
         }
+        // A finished cut stack that "Fletch into Bolt Tips" still has to process is work sitting in
+        // the inventory, not a missing material. Reporting a bank need here would take the bank
+        // branch, deposit the cut gems and return before doAction() — the option would silently do
+        // nothing. The count is exact ("Ruby" must not resolve an "Uncut ruby" stack).
+        if (config.fletchIntoBoltTips() && countMaterial(gem.getName(), true) > 0
+                && AScriptBank.hasUnnotedItem("chisel")) {
+            return false;
+        }
         return !AScriptBank.hasUnnotedItem("uncut " + gem.getName()) || !AScriptBank.hasUnnotedItem("chisel");
     }
 
@@ -759,42 +767,50 @@ public class CraftingScript implements AModule {
             return true;
         }
 
-        // The uncut stack is gone: that batch is over.
-        clearBatchLatch();
+        // The uncut stack is gone: the cutting batch is over. The latch is NOT cleared here — the
+        // bolt-tip continuation below keeps its own latch, and clearing it on every tick would make
+        // that batch re-dispatch every tick (the P1-11 defect, in this sub-batch).
         if (amethyst) {
             // Amethyst products are the finished output — nothing to fletch afterwards.
+            clearBatchLatch();
             Microbot.status = "IDLE";
             return true;
         }
 
-        if (config.fletchIntoBoltTips() && Rs2Inventory.hasItem(gem.getName())
-                && AScriptBank.hasUnnotedItem("chisel")) {
+        if (config.fletchIntoBoltTips()) {
             final String cutRef = gem.getName();
-            if (batchInFlight(cutRef)) return true;
+            int cutCount = countMaterial(cutRef, true);
+            if (cutCount > 0 && AScriptBank.hasUnnotedItem("chisel")) {
+                if (batchInFlight(cutRef, cutCount)) return true; // running: wait, never re-dispatch
 
-            Microbot.status = "FLETCHING BOLT TIPS";
-            int before = countMaterial(cutRef);
-            // Same chisel as above (a locked tool, still in the inventory); the cut gem
-            // is the new use target.
-            Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
-            Rs2ItemModel cutGemItem = AScriptPick.pick(cutRef);
-            if (!AScriptClick.useItemOnItem(chiselItem, cutGemItem)) {
-                Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
-                return false;
-            }
-            if (!sleepUntilTrue(() -> Rs2Widget.isProductionWidgetOpen()
-                    || Rs2Widget.isGoldCraftingWidgetOpen()
-                    || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 20000)) {
+                Microbot.status = "FLETCHING BOLT TIPS";
+                // Same chisel as above (a locked tool, still in the inventory); the cut gem
+                // is the new use target.
+                Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
+                // Exact match: the substring form resolves "Uncut ruby" for "Ruby".
+                Rs2ItemModel cutGemItem = AScriptPick.pick(cutRef, true);
+                if (!AScriptClick.useItemOnItem(chiselItem, cutGemItem)) {
+                    Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+                    return false;
+                }
+                if (!sleepUntilTrue(() -> Rs2Widget.isProductionWidgetOpen()
+                        || Rs2Widget.isGoldCraftingWidgetOpen()
+                        || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 20000)) {
+                    Microbot.status = "IDLE";
+                    return false;
+                }
+                Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
+                if (!confirmBatchStarted(cutRef, cutCount, true)) {
+                    Microbot.status = "IDLE";
+                    return false;
+                }
                 Microbot.status = "IDLE";
-                return false;
-            }
-            Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
-            if (!confirmBatchStarted(cutRef, before)) {
-                Microbot.status = "IDLE";
-                return false;
+                return true;
             }
         }
 
+        // Nothing is left to process: neither a cutting batch nor a bolt-tip batch is in flight.
+        clearBatchLatch();
         Microbot.status = "IDLE";
         return true;
     }
@@ -987,9 +1003,20 @@ public class CraftingScript implements AModule {
      * latch's reference string, so the numeric form resolves through the id overload.
      */
     private int countMaterial(String ref) {
+        return countMaterial(ref, false);
+    }
+
+    /**
+     * Inventory count of a batch material, optionally by exact name. Substring matching is the
+     * legacy behaviour and stays for the raw materials (their names are distinctive), but a
+     * product name such as {@code "Ruby"} also matches {@code "Uncut ruby"} — the bolt-tip
+     * continuation counts those with {@code exact = true}.
+     */
+    private int countMaterial(String ref, boolean exact) {
         if (ref == null || ref.isEmpty()) return 0;
         boolean numeric = ref.chars().allMatch(Character::isDigit);
-        return numeric ? Rs2Inventory.count(Integer.parseInt(ref)) : Rs2Inventory.count(ref);
+        if (numeric) return Rs2Inventory.count(Integer.parseInt(ref));
+        return exact ? Rs2Inventory.count(ref, true) : Rs2Inventory.count(ref);
     }
 
     /**
@@ -1000,8 +1027,12 @@ public class CraftingScript implements AModule {
      * drop and returned immediately.
      */
     private boolean batchInFlight(String ref) {
+        return batchInFlight(ref, countMaterial(ref));
+    }
+
+    /** {@link #batchInFlight(String)} with a count the caller already took (exact or id-based). */
+    private boolean batchInFlight(String ref, int count) {
         if (batchMaterialRef == null || !batchMaterialRef.equals(ref)) return false;
-        int count = countMaterial(ref);
         if (count <= 0) return false; // stack consumed — the batch ended with it
 
         long now = System.currentTimeMillis();
@@ -1023,8 +1054,13 @@ public class CraftingScript implements AModule {
      * caller reports a failed attempt instead of resetting the failure counter.
      */
     private boolean confirmBatchStarted(String ref, int before) {
+        return confirmBatchStarted(ref, before, false);
+    }
+
+    /** {@link #confirmBatchStarted(String, int)} with the caller's own count semantics. */
+    private boolean confirmBatchStarted(String ref, int before, boolean exact) {
         boolean started = sleepUntil(
-                () -> Rs2Player.isAnimating() || countMaterial(ref) < before,
+                () -> Rs2Player.isAnimating() || countMaterial(ref, exact) < before,
                 Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier));
         if (!started) {
             batchMaterialRef = null;
@@ -1032,7 +1068,7 @@ public class CraftingScript implements AModule {
             return false;
         }
         batchMaterialRef = ref;
-        batchLastCount = countMaterial(ref);
+        batchLastCount = countMaterial(ref, exact);
         batchLastProgressAt = System.currentTimeMillis();
         return true;
     }
