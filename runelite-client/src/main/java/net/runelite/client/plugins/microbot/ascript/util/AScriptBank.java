@@ -380,6 +380,11 @@ public final class AScriptBank {
      * <p>
      * Slots are account-wide and persist, so this is effectively one-time setup per
      * tool; the unlock-and-deposit branch only runs when switching tools.
+     * <p>
+     * Requires bank slot locking to be ON and verified, even when the tool is already held and
+     * its slot already reads locked: a lock is only protection while the bank honours it, so
+     * the capability is confirmed before anything is deposited (see
+     * {@link #ensureSlotLockingCapability()}).
      *
      * @param toolName the tool to keep locked in inventory (name or numeric id as string)
      * @return true if the tool is now in the inventory with its slot locked
@@ -442,18 +447,25 @@ public final class AScriptBank {
 
     private static boolean ensureLocked(String nameOrId, boolean withdrawWholeStack,
             Collection<String> keepLocked) {
+        // Bank slot locking is a precondition of the WHOLE cycle, so it is checked BEFORE any
+        // early return (review round 1, P2-1). A slot can already READ locked while the bank is
+        // set to ignore inventory locks (BANK_SIDE_SLOT_IGNOREINVLOCKS=1, typically paired with
+        // show-locks=1), and that combination deposits straight through the anchor: reading the
+        // pre-existing lock as "nothing left to do" started the cycle without the capability and
+        // the next depositAll() swept the tool. Costs one varbit read when locking is enabled.
+        if (!ensureSlotLockingCapability()) {
+            return false;
+        }
+
         // Already holding the item — the lock is the only thing left to establish (and confirm).
         Rs2ItemModel held = getInventoryItem(nameOrId);
         if (held != null) {
             return lockHeld(held, nameOrId);
         }
 
-        // The item is missing, so this call is going to release strays and withdraw it: both
-        // halves depend on bank slot locking. Refuse the cycle up front when it is unavailable
-        // instead of depositing an unprotected inventory (the old behaviour, which lost tools).
-        if (!ensureSlotLockingCapability()) {
-            return false;
-        }
+        // The item is missing, so this call is going to release strays and withdraw it; both
+        // halves need the capability confirmed above (an unprotected inventory is exactly what
+        // the old behaviour deposited, losing tools).
 
         // Release any locked slot that holds a DIFFERENT item (and is not in the caller's
         // keep-list — those belong to this same bank cycle), then blanket-deposit via the
@@ -496,6 +508,11 @@ public final class AScriptBank {
      * around an unprotected anchor, and a silent {@code true} here is what let the tool be
      * swept. Also re-checks that the item is still in the inventory afterwards: a lock on a
      * slot the item has already left protects nothing.
+     * <p>
+     * The slot-locking capability is NOT re-checked here: {@link #ensureLocked} confirms it
+     * before dispatching anything (including this method's already-held path), because an
+     * already-locked slot can coexist with a bank that ignores inventory locks — in which case
+     * {@link Rs2Bank#isLockedSlot(int)} reporting {@code true} protects nothing.
      *
      * @param item    the inventory item that must end up locked
      * @param nameOrId the caller's lookup key, for the final presence check and log lines
@@ -625,10 +642,15 @@ public final class AScriptBank {
      * path the rest of this class uses. Never the grid-targeted
      * {@code Rs2Bank.depositAll(name/id)} — it dies silently on some machines (see
      * {@link #ensureLocked}). Locked slots and the XP lamp are never touched.
+     * <p>
+     * The capability is required as soon as a keeper is present in the inventory, whether its
+     * slot already reads locked or not: with the bank set to ignore inventory locks the lock
+     * protects nothing, so "it is already locked" is not evidence that it will survive.
      *
      * @param keepIds item ids that must survive the sweep
      * @return true when no stray remains (no-op true when the inventory is already
-     *         clean); false when the bank is closed, a keeper lock could not be
+     *         clean); false when the bank is closed, bank slot locking cannot be
+     *         enabled while a keeper is held, a keeper lock could not be
      *         established, or the strays were still present after the deposit
      */
     public static boolean depositAllExcept(Collection<Integer> keepIds) {
@@ -638,17 +660,20 @@ public final class AScriptBank {
         }
         List<Rs2ItemModel> strays = new ArrayList<>();
         List<Rs2ItemModel> keepers = new ArrayList<>();
+        int keeperCount = 0;
         for (Rs2ItemModel item : Rs2Inventory.items().filter(Objects::nonNull).collect(Collectors.toList())) {
-            if (Rs2Bank.isLockedSlot(item.getSlot())) continue; // anchors stay as found
             if (item.getId() == ItemID.LAMP) continue;          // cannot be deposited at all
-            if (keepIds != null && keepIds.contains(item.getId())) {
+            boolean keeper = keepIds != null && keepIds.contains(item.getId());
+            // A keeper counts even when its slot already READS locked (review round 1, P2-1):
+            // with the bank set to ignore inventory locks the lock protects nothing, so the
+            // capability must be confirmed instead of inferred from the lock state.
+            if (keeper) keeperCount++;
+            if (Rs2Bank.isLockedSlot(item.getSlot())) continue; // anchors stay as found
+            if (keeper) {
                 keepers.add(item);
             } else {
                 strays.add(item);
             }
-        }
-        if (strays.isEmpty()) {
-            return true;
         }
 
         // Keepers are protected by locking their OWN slots, one toggle per slot: they are often
@@ -656,11 +681,16 @@ public final class AScriptBank {
         // first duplicate — locking it repeatedly and leaving every other copy exposed to the
         // toolbar deposit. Without the capability there is no way to protect them at all, so the
         // sweep refuses (nothing deposited) and the orchestrator stops with the capability
-        // message instead of retrying a deposit that would empty the keep-set.
-        if (!keepers.isEmpty() && !ensureSlotLockingCapability()) {
+        // message instead of retrying a deposit that would empty the keep-set. Checked on keeper
+        // PRESENCE, not on the unlocked ones: an already-locked keeper does not prove the
+        // protection is real (see above).
+        if (keeperCount > 0 && !ensureSlotLockingCapability()) {
             log.warn("[AScriptBank] depositAllExcept declined: {} keeper(s) cannot be locked —"
-                    + " nothing deposited", keepers.size());
+                    + " nothing deposited", keeperCount);
             return false;
+        }
+        if (strays.isEmpty()) {
+            return true;
         }
         List<Rs2ItemModel> lockedNow = new ArrayList<>();
         for (Rs2ItemModel keeper : keepers) {
