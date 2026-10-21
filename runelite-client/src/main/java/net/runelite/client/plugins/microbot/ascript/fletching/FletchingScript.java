@@ -275,6 +275,7 @@ public class FletchingScript implements AModule {
         }
 
         // Withdraw feathers — verified
+        if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified("feather")) {
             AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
@@ -296,6 +297,7 @@ public class FletchingScript implements AModule {
         }
 
         // Withdraw feathers — verified
+        if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified("feather")) {
             AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
@@ -317,6 +319,7 @@ public class FletchingScript implements AModule {
         }
 
         // Withdraw arrow tips — verified
+        if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(arrow.getArrowTipName())) {
             AScriptNotify.notify("Banking Failed", "No " + arrow.getArrowTipName() + " in bank");
             return false;
@@ -332,21 +335,34 @@ public class FletchingScript implements AModule {
         // Deposit via toolbar button
         if (!depositAll()) return false;
 
-        // Stringing needs unstrung bow + bow string — no knife required
-        int half = 14; // 28 slots / 2
+        // Stringing needs one unstrung bow + one bow string per piece — no knife required.
+        // Bow string is NOT stackable (14 strings occupy 14 slots, same as the unstrung bows),
+        // so both sides are slot-bound: the batch is capped at half the free slots left after
+        // the deposit. Locked tool/lamp slots are already net of that count, so they SHRINK the
+        // batch instead of filling the bag. The count is also capped by what the bank holds on
+        // both sides: the withdraw resolves its bank row by the requested amount, so asking for
+        // 14 against a 9-stack finds no row at all and dispatches nothing.
+        int freeSlots = AScriptBank.freeSlots();
+        int capacity = freeSlots / 2;
+        int batch = Math.min(capacity, Math.min(AScriptBank.bankQuantity(bow.getUnstrungName()),
+                AScriptBank.bankQuantity("bow string")));
+        if (batch < 1) {
+            AScriptNotify.notify("Banking Failed",
+                    "No " + bow.getUnstrungName() + " / bow string pair in bank");
+            return false;
+        }
 
-        // Withdraw unstrung bow — verified
-        if (!AScriptBank.withdrawVerified(bow.getUnstrungName(), half)) {
+        if (!AScriptBank.ensureBankOpen()) return false;
+        if (!AScriptBank.withdrawVerified(bow.getUnstrungName(), batch)) {
             AScriptNotify.notify("Banking Failed", "No " + bow.getUnstrungName() + " in bank");
             return false;
         }
 
-        // Withdraw bow string — verified
-        if (!AScriptBank.withdrawVerified("bow string", half)) {
+        if (!AScriptBank.ensureBankOpen()) return false;
+        if (!AScriptBank.withdrawVerified("bow string", batch)) {
             AScriptNotify.notify("Banking Failed", "No bow string in bank");
             return false;
         }
-
         return true;
     }
 
