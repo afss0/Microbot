@@ -1,6 +1,7 @@
 package net.runelite.client.plugins.microbot.ascript.fletching;
 
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Skill;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
@@ -12,6 +13,7 @@ import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.skills.fletching.Rs2Fletching;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingArrow;
 import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingBolt;
@@ -78,12 +80,25 @@ public class FletchingScript implements AModule {
         // Fletching selected but no activity chosen -> visible error
         if (currentPhase == Phase.NONE && config.scriptSelection() == ScriptType.FLETCHING)
             return "no fletching activity selected";
-        // FletchingDart, FletchingBolt, FletchingArrow have no NONE — any value is valid
+        // Dart/bolt/arrow types have no NONE — every value is valid, but the player still
+        // has to meet its Fletching level. A level read of 0 is "skill data loading", not a
+        // locked item, so it passes and the next tick re-checks.
         switch (currentPhase) {
             case DARTS:
+                if (!fletchingLevelLoaded()) return null;
+                return config.fletchingDartType().meetsLevelRequirement() ? null
+                        : "need level " + config.fletchingDartType().getLevelRequirement()
+                        + " Fletching for " + config.fletchingDartType().getDartTipName();
             case BOLTS:
+                if (!fletchingLevelLoaded()) return null;
+                return config.fletchingBoltType().meetsLevelRequirement() ? null
+                        : "need level " + config.fletchingBoltType().getLevelRequirement()
+                        + " Fletching for " + config.fletchingBoltType().getUnfinishedBoltName();
             case ARROWS:
-                return null;
+                if (!fletchingLevelLoaded()) return null;
+                return config.fletchingArrowType().meetsLevelRequirement() ? null
+                        : "need level " + config.fletchingArrowType().getLevelRequirement()
+                        + " Fletching for " + config.fletchingArrowType().getArrowTipName();
             case BOWS:
                 if (config.fletchingBowType() == null || config.fletchingBowType() == FletchingBowType.NONE)
                     return "no bow type selected";
@@ -91,6 +106,11 @@ public class FletchingScript implements AModule {
             default:
                 return null;
         }
+    }
+
+    /** False while the Fletching level still reads 0 (skill data loading / timed-out read). */
+    private boolean fletchingLevelLoaded() {
+        return Rs2Player.getRealSkillLevel(Skill.FLETCHING) > 0;
     }
 
     // ── Bank check ──────────────────────────────────────────────

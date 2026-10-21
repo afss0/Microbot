@@ -244,6 +244,7 @@ public class CannonballSmelterScript implements AModule {
         }
 
         lastBarCount = 0; // fresh batch — doAction resolves the real count
+        lastProgressAt = 0L; // and its progress stamp: a stale one makes the new batch look in flight
         // Fresh batch scope — the next empty state only earns its closing break after a
         // batch runs on these materials.
         batchRanSinceBank = false;
