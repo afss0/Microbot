@@ -60,6 +60,18 @@ public class CraftingScript implements AModule {
     /** No bar consumed and no animation for this long = the batch is not running anymore. */
     private static final long JEWELRY_STALL_WINDOW_MS = 8_000L;
 
+    // ── Make-batch latch (gems / glass / staffs / flax / dragon leather) ──
+    /**
+     * Cross-tick latch for the non-jewelry make batches. The material reference (a name or a
+     * numeric id as a string) identifies the batch; the count and progress timestamp prove it
+     * is still running, so a tick never re-dispatches a batch that is already in flight.
+     */
+    private String batchMaterialRef = null;
+    private int batchLastCount = 0;
+    private long batchLastProgressAt = 0L;
+    /** No material consumed and no animation for this long = the batch is not running anymore. */
+    private static final long CRAFT_STALL_WINDOW_MS = 8_000L;
+
     /** Prevent repeated exit attempts / Discord spam when furnace not found. */
     private boolean exitRequested = false;
     /** Track consecutive craft failures to trigger exit after persistent failures. */
@@ -78,6 +90,9 @@ public class CraftingScript implements AModule {
         jewelryLastProgressAt = 0L;
         jewelryPostBatchBreakDone = false;
         batchRanSinceBank = false;
+        batchMaterialRef = null;
+        batchLastCount = 0;
+        batchLastProgressAt = 0L;
         lastAfkTime = 0L;
     }
 
@@ -117,7 +132,7 @@ public class CraftingScript implements AModule {
         switch (currentPhase) {
             case GEMS:
                 if (config.gemType() == CraftingGem.NONE) return "no gem selected";
-                return null;
+                return craftingLevelError(config.gemType().getLevelRequired(), config.gemType().getName());
             case GLASS:
                 if (config.glassType() == CraftingGlass.NONE) return "no glass item selected";
                 return null;
@@ -133,10 +148,27 @@ public class CraftingScript implements AModule {
             case JEWELRY:
                 if (config.jewelryItem() == JewelryItem.NONE) return "no jewelry item selected";
                 if (config.jewelryLocation() == JewelryLocation.NONE) return "no furnace location selected";
-                return null;
+                return craftingLevelError(config.jewelryItem().getLevelRequired(), config.jewelryItem().getName());
             default:
                 return null;
         }
+    }
+
+    /**
+     * Capability guard for the configured item's Crafting level — run from
+     * {@link #validateSelection} so a locked selection stops with a message BEFORE the
+     * module banks, instead of burning a bank trip first.
+     * <p>
+     * A real-level read of 0 means the skill data has not loaded yet (or the client-thread
+     * read timed out) — that is "skill data loading", not a locked item, so it passes and
+     * the next tick re-checks.
+     */
+    private String craftingLevelError(int required, String itemName) {
+        int level = Rs2Player.getRealSkillLevel(Skill.CRAFTING);
+        if (level <= 0) return null;
+        return level < required
+                ? "need level " + required + " Crafting for " + itemName + " (current " + level + ")"
+                : null;
     }
 
     // ── Bank check ──────────────────────────────────────────────
@@ -259,7 +291,7 @@ public class CraftingScript implements AModule {
         if (armour == CraftingDragonLeather.NONE) return false;
         String needle = config.useCostumeNeedle() ? "costume needle" : "needle";
         if (!Rs2Inventory.hasItem(armour.getLeatherId()) && !Rs2Bank.hasBankItem(armour.getLeatherId(), 1)) return true;
-        if (!Rs2Inventory.hasItem(needle) && !Rs2Bank.hasBankItem(needle, 1)) return true;
+        if (!AScriptBank.hasUnnotedItem(needle) && !Rs2Bank.hasBankItem(needle, 1)) return true;
         if (!config.useCostumeNeedle() && !AScriptBank.hasUnnotedItem("thread") && !Rs2Bank.hasBankItem("thread", 1)) return true;
         return false;
     }
@@ -405,6 +437,9 @@ public class CraftingScript implements AModule {
         if (success) {
             // Don't close bank — keep it open for next IDLE check
             // Bank is only closed when script stops or materials run out
+            // Fresh materials: drop the previous batch's latch so its progress stamps cannot
+            // make the new batch look like it is still in flight.
+            clearBatchLatch();
         }
 
         return success;
@@ -597,8 +632,12 @@ public class CraftingScript implements AModule {
         }
 
         // Fresh batch scope — the next empty state only earns its closing break after a
-        // batch runs on these materials.
+        // batch runs on these materials. The progress stamps are part of the counter set:
+        // leaving a stale timestamp makes the freshly withdrawn batch look like it is still
+        // in flight and delays its first click.
         batchRanSinceBank = false;
+        jewelryLastBarCount = 0;
+        jewelryLastProgressAt = 0L;
         return true;
     }
 
@@ -641,8 +680,10 @@ public class CraftingScript implements AModule {
 
         // Jewelry drives its own per-tick pacing (in-flight wait + post-batch break
         // with the randomness layer) — the shared trailing sleep/AFK would otherwise
-        // fire on every tick of a running batch instead of once per batch.
-        if (currentPhase != Phase.JEWELRY) {
+        // fire on every tick of a running batch instead of once per batch. The make-batch
+        // latch means the same for gems/glass/staffs/flax/dragon leather: while a batch is
+        // latched, its own in-flight branch paces the loop.
+        if (currentPhase != Phase.JEWELRY && batchMaterialRef == null) {
             sleep(Rs2Random.logNormalBounded(800, 1600));
 
             // Random AFK — log-normal distribution, weather-modulated.
@@ -660,56 +701,97 @@ public class CraftingScript implements AModule {
     private boolean craftGems(AScriptConfig config) {
         CraftingGem gem = config.gemType();
         boolean amethyst = gem.getName().contains("Amethyst");
-        String uncutGemName = "uncut " + gem.getName();
+        final String materialRef = amethyst ? Integer.toString(21347) : "uncut " + gem.getName();
 
         Microbot.status = "CUTTING " + gem.getName().toUpperCase();
 
-        if (amethyst) {
-            Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
-            Rs2ItemModel amethystItem = AScriptPick.pick(21347);
-            if (!AScriptClick.useItemOnItem(chiselItem, amethystItem)) {
-                Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
-                return false;
-            }
-            boolean amountDialogOpen = Rs2Widget.sleepUntilHasWidgetText(
-                    "How many do you wish to make?", 270, 5, false, 5000);
-            if (!amountDialogOpen) { Microbot.status = "IDLE"; return false; }
-            Rs2Widget.clickWidget(gem.getName(), true);
-            Rs2Widget.sleepUntilHasNotWidgetText("How many do you wish to make?", 270, 5, false, 5000);
-            sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(21347),
-                    Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
-        } else {
-            Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
-            Rs2ItemModel uncutGemItem = AScriptPick.pick(uncutGemName);
-            if (!AScriptClick.useItemOnItem(chiselItem, uncutGemItem)) {
-                Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
-                return false;
-            }
-            boolean craftingInterfaceOpen = sleepUntilTrue(() ->
-                    Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-            if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
-            Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
-            sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(uncutGemName),
-                    Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
+        if (countMaterial(materialRef) > 0) {
+            if (batchInFlight(materialRef)) return true; // running: wait, never re-dispatch
 
-            if (config.fletchIntoBoltTips() && Rs2Inventory.hasItem(gem.getName())
-                    && AScriptBank.hasUnnotedItem("chisel")) {
-                Microbot.status = "FLETCHING BOLT TIPS";
-                // Same chisel as above (a locked tool, still in the inventory); the cut gem
-                // is the new use target.
-                Rs2ItemModel cutGemItem = AScriptPick.pick(gem.getName());
-                if (!AScriptClick.useItemOnItem(chiselItem, cutGemItem)) {
+            int before = countMaterial(materialRef);
+            Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
+            if (amethyst) {
+                Rs2ItemModel amethystItem = AScriptPick.pick(21347);
+                if (!AScriptClick.useItemOnItem(chiselItem, amethystItem)) {
                     Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
                     return false;
                 }
-                boolean boltTipInterfaceOpen = sleepUntilTrue(() ->
-                        Rs2Widget.isProductionWidgetOpen()
-                                || Rs2Widget.isGoldCraftingWidgetOpen()
-                                || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 20000);
-                if (!boltTipInterfaceOpen) { Microbot.status = "IDLE"; return false; }
+                // Chisel-on-block opens the multi-product production widget FIRST: the product
+                // has to be chosen there, and only then does the quantity prompt become
+                // answerable. Waiting for the prompt before the product exists is what used to
+                // time out and leave the batch unstarted.
+                if (!sleepUntilTrue(Rs2Widget::isProductionWidgetOpen, 300, 20000)) {
+                    Microbot.status = "IDLE";
+                    log.warn("[CraftingScript] Amethyst production interface did not open");
+                    return false;
+                }
+                if (!sleepUntilTrue(() -> Rs2Widget.clickWidget(gem.getName(), true), 300, 5000)) {
+                    Microbot.status = "IDLE";
+                    log.warn("[CraftingScript] Could not click the {} product", gem.getName());
+                    return false;
+                }
+                // Quantity is the second step of the same widget tree — answer it with "All".
+                Rs2Widget.sleepUntilHasWidgetText("How many do you wish to make?", 270, 5, false, 5000);
+                Rs2Widget.enableQuantityOption("All");
+                if (!confirmBatchStarted(materialRef, before)) {
+                    Microbot.status = "IDLE";
+                    log.warn("[CraftingScript] Amethyst batch did not start");
+                    return false;
+                }
+            } else {
+                Rs2ItemModel uncutGemItem = AScriptPick.pick(materialRef);
+                if (!AScriptClick.useItemOnItem(chiselItem, uncutGemItem)) {
+                    Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+                    return false;
+                }
+                if (!sleepUntilTrue(Rs2Widget::isProductionWidgetOpen, 300, 20000)) {
+                    Microbot.status = "IDLE";
+                    return false;
+                }
                 Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
-                sleepUntil(() -> !Microbot.isGainingExp || !Rs2Inventory.hasItem(gem.getName()),
-                        Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
+                if (!confirmBatchStarted(materialRef, before)) {
+                    Microbot.status = "IDLE";
+                    return false;
+                }
+            }
+
+            Microbot.status = "IDLE";
+            return true;
+        }
+
+        // The uncut stack is gone: that batch is over.
+        clearBatchLatch();
+        if (amethyst) {
+            // Amethyst products are the finished output — nothing to fletch afterwards.
+            Microbot.status = "IDLE";
+            return true;
+        }
+
+        if (config.fletchIntoBoltTips() && Rs2Inventory.hasItem(gem.getName())
+                && AScriptBank.hasUnnotedItem("chisel")) {
+            final String cutRef = gem.getName();
+            if (batchInFlight(cutRef)) return true;
+
+            Microbot.status = "FLETCHING BOLT TIPS";
+            int before = countMaterial(cutRef);
+            // Same chisel as above (a locked tool, still in the inventory); the cut gem
+            // is the new use target.
+            Rs2ItemModel chiselItem = Rs2Inventory.get("chisel");
+            Rs2ItemModel cutGemItem = AScriptPick.pick(cutRef);
+            if (!AScriptClick.useItemOnItem(chiselItem, cutGemItem)) {
+                Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
+                return false;
+            }
+            if (!sleepUntilTrue(() -> Rs2Widget.isProductionWidgetOpen()
+                    || Rs2Widget.isGoldCraftingWidgetOpen()
+                    || Rs2Widget.isSilverCraftingWidgetOpen(), 300, 20000)) {
+                Microbot.status = "IDLE";
+                return false;
+            }
+            Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
+            if (!confirmBatchStarted(cutRef, before)) {
+                Microbot.status = "IDLE";
+                return false;
             }
         }
 
@@ -719,40 +801,64 @@ public class CraftingScript implements AModule {
 
     private boolean craftGlass(AScriptConfig config) {
         CraftingGlass glass = config.glassType();
+        final String materialRef = "molten glass";
         Microbot.status = "BLOWING " + glass.getLabel().toUpperCase();
 
+        if (countMaterial(materialRef) <= 0) {
+            clearBatchLatch();
+            Microbot.status = "IDLE";
+            return true;
+        }
+        if (batchInFlight(materialRef)) return true; // running: wait, never re-dispatch
+
+        int before = countMaterial(materialRef);
         Rs2ItemModel pipeItem = Rs2Inventory.get("glassblowing pipe");
-        Rs2ItemModel moltenGlassItem = AScriptPick.pick("molten glass");
+        Rs2ItemModel moltenGlassItem = AScriptPick.pick(materialRef);
         if (!AScriptClick.useItemOnItem(pipeItem, moltenGlassItem)) {
             Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
             return false;
         }
-        boolean craftingInterfaceOpen = sleepUntilTrue(() ->
-                Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
+        if (!sleepUntilTrue(Rs2Widget::isProductionWidgetOpen, 300, 20000)) {
+            Microbot.status = "IDLE";
+            return false;
+        }
         Rs2Keyboard.keyPress(glass.getMenuEntry());
-        sleepUntil(() -> !Microbot.isGainingExp || !AScriptBank.hasUnnotedItem("molten glass"),
-                Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
+        if (!confirmBatchStarted(materialRef, before)) {
+            Microbot.status = "IDLE";
+            return false;
+        }
         Microbot.status = "IDLE";
         return true;
     }
 
     private boolean craftStaffs(AScriptConfig config) {
         CraftingStaff staff = config.staffType();
+        final String materialRef = staff.getItemName();
         Microbot.status = "MAKING " + staff.getLabel().toUpperCase();
+
+        if (countMaterial(materialRef) <= 0) {
+            clearBatchLatch();
+            Microbot.status = "IDLE";
+            return true;
+        }
+        if (batchInFlight(materialRef)) return true; // running: wait, never re-dispatch
+
+        int before = countMaterial(materialRef);
         Rs2ItemModel orbItem = AScriptPick.pick(staff.getOrb());
-        Rs2ItemModel staffItem = AScriptPick.pick(staff.getItemName());
+        Rs2ItemModel staffItem = AScriptPick.pick(materialRef);
         if (!AScriptClick.useItemOnItem(orbItem, staffItem)) {
             Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
             return false;
         }
-        boolean craftingInterfaceOpen = sleepUntilTrue(() ->
-                Rs2Widget.isProductionWidgetOpen(), 300, 20000);
-        if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
+        if (!sleepUntilTrue(Rs2Widget::isProductionWidgetOpen, 300, 20000)) {
+            Microbot.status = "IDLE";
+            return false;
+        }
         Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
-        sleepUntil(() -> !Microbot.isGainingExp
-                || !Rs2Inventory.hasItem(staff.getItemName()),
-                Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
+        if (!confirmBatchStarted(materialRef, before)) {
+            Microbot.status = "IDLE";
+            return false;
+        }
 
         Microbot.status = "IDLE";
         return true;
@@ -774,6 +880,16 @@ public class CraftingScript implements AModule {
         }
 
         Microbot.status = "SPINNING FLAX";
+
+        final String materialRef = "flax";
+
+        if (countMaterial(materialRef) <= 0) {
+            clearBatchLatch();
+            Microbot.status = "IDLE";
+            return true;
+        }
+        if (batchInFlight(materialRef)) return true; // running: wait, never re-dispatch
+        int before = countMaterial(materialRef);
 
         // Find the spinning wheel by ID from the selected location
         TileObject wheelObject = Rs2GameObject.findObjectById(location.getObjectID());
@@ -819,8 +935,10 @@ public class CraftingScript implements AModule {
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
         if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
         Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
-        sleepUntil(() -> !Microbot.isGainingExp || !AScriptBank.hasUnnotedItem("flax"),
-                Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
+        if (!confirmBatchStarted(materialRef, before)) {
+            Microbot.status = "IDLE";
+            return false;
+        }
 
         Microbot.status = "IDLE";
         return true;
@@ -828,8 +946,17 @@ public class CraftingScript implements AModule {
 
     private boolean craftDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
+        final String materialRef = Integer.toString(armour.getLeatherId());
         Microbot.status = "CRAFTING " + armour.getName().toUpperCase();
 
+        if (countMaterial(materialRef) <= 0) {
+            clearBatchLatch();
+            Microbot.status = "IDLE";
+            return true;
+        }
+        if (batchInFlight(materialRef)) return true; // running: wait, never re-dispatch
+
+        int before = countMaterial(materialRef);
         Rs2ItemModel leatherItem = AScriptPick.pick(armour.getLeatherId());
         // The costume-needle variant picks its own name string; resolution stays the old
         // substring match Rs2Inventory.use(name) used, so the dispatch picks the same
@@ -844,12 +971,87 @@ public class CraftingScript implements AModule {
                 Rs2Widget.isProductionWidgetOpen(), 300, 20000);
         if (!craftingInterfaceOpen) { Microbot.status = "IDLE"; return false; }
         Rs2Keyboard.keyPress(armour.getMenuEntry());
-        sleepUntil(() -> !Microbot.isGainingExp
-                || !Rs2Inventory.hasItem(armour.getLeatherId()),
-                Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier));
+        if (!confirmBatchStarted(materialRef, before)) {
+            Microbot.status = "IDLE";
+            return false;
+        }
 
         Microbot.status = "IDLE";
         return true;
+    }
+
+    // ── Batch latch helpers ────────────────────────────────────
+
+    /**
+     * Inventory count of a batch material. Foreign names and numeric ids both arrive as the
+     * latch's reference string, so the numeric form resolves through the id overload.
+     */
+    private int countMaterial(String ref) {
+        if (ref == null || ref.isEmpty()) return 0;
+        boolean numeric = ref.chars().allMatch(Character::isDigit);
+        return numeric ? Rs2Inventory.count(Integer.parseInt(ref)) : Rs2Inventory.count(ref);
+    }
+
+    /**
+     * Cross-tick batch latch: true while the latched batch is still running, i.e. the player is
+     * animating or the material was consumed within the stall window. The previous tick's
+     * dispatch is what sets the latch, so a running batch is never re-dispatched — the old
+     * {@code !Microbot.isGainingExp || !hasItem(...)} wait was already true before the first XP
+     * drop and returned immediately.
+     */
+    private boolean batchInFlight(String ref) {
+        if (batchMaterialRef == null || !batchMaterialRef.equals(ref)) return false;
+        int count = countMaterial(ref);
+        if (count <= 0) return false; // stack consumed — the batch ended with it
+
+        long now = System.currentTimeMillis();
+        if (count < batchLastCount) {
+            batchLastCount = count;
+            batchLastProgressAt = now;
+            Microbot.status = batchStatus() + " — " + count + " left";
+        }
+        if (Rs2Player.isAnimating() || now - batchLastProgressAt < CRAFT_STALL_WINDOW_MS) {
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(400, 900, weatherMultiplier));
+            return true;
+        }
+        return false; // stalled long enough that the batch is not running anymore
+    }
+
+    /**
+     * Confirm a dispatched batch actually started (the player animates or the material count
+     * dropped) and latch it for the following ticks. Returns false when nothing started, so the
+     * caller reports a failed attempt instead of resetting the failure counter.
+     */
+    private boolean confirmBatchStarted(String ref, int before) {
+        boolean started = sleepUntil(
+                () -> Rs2Player.isAnimating() || countMaterial(ref) < before,
+                Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier));
+        if (!started) {
+            batchMaterialRef = null;
+            log.warn("[CraftingScript] Batch did not start for {}", ref);
+            return false;
+        }
+        batchMaterialRef = ref;
+        batchLastCount = countMaterial(ref);
+        batchLastProgressAt = System.currentTimeMillis();
+        return true;
+    }
+
+    private void clearBatchLatch() {
+        batchMaterialRef = null;
+        batchLastCount = 0;
+        batchLastProgressAt = 0L;
+    }
+
+    private String batchStatus() {
+        switch (currentPhase) {
+            case GEMS:           return "CUTTING";
+            case GLASS:          return "BLOWING";
+            case STAFFS:         return "MAKING";
+            case FLAX:           return "SPINNING";
+            case DRAGON_LEATHER: return "CRAFTING";
+            default:             return "WORKING";
+        }
     }
 
     private boolean craftJewelry(AScriptConfig config) {
@@ -859,17 +1061,8 @@ public class CraftingScript implements AModule {
         JewelryLocation location = config.jewelryLocation();
         if (item == JewelryItem.NONE || location == JewelryLocation.NONE) return false;
 
-        // Level requirement check
-        int craftLevel = Rs2Player.getRealSkillLevel(Skill.CRAFTING);
-        if (craftLevel < item.getLevelRequired()) {
-            exitRequested = true;
-            Microbot.status = "STOPPED — level too low";
-            AScriptNotify.notify("Jewelry Script Stopped",
-                    "Crafting level " + craftLevel + " < required " + item.getLevelRequired()
-                            + " for " + item.getName());
-            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
-            return false;
-        }
+        // The Crafting-level capability guard lives in validateSelection(): it runs before the
+        // bank trip and treats a 0 level read as "skill data loading" instead of a locked item.
 
         int bars = Rs2Inventory.count(item.getJewelryType().getMetalBarId());
         if (bars <= 0) {
@@ -914,8 +1107,11 @@ public class CraftingScript implements AModule {
         // The interface may already be open from an attempt whose wait timed out —
         // finish that sequence instead of re-clicking the furnace.
         if (!isJewelryInterfaceOpen()) {
-            // Find the furnace game object by ID 16469
-            TileObject furnaceObject = Rs2GameObject.findObjectById(16469);
+            // Find this location's own furnace. Every jewelry site has a different scenery
+            // object (Edgeville 16469, the general Falador/Port Phasmatys furnace 24009,
+            // Mount Karuulm's volcanic furnace 34342, Zanaris 12100, Shilo Village's lit
+            // furnace 30158) — a single hardcoded 16469 only ever resolves at Edgeville.
+            TileObject furnaceObject = findFurnace(location);
 
             // If not found, walk to furnace location once
             if (furnaceObject == null && location.getFurnaceLocation() != null) {
@@ -924,7 +1120,7 @@ public class CraftingScript implements AModule {
                 sleep(Rs2Random.logNormalBounded(2000, 4000)); // randomized wait for walker
 
                 // Try finding furnace again after walking
-                furnaceObject = Rs2GameObject.findObjectById(16469);
+                furnaceObject = findFurnace(location);
             }
 
             // If still not found, deactivate script + notify Discord (once)
@@ -932,8 +1128,8 @@ public class CraftingScript implements AModule {
                 exitRequested = true;
                 Microbot.status = "NO FURNACE — STOPPING";
                 AScriptNotify.notify("Jewelry Script Stopped",
-                        "Furnace (ID 16469) not found at " + location.getLabel()
-                                + ". Deactivating script.");
+                        "Furnace (ID " + location.getFurnaceObjectIdsText() + ") not found at "
+                                + location.getLabel() + ". Deactivating script.");
                 Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
                 return false;
             }
@@ -1013,6 +1209,7 @@ public class CraftingScript implements AModule {
         if (jewelryPostBatchBreakDone) return;
         jewelryPostBatchBreakDone = true;
         jewelryLastBarCount = 0;
+        jewelryLastProgressAt = 0L;
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
         if (config.craftingAfk() && System.currentTimeMillis() - lastAfkTime > 5_000) {
             int afkMs = Rs2Random.logNormalBounded(3000, 120000, weatherMultiplier);
@@ -1046,6 +1243,18 @@ public class CraftingScript implements AModule {
         }
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(200, 350));
         return AScriptClick.clickObject(object);
+    }
+
+    /**
+     * Resolve the configured location's furnace scenery object. Locations can list more than one
+     * id (Shilo Village ships a lit and an unlit furnace), so every id is tried before giving up.
+     */
+    private TileObject findFurnace(JewelryLocation location) {
+        for (int objectId : location.getFurnaceObjectIds()) {
+            TileObject furnace = Rs2GameObject.findObjectById(objectId);
+            if (furnace != null) return furnace;
+        }
+        return null;
     }
 
     @Override
