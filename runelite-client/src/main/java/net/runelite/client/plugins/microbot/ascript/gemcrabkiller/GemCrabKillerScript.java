@@ -9,6 +9,7 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
+import net.runelite.client.plugins.microbot.ascript.motherloadmine.Pickaxe;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
@@ -19,6 +20,7 @@ import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectM
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
+import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
@@ -27,6 +29,8 @@ import net.runelite.client.plugins.microbot.util.prayer.Rs2PrayerEnum;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleep;
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -62,6 +66,18 @@ public class GemCrabKillerScript implements AModule {
     private Instant waitingTimeStart = null;
     private int consecutiveFightFailures = 0;
     private static final int MAX_CONSECUTIVE_FIGHT_FAILURES = 10;
+    /** Consecutive bank trips that may fail before the module stops (one notification). */
+    private static final int MAX_BANK_FAILURES = 3;
+    /**
+     * Edible foods the module will withdraw, by exact id. A name lookup resolves the
+     * SHORTEST match, so "Shark" also matches "Raw shark"/"Burnt shark" and can fill the
+     * inventory with items that cannot be eaten.
+     */
+    private static final int[] FOOD_IDS = {ItemID.SHARK, ItemID.MONKFISH, ItemID.SWORDFISH};
+    /** Consecutive failed bank trips; reset by any successful trip. */
+    private int bankFailureCount = 0;
+    /** True when the last doBank() call yielded to the lamp blocking event (not a failure). */
+    private boolean bankYieldedToLamp = false;
     /** Set once per doFight() call; used for weather-modulated timing. */
     private double weatherMultiplier = 1.0;
     /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
@@ -112,20 +128,18 @@ public class GemCrabKillerScript implements AModule {
     @Override
     public boolean needsBank(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
-        // GemCrabKiller handles its own banking internally via the BANKING state —
-        // the bank is at a distant location (Tal Teklan) and requires walking from
-        // the cave. The orchestrator's bank cycle is not suitable for this module.
+        // The module banks through its own BANKING state: the bank is a long walk from the
+        // cave, so the orchestrator's bank cycle (which expects to bank in place) cannot
+        // drive it. The orchestrator therefore never sees a bank need for this module —
+        // failure handling lives in doAction(), which counts consecutive failed trips.
         return false;
     }
 
     @Override
     public boolean isBankMissingMaterials(AScriptConfig config) {
-        if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
-        if (!needsBank(config)) return false;
-
-        // Gem crab banks at a distant location — can't check bank contents
-        // from the cave. The consecutive bank failure counter in AScript will
-        // stop the script after MAX_BANK_FAILURES if the bank truly has no food.
+        // Never consulted: needsBank() is constant false, so the orchestrator has no bank
+        // cycle to short-circuit. A bank without food is caught by the module-local
+        // MAX_BANK_FAILURES counter in doAction(), which stops after three failed trips.
         return false;
     }
 
@@ -137,12 +151,14 @@ public class GemCrabKillerScript implements AModule {
     @Override
     public boolean doBank(AScriptConfig config) {
         if (!Microbot.isLoggedIn()) return false;
+        bankYieldedToLamp = false;
 
         // Lamp-vs-bank gate: never bank with an XP lamp in the inventory — it must be
         // used first (lamps are never deposited). Yields (returns false) until the
-        // lamp-use blocking event has consumed it; the internal BANKING state simply
-        // retries next tick, so no failure counter is touched.
+        // lamp-use blocking event has consumed it; doAction() does not count a yield
+        // as a bank failure.
         if (LampUtility.yieldBankingToLamp(config.eventDismissLampSkill())) {
+            bankYieldedToLamp = true;
             return false;
         }
 
@@ -156,23 +172,22 @@ public class GemCrabKillerScript implements AModule {
         }
 
         Microbot.status = "DEPOSITING";
-        AScriptBank.depositAll();
+        // Keep the tools and supplies the trip is supposed to bring back: every pickaxe id,
+        // the Dharok lowering items (never deposited), and any potion the inventory holds —
+        // depositAll() would bank them and never restore them.
+        AScriptBank.depositAllExcept(bankKeepIds());
 
-        // Withdraw food when useFood enabled and not in Dharok mode
         boolean useFood = config.gemCrabUseFood();
         boolean isDharok = config.gemCrabDharokMode();
         if (useFood && !isDharok) {
             Microbot.status = "WITHDRAWING FOOD";
-            if (!AScriptBank.withdrawVerified("Shark")) {
-                // Try other common food types
-                if (!AScriptBank.withdrawVerified("Monkfish")) {
-                    if (!AScriptBank.withdrawVerified("Swordfish")) {
-                        AScriptNotify.notify("Banking Failed", "No food in bank (Shark/Monkfish/Swordfish)");
-                        Rs2Bank.closeBank();
-                        sleepUntil(() -> !Rs2Bank.isOpen(), Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
-                        return false;
-                    }
-                }
+            if (!withdrawFood()) {
+                // The single notification is owned by the MAX_BANK_FAILURES stop in
+                // doAction(); alerting here would repeat the same verdict every cycle.
+                log.warn("[GemCrabKiller] Bank trip found no edible food (ids {})", FOOD_IDS);
+                Rs2Bank.closeBank();
+                sleepUntil(() -> !Rs2Bank.isOpen(), Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
+                return false;
             }
         }
 
@@ -180,8 +195,56 @@ public class GemCrabKillerScript implements AModule {
         sleepUntil(() -> !Rs2Bank.isOpen(), Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
 
         internalState = InternalState.WALKING;
-        // Success: either food is in inventory, or useFood is disabled (Dharok/no-food mode)
-        return !useFood || !Rs2Inventory.getInventoryFood().isEmpty();
+        // Success: food landed (normal mode), or no food is required at all — the Dharok
+        // path never withdraws food, so requiring it there would fail every trip.
+        return !useFood || isDharok || !Rs2Inventory.getInventoryFood().isEmpty();
+    }
+
+    /** Ids that must survive a bank trip: pickaxes, Dharok lowering items, held potions. */
+    private List<Integer> bankKeepIds() {
+        List<Integer> keep = new ArrayList<>();
+        for (Pickaxe pickaxe : Pickaxe.values()) {
+            keep.add(pickaxe.getItemId());
+        }
+        keep.add(ItemID.LOCATOR_ORB);
+        keep.add(ItemID.DWARVEN_ROCK_CAKE_7510);
+        Rs2Inventory.items()
+                .filter(item -> item != null && item.getName() != null)
+                .forEach(item -> {
+                    if (item.getName().toLowerCase().contains("potion")) {
+                        keep.add(item.getId());
+                    }
+                });
+        return keep;
+    }
+
+    /**
+     * Withdraw an edible food by exact id, up to the free inventory space. Returns true when
+     * an edible item is in the inventory afterwards — the same predicate the house
+     * {@code getInventoryFood()} uses, so the verdict matches what can actually be eaten.
+     */
+    private boolean withdrawFood() {
+        int target = Math.max(1, AScriptBank.freeSlots());
+        for (int foodId : FOOD_IDS) {
+            Rs2Bank.withdrawDeficit(foodId, target);
+            if (!Rs2Inventory.getInventoryFood().isEmpty()) {
+                return true;
+            }
+        }
+        return !Rs2Inventory.getInventoryFood().isEmpty();
+    }
+
+    /**
+     * True when a pickaxe is available for looting: unnoted in the inventory OR equipped.
+     * A wielded pickaxe never appears in the inventory, so an inventory-only check would
+     * refuse to loot for every player who wields it.
+     */
+    private boolean hasUsablePickaxe() {
+        if (AScriptBank.hasUnnotedItem(" pickaxe")) return true;
+        for (Pickaxe pickaxe : Pickaxe.values()) {
+            if (Rs2Equipment.isWearing(pickaxe.getItemId())) return true;
+        }
+        return false;
     }
 
     /**
@@ -207,7 +270,23 @@ public class GemCrabKillerScript implements AModule {
                     handleFighting(config);
                     break;
                 case BANKING:
-                    doBank(config);
+                    // The module banks itself, so the house bank counter never sees these
+                    // trips: consume doBank()'s verdict here and stop after three failures
+                    // with a single notification. A lamp yield is not a failure.
+                    if (doBank(config)) {
+                        bankFailureCount = 0;
+                    } else if (!bankYieldedToLamp) {
+                        bankFailureCount++;
+                        if (bankFailureCount >= MAX_BANK_FAILURES) {
+                            exitRequested = true;
+                            Microbot.status = "STOPPED — bank has no food";
+                            AScriptNotify.notify("Gem Crab Killer Stopped",
+                                    "Bank trip failed " + MAX_BANK_FAILURES
+                                            + " times — no edible food in the bank");
+                            Microbot.getConfigManager().setConfiguration(
+                                    AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                        }
+                    }
                     break;
                 case WAITING:
                     handleWaiting();
@@ -238,6 +317,8 @@ public class GemCrabKillerScript implements AModule {
     public void resetExitFlag() {
         exitRequested = false;
         consecutiveFightFailures = 0;
+        bankFailureCount = 0;
+        bankYieldedToLamp = false;
         hasLooted = false;
         waitingTimeStart = null;
         totalCrabKills = 0;
@@ -304,7 +385,7 @@ public class GemCrabKillerScript implements AModule {
         if (deadNpc != null) {
             totalCrabKills++;
             if (config.gemCrabLootCrab()
-                    && AScriptBank.hasUnnotedItem(" pickaxe")
+                    && hasUsablePickaxe()
                     && !hasLooted) {
                 Microbot.status = "MINING LOOT";
                 // Client-mouse actor recipe (AScriptClick — the Ammonite attackCrab shape):
@@ -406,8 +487,9 @@ public class GemCrabKillerScript implements AModule {
 
     private void handleSafety(AScriptConfig config) {
         boolean useFood = config.gemCrabUseFood();
+        boolean isDharok = config.gemCrabDharokMode();
 
-        if (config.gemCrabDharokMode()) {
+        if (isDharok) {
             int currentHP = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
 
             // Lower HP with locator orb or rock cake
@@ -439,12 +521,19 @@ public class GemCrabKillerScript implements AModule {
         }
         // useFood disabled, non-Dharok: no eating at all
 
-        // Check if out of food and low HP — need to bank (only when useFood enabled)
-        if (useFood) {
+        // Check if out of food and low HP — need to bank (only when useFood enabled and the
+        // trip would actually withdraw food: in Dharok mode doBank() never withdraws any,
+        // so banking here would loop walk -> open -> close without ever fixing anything).
+        if (useFood && !isDharok) {
             boolean hasFood = !Rs2Inventory.getInventoryFood().isEmpty();
-            double healthPercentage = Rs2Player.getHealthPercentage();
-            if (!hasFood && healthPercentage < BANK_FOOD_HP_THRESHOLD) {
+            int hp = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
+            int maxHp = Rs2Player.getRealSkillLevel(Skill.HITPOINTS);
+            // Level comparison, not getHealthPercentage(): that helper divides by the real
+            // level, which reads 0 before skill data loads (NaN), and NaN compares false.
+            boolean lowHp = maxHp > 0 && hp * 100 < maxHp * BANK_FOOD_HP_THRESHOLD;
+            if (!hasFood && lowHp) {
                 internalState = InternalState.BANKING;
+                return; // state changed — the rest of this tick belongs to the bank trip
             }
         }
     }
