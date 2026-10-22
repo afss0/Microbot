@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript.fletching;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
@@ -42,6 +43,12 @@ public class FletchingScript implements AModule {
     /** Track consecutive craft failures to trigger exit after persistent failures. */
     private int consecutiveCraftFailures = 0;
     private static final int MAX_CONSECUTIVE_CRAFT_FAILURES = 3;
+    /**
+     * Darts and bolts take the plain feather (314) by ID. A name lookup matches every
+     * coloured feather too ("Stripy feather", "Red feather", ...), so "feather" could be
+     * reported as present — and withdrawn — while the item in hand is unusable.
+     */
+    private static final String FEATHER_REF = String.valueOf(ItemID.FEATHER);
 
     public enum Phase {
         NONE, DARTS, BOLTS, ARROWS, BOWS
@@ -129,12 +136,12 @@ public class FletchingScript implements AModule {
 
     private boolean needsBankDarts(AScriptConfig config) {
         FletchingDart dart = config.fletchingDartType();
-        return !AScriptBank.hasUnnotedItem(dart.getDartTipName()) || !AScriptBank.hasUnnotedItem("feather");
+        return !AScriptBank.hasUnnotedItem(dart.getDartTipName()) || !AScriptBank.hasUnnotedItem(ItemID.FEATHER);
     }
 
     private boolean needsBankBolts(AScriptConfig config) {
         FletchingBolt bolt = config.fletchingBoltType();
-        return !AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName()) || !AScriptBank.hasUnnotedItem("feather");
+        return !AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName()) || !AScriptBank.hasUnnotedItem(ItemID.FEATHER);
     }
 
     private boolean needsBankArrows(AScriptConfig config) {
@@ -170,13 +177,13 @@ public class FletchingScript implements AModule {
     private boolean bankMissingDarts(AScriptConfig config) {
         FletchingDart dart = config.fletchingDartType();
         if (!AScriptBank.hasUnnotedItem(dart.getDartTipName()) && !Rs2Bank.hasBankItem(dart.getDartTipName(), 1)) return true;
-        return !AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1);
+        return !AScriptBank.hasUnnotedItem(ItemID.FEATHER) && !Rs2Bank.hasBankItem(ItemID.FEATHER, 1);
     }
 
     private boolean bankMissingBolts(AScriptConfig config) {
         FletchingBolt bolt = config.fletchingBoltType();
         if (!AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName()) && !Rs2Bank.hasBankItem(bolt.getUnfinishedBoltName(), 1)) return true;
-        return !AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1);
+        return !AScriptBank.hasUnnotedItem(ItemID.FEATHER) && !Rs2Bank.hasBankItem(ItemID.FEATHER, 1);
     }
 
     private boolean bankMissingArrows(AScriptConfig config) {
@@ -211,7 +218,7 @@ public class FletchingScript implements AModule {
         StringBuilder sb = new StringBuilder();
         if (!AScriptBank.hasUnnotedItem(dart.getDartTipName()) && !Rs2Bank.hasBankItem(dart.getDartTipName(), 1))
             sb.append(dart.getDartTipName()).append(" (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1)) sb.append("feather (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(ItemID.FEATHER) && !Rs2Bank.hasBankItem(ItemID.FEATHER, 1)) sb.append("feather (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -221,7 +228,7 @@ public class FletchingScript implements AModule {
         StringBuilder sb = new StringBuilder();
         if (!AScriptBank.hasUnnotedItem(bolt.getUnfinishedBoltName()) && !Rs2Bank.hasBankItem(bolt.getUnfinishedBoltName(), 1))
             sb.append(bolt.getUnfinishedBoltName()).append(" (not in bank), ");
-        if (!AScriptBank.hasUnnotedItem("feather") && !Rs2Bank.hasBankItem("feather", 1)) sb.append("feather (not in bank), ");
+        if (!AScriptBank.hasUnnotedItem(ItemID.FEATHER) && !Rs2Bank.hasBankItem(ItemID.FEATHER, 1)) sb.append("feather (not in bank), ");
         if (sb.length() > 2) sb.setLength(sb.length() - 2);
         return sb.toString();
     }
@@ -296,7 +303,7 @@ public class FletchingScript implements AModule {
 
         // Withdraw feathers — verified
         if (!AScriptBank.ensureBankOpen()) return false;
-        if (!AScriptBank.withdrawVerified("feather")) {
+        if (!AScriptBank.withdrawVerified(FEATHER_REF)) {
             AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
         }
@@ -318,7 +325,7 @@ public class FletchingScript implements AModule {
 
         // Withdraw feathers — verified
         if (!AScriptBank.ensureBankOpen()) return false;
-        if (!AScriptBank.withdrawVerified("feather")) {
+        if (!AScriptBank.withdrawVerified(FEATHER_REF)) {
             AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
         }
