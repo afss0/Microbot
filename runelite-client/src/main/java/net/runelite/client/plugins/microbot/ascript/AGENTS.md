@@ -325,11 +325,21 @@ Symptom when it hits a full inventory (crafted jewelry + mould): every withdraw 
 
 **Exception — nothing to deposit.** `AScriptBank.depositAll()` returns `true` *without clicking* when the bank is open and every occupied inventory slot is locked: the toolbar button ignores locked slots, so the click would be a no-op and `Rs2Bank.depositAll()`'s `waitForInventoryChanges(10_000)` would stall 10 s and then report `false` (which makes `doBank()` return `false` and retry forever — the MLM loop). The guard requires `Rs2Bank.isOpen()` because `isLockedSlot()` reads the `BANK_INVENTORY_ITEM_CONTAINER` widget, which only exists with the bank open; in the `ensureToolLocked` stray-release path the stray was just unlocked, so the guard does not fire and the toolbar deposit still runs.
 
-### Furnace lookup — hardcoded ID 16469
+### Furnace lookup — per-location object id
 
-`craftJewelry()` finds the furnace via `Rs2GameObject.findObjectById(16469)` — a hardcoded ID covering the supported jewelry locations, not a name search. Consequences:
-- A game update that changes the furnace object ID breaks jewelry silently: `findObjectById` returns null → walk-to-location retry → still null → script deactivates itself once with a Discord notification ("Furnace (ID 16469) not found"). Check Discord/status before assuming a code bug.
-- New jewelry locations must either share this furnace ID or the lookup needs extending (ID set or per-location IDs in `JewelryLocation`).
+`craftJewelry()` resolves the furnace from `JewelryLocation.getFurnaceObjectIds()`, trying each id in order — the furnace is not one shared object id across Gielinor:
+
+| Location | Furnace object id |
+|---|---|
+| Edgeville | 16469 |
+| Falador / Port Phasmatys | 24009 (general furnace scenery) |
+| Mount Karuulm | 34342 (volcanic furnace) |
+| Zanaris | 12100 |
+| Shilo Village | 30157 (unlit) / 30158 (lit) |
+
+Consequences:
+- A game update that changes a furnace object id breaks that location only: `findObjectById` returns null for every id of the site → walk-to-location retry → still null → the script deactivates itself once with a Discord notification ("Furnace (ID <site ids>) not found"). Check Discord/status before assuming a code bug.
+- Adding a jewelry location means adding its furnace id(s) to `JewelryLocation`, not reusing Edgeville's 16469.
 
 ### Stopping the script
 
