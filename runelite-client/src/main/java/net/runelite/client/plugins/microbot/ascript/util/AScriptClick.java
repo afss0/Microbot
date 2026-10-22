@@ -972,6 +972,15 @@ public final class AScriptClick {
             return false;
         }
         Microbot.getMouse().click(bounds);
+        // The click must CONSUME the selection: a stale target leaves the source item
+        // selected, and the next inventory action then applies it somewhere else.
+        if (!sleepUntil(() -> !Rs2Inventory.isItemSelected(),
+                Rs2Random.logNormalBounded(600, 1200))) {
+            log.warn("[AScriptClick] use-on-item click did not consume the selection (slot {})",
+                    target.getSlot());
+            clearSelection();
+            return false;
+        }
         return true;
     }
 
