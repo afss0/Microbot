@@ -38,7 +38,9 @@ public enum JewelEnchantItem {
             ItemID.GAMES_NECKLACE8, ItemID.GAMES_NECKLACE7, ItemID.GAMES_NECKLACE6,
             ItemID.GAMES_NECKLACE5, ItemID.GAMES_NECKLACE4, ItemID.GAMES_NECKLACE3,
             ItemID.GAMES_NECKLACE2, ItemID.GAMES_NECKLACE1),
-    SAPPHIRE_BRACELET("Sapphire bracelet", ItemID.SAPPHIRE_BRACELET, JewelEnchantLevel.LVL_1,
+    // 11072 = JEWL_SAPPHIRE_BRACELET (the real item). ItemID.SAPPHIRE_BRACELET (11071) is the
+    // cache's dummy entry — it never exists in an inventory or bank.
+    SAPPHIRE_BRACELET("Sapphire bracelet", ItemID.SAPPHIRE_BRACELET_11072, JewelEnchantLevel.LVL_1,
             ItemID.BRACELET_OF_CLAY),
     SAPPHIRE_AMULET("Sapphire amulet", ItemID.SAPPHIRE_AMULET, JewelEnchantLevel.LVL_1,
             ItemID.AMULET_OF_MAGIC),
