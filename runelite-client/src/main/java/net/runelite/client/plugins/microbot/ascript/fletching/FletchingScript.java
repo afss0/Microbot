@@ -297,14 +297,12 @@ public class FletchingScript implements AModule {
 
         // Withdraw dart tips — verified
         if (!AScriptBank.withdrawVerified(dart.getDartTipName())) {
-            AScriptNotify.notify("Banking Failed", "No " + dart.getDartTipName() + " in bank");
             return false;
         }
 
         // Withdraw feathers — verified
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(FEATHER_REF)) {
-            AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
         }
 
@@ -319,14 +317,12 @@ public class FletchingScript implements AModule {
 
         // Withdraw unfinished bolts — verified
         if (!AScriptBank.withdrawVerified(bolt.getUnfinishedBoltName())) {
-            AScriptNotify.notify("Banking Failed", "No " + bolt.getUnfinishedBoltName() + " in bank");
             return false;
         }
 
         // Withdraw feathers — verified
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(FEATHER_REF)) {
-            AScriptNotify.notify("Banking Failed", "No feathers in bank");
             return false;
         }
 
@@ -341,14 +337,12 @@ public class FletchingScript implements AModule {
 
         // Withdraw headless arrows — verified
         if (!AScriptBank.withdrawVerified(arrow.getHeadlessArrowName())) {
-            AScriptNotify.notify("Banking Failed", "No " + arrow.getHeadlessArrowName() + " in bank");
             return false;
         }
 
         // Withdraw arrow tips — verified
         if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(arrow.getArrowTipName())) {
-            AScriptNotify.notify("Banking Failed", "No " + arrow.getArrowTipName() + " in bank");
             return false;
         }
 
