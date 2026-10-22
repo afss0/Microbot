@@ -328,7 +328,6 @@ public class JewelEnchantScript implements AModule {
         //    next cast) and locks its slot. Same pattern as the jewellery mould in
         //    CraftingScript.bankJewelry().
         if (!AScriptBank.ensureStackLocked(Integer.toString(Runes.COSMIC.getItemId()))) {
-            AScriptNotify.notify("Banking Failed", "No cosmic runes in bank");
             return false;
         }
 
