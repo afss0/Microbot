@@ -87,6 +87,10 @@ public class MotherloadMineScript implements AModule {
     private boolean pickedUpHammer = false;
     /** Idle detection for mining — tracks when animation stopped. */
     private long idleSince = 0;
+    /** When the last vein search came up empty (0 = a vein was found); bounded so a dead
+     *  spot stops the module instead of logging "No vein found" forever. */
+    private long noVeinSinceMs = 0L;
+    private static final long NO_VEIN_STOP_MS = 15_000;
     private int idleThreshold = 0;
     /** Set once per doMine() call; used for weather-modulated timing. */
     private double weatherMultiplier = 1.0;
@@ -106,6 +110,7 @@ public class MotherloadMineScript implements AModule {
         shouldRepairWaterwheel = false;
         pickedUpHammer = false;
         idleSince = 0;
+        noVeinSinceMs = 0L;
         idleThreshold = 0;
         lastAfkTime = 0L;
     }
@@ -134,7 +139,16 @@ public class MotherloadMineScript implements AModule {
     @Override
     public boolean needsBank(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
-        return !Pickaxe.hasAnyPickaxe();
+        // Ask for a bank trip only when the bank can actually supply the tool: with no
+        // pickaxe anywhere, doAction stops once with a clear message instead of the
+        // orchestrator retrying openBank at a mine that has no bank.
+        return !Pickaxe.hasAnyPickaxe() && Pickaxe.hasAnyPickaxeInBank();
+    }
+
+    /** The bank phase gate: the bank must be loaded and on camera before openBank runs. */
+    @Override
+    public boolean readyForBank(AScriptConfig config) {
+        return AScriptBank.bankVisible();
     }
 
     // ── Bank-level check (both bank AND inventory missing) ─────
@@ -252,6 +266,14 @@ public class MotherloadMineScript implements AModule {
                     success = false;
                 }
             }
+            // Full inventory with nothing this module can consume — checked after the gem
+            // drop and the paydirt/sack branches: mining cannot start, and mineVeins used
+            // to "confirm" instantly because its start check accepted isFull(). Failing
+            // here is counted by the tail below and stops after MAX_CONSECUTIVE_MINE_FAILURES.
+            else if (Rs2Inventory.isFull()) {
+                log.warn("[MotherloadMineScript] inventory is full but holds no paydirt or ore");
+                success = false;
+            }
             // Mine veins
             else {
                 if (!mineVeins(config)) {
@@ -326,10 +348,17 @@ public class MotherloadMineScript implements AModule {
 
         TileObject vein = findNearestVein(config);
         if (vein == null) {
+            if (noVeinSinceMs == 0L) noVeinSinceMs = System.currentTimeMillis();
+            if (System.currentTimeMillis() - noVeinSinceMs > NO_VEIN_STOP_MS) {
+                log.warn("[MotherloadMineScript] no vein found for {} ms", NO_VEIN_STOP_MS);
+                noVeinSinceMs = 0L;
+                return false; // counted by the caller; stops after MAX consecutive failures
+            }
             log.debug("[MotherloadMineScript] No vein found, waiting...");
             sleep(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
-            return true; // no vein = wait state, not a failure
+            return true; // no vein yet = wait state, bounded by the watchdog above
         }
+        noVeinSinceMs = 0L;
 
         // Client-mouse object recipe (AScriptClick — the aScript mouse refactor): camera
         // first, then the vein's real clickbox through the client mouse; the canvas-sized
@@ -342,8 +371,13 @@ public class MotherloadMineScript implements AModule {
             return false;
         }
 
-        // Wait for animation to start
-        sleepUntil(() -> Rs2Player.isAnimating() || Rs2Inventory.isFull(), 5000);
+        // Wait for the mining animation. isFull() is NOT part of the confirmation: a full
+        // inventory makes it true instantly, so a click that never started mining "landed"
+        // and the module spun on a full inventory forever.
+        if (!sleepUntil(Rs2Player::isAnimating, 5000)) {
+            log.warn("[MotherloadMineScript] vein click did not start mining");
+            return false;
+        }
         return true;
     }
 
@@ -366,6 +400,7 @@ public class MotherloadMineScript implements AModule {
 
     private TileObject findVeinNear(WorldPoint target) {
         WorldPoint playerLoc = Rs2Player.getWorldLocation();
+        if (playerLoc == null) return null;
         if (playerLoc.distanceTo(target) > 5) {
             // Walk to the mining area — walker handles rockfall pathfinding
             net.runelite.client.plugins.microbot.util.walker.Rs2Walker.walkTo(target, 10);
@@ -576,10 +611,14 @@ public class MotherloadMineScript implements AModule {
         }
 
         // Wait for animation to end, then wait for the strut to actually be fixed
-        // (game state update may lag behind animation)
+        // (game state update may lag behind animation). The result is checked: both waits
+        // used to be discarded, so a repair that never landed still returned true.
         sleepUntil(() -> !Rs2Player.isAnimating(), 10000);
-        sleepUntil(() -> countBrokenStruts() < brokenCount,
-                Rs2Random.logNormalBounded(12000, 25000, weatherMultiplier));
+        if (!sleepUntil(() -> countBrokenStruts() < brokenCount,
+                Rs2Random.logNormalBounded(12000, 25000, weatherMultiplier))) {
+            log.warn("[MotherloadMineScript] waterwheel repair did not land");
+            return false;
+        }
 
         // Drop hammer if we picked it up from the crate (not if equipped Imcando)
         if (pickedUpHammer && !Rs2Equipment.isWearing("hammer") && AScriptBank.hasUnnotedItem("hammer")) {
@@ -598,6 +637,7 @@ public class MotherloadMineScript implements AModule {
 
     private int countBrokenStruts() {
         WorldPoint playerLoc = Rs2Player.getWorldLocation();
+        if (playerLoc == null) return 0;
         return (int) Rs2GameObject.getAll(
                 (TileObject obj) -> obj.getId() == ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN
                         && obj.getWorldLocation().distanceTo(playerLoc) <= 15
@@ -615,6 +655,7 @@ public class MotherloadMineScript implements AModule {
 
     private boolean dropGems() {
         Microbot.status = "DROPPING GEMS";
+        int before = countGems();
         // Drop-target decisions (AScriptPick.nextDropTarget) over the gem instances the old
         // dropAll(ids) walked in slot order: uniform first draw, then a weather-scaled roll
         // between another uniform draw and one of the 2-4 slots nearest the cursor.
@@ -632,7 +673,23 @@ public class MotherloadMineScript implements AModule {
             Microbot.getMouse().click(bounds);
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }
-        return true; // fire-and-forget like the old dropAll; return true to not block the cycle
+        // The old shape was fire-and-forget: the drops were never verified, so a failed
+        // click still counted as a clean cycle. Wait for the count to actually fall.
+        if (!sleepUntil(() -> countGems() < before,
+                Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier))) {
+            log.warn("[MotherloadMineScript] gem drop did not land");
+            return false;
+        }
+        return true;
+    }
+
+    /** Total gem count across the catalogued ids. */
+    private int countGems() {
+        int total = 0;
+        for (int gemId : GEM_IDS) {
+            total += Rs2Inventory.itemQuantity(gemId);
+        }
+        return total;
     }
 
     // ── Clicks ────────────────────────────────────────────────
