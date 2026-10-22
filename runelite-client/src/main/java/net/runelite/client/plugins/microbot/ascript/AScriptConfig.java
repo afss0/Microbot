@@ -327,17 +327,6 @@ public interface AScriptConfig extends Config {
     }
 
     @ConfigItem(
-            keyName = "mlmAntiCrash",
-            name = "Anti Crash",
-            description = "Avoid other players when mining",
-            position = 3,
-            section = motherloadMineSection
-    )
-    default boolean mlmAntiCrash() {
-        return false;
-    }
-
-    @ConfigItem(
             keyName = "mlmAfk",
             name = "Random AFKs",
             description = "Randomly AFKs between 3 and 120 seconds after a completed mining trip",

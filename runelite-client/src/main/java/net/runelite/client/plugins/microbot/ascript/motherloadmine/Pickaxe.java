@@ -7,6 +7,7 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 
 /**
@@ -87,9 +88,14 @@ public enum Pickaxe {
      */
     public static Pickaxe getBestPickaxeFromBank() {
         int miningLevel = Rs2Player.getBoostedSkillLevel(Skill.MINING);
+        // ONE bank snapshot for the whole scan: hasBankItem() per tier walks the retrying
+        // reads and a miss costs ~13 s across the catalogue.
+        java.util.Set<Integer> bankIds = Rs2Bank.getAll()
+                .map(Rs2ItemModel::getId)
+                .collect(java.util.stream.Collectors.toSet());
         Pickaxe best = null;
         for (Pickaxe p : values()) {
-            if (Rs2Bank.hasBankItem(p.getItemId(), 1) && p.isUsableAt(miningLevel)) {
+            if (bankIds.contains(p.getItemId()) && p.isUsableAt(miningLevel)) {
                 if (best == null || p.getMiningLevel() > best.getMiningLevel()) {
                     best = p;
                 }
@@ -114,8 +120,14 @@ public enum Pickaxe {
      * verdict, and the bare mirror read can report a pickaxe the bank no longer lists.
      */
     public static boolean hasAnyPickaxeInBank() {
+        int miningLevel = Rs2Player.getBoostedSkillLevel(Skill.MINING);
+        // One snapshot, filtered by level: a tier the player cannot wield is not a pickaxe
+        // the bank can supply.
+        java.util.Set<Integer> bankIds = Rs2Bank.getAll()
+                .map(Rs2ItemModel::getId)
+                .collect(java.util.stream.Collectors.toSet());
         for (Pickaxe p : values()) {
-            if (Rs2Bank.hasBankItem(p.getItemId(), 1)) return true;
+            if (bankIds.contains(p.getItemId()) && p.isUsableAt(miningLevel)) return true;
         }
         return false;
     }
