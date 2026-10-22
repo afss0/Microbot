@@ -237,6 +237,14 @@ public class CannonballSmelterScript implements AModule {
             return false;
         }
 
+        // The mould's lock must survive the deposit: when it is released the mould goes to
+        // the bank and this method still returned true, so needsBank() flipped back to true
+        // and the module looped on bank trips without a tool.
+        if (!Rs2Inventory.hasItem(ItemID.DOUBLE_AMMO_MOULD) && !Rs2Inventory.hasItem(ItemID.AMMO_MOULD)) {
+            log.warn("[CannonballSmelter] mould not held after the deposit");
+            return false;
+        }
+
         // 3. Withdraw steel bars (fill the inventory).
         if (!AScriptBank.withdrawVerified("steel bar")) {
             AScriptNotify.notify("Banking Failed", "No steel bars in bank");
