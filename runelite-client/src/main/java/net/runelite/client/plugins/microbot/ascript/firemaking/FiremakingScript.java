@@ -241,6 +241,14 @@ public class FiremakingScript implements AModule {
             return false;
         }
 
+        // The lock must survive the deposit: a released lock sends the tinderbox to the
+        // bank, and doBank() used to return true anyway — needsBank() then flipped straight
+        // back to true and the module looped on bank trips without a tool.
+        if (!Rs2Inventory.hasItem(ItemID.TINDERBOX)) {
+            log.warn("[Firemaking] tinderbox not held after the deposit");
+            return false;
+        }
+
         // 3. Withdraw logs (fill the inventory). Numeric id on purpose: the name "logs" is a
         //    substring of every log type ("oak logs", "magic logs", ...) and would over-withdraw.
         FiremakingLog choice = config.firemakingLog();

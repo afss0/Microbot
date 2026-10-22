@@ -50,6 +50,9 @@ public class BarbarianVillageFisherScript implements AModule {
 
     // Raw fish IDs: Trout (335), Salmon (331), Pike (349)
     private static final int[] RAW_FISH = {335, 331, 349};
+    /** Everything the drop phase may take: raw fish, cooked trout/salmon/pike (333/329/351)
+     *  and burnt fish (343). */
+    private static final int[] DROPPABLE_IDS = {335, 331, 349, 333, 329, 351, 343};
     /**
      * Rod and bait are resolved by ID, never by name: every relevant name is a substring
      * of a larger family. "Fishing rod" is contained in "Fly fishing rod", and "Feather"
@@ -87,6 +90,9 @@ public class BarbarianVillageFisherScript implements AModule {
     private long lastAfkTime = 0L;
     /** Set when a full cycle ended in banking — the post-cycle break runs bank-closed next tick. */
     private boolean postCycleBreakPending = false;
+    /** When the BANKING phase found no loaded bank object (bounded wait). */
+    private long bankTurnSinceMs = 0L;
+    private static final long BANK_APPROACH_STOP_MS = 20_000;
 
     public enum Phase {
         NONE, FISHING, WALK_TO_BANK, WALK_TO_FISHING_SPOT, BANKING, DROPPING, COOKING
@@ -139,6 +145,7 @@ public class BarbarianVillageFisherScript implements AModule {
         spotClickRetries = 0;
         lastAfkTime = 0L;
         postCycleBreakPending = false;
+        bankTurnSinceMs = 0L;
     }
 
     @Override
@@ -327,7 +334,12 @@ public class BarbarianVillageFisherScript implements AModule {
                 doCooking(config);
                 break;
             case BANKING:
-                // Shouldn't reach here — needsBank handles this
+                // resolveDynamicPhase() puts the module here on distance alone; the bank
+                // object itself may be loaded but off camera, and readyForBank() then blocks
+                // openBank — this case used to do nothing and the module idled forever.
+                if (!approachBankObject()) {
+                    fail("bank did not become clickable");
+                }
                 break;
             default:
                 break;
@@ -403,7 +415,7 @@ public class BarbarianVillageFisherScript implements AModule {
         Rs2NpcModel fishingSpot = Microbot.getRs2NpcCache().query()
                 .withIds(FishingSpot.SALMON.getIds())
                 .within(FISHING_SPOT, 15)
-                .nearest();
+                .nearestOnClientThread();
 
         if (fishingSpot == null) {
             fail("no fishing spot near Barbarian Village");
@@ -411,7 +423,10 @@ public class BarbarianVillageFisherScript implements AModule {
         }
 
         if (!Rs2Camera.isTileOnScreen(fishingSpot.getLocalLocation())) {
-            Rs2Walker.walkTo(fishingSpot.getWorldLocation(), 3);
+            // A loaded spot that is merely off camera is TURNED TO, not walked at: walking
+            // moved the player off the river bank for a click the recipe would only have
+            // turned toward anyway. Far spots are already handled by WALK_TO_FISHING_SPOT.
+            Rs2Camera.turnTo(fishingSpot.getNpc());
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(180, 540, weatherMultiplier));
             return;
         }
@@ -460,14 +475,13 @@ public class BarbarianVillageFisherScript implements AModule {
 
     private void doDropping(AScriptConfig config) {
         Microbot.status = "DROPPING";
-        int rodId = getRodId(config);
-        int baitId = getBaitId(config);
-        // Drop-target decisions (AScriptPick.nextDropTarget) over the not-rod/bait instances the
-        // old dropAllExcept(STANDARD) walked in slot order: uniform first draw, then a
+        // Drop-target decisions (AScriptPick.nextDropTarget) over the instances the old
+        // dropAllExcept(STANDARD) walked in slot order: uniform first draw, then a
         // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
         // cursor. Client-mouse clicks — the shared dropAll* helper dispatched by injection.
-        List<Rs2ItemModel> candidates = Rs2Inventory.getList(item ->
-                item.getId() != rodId && item.getId() != baitId);
+        // Only the fish the module itself handles: "everything but rod/bait" would also click
+        // a lamp, food or a teleport that happens to sit in the inventory.
+        List<Rs2ItemModel> candidates = Rs2Inventory.getList(item -> isDroppable(item.getId()));
         boolean firstDraw = true;
         while (!candidates.isEmpty()) {
             Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
@@ -593,13 +607,48 @@ public class BarbarianVillageFisherScript implements AModule {
     private void walkToBank() {
         Microbot.status = "WALKING TO BANK";
         if (Rs2Player.isMoving()) return;
-        Rs2Walker.walkTo(BankLocation.EDGEVILLE.getWorldPoint(), 20);
+        // The walk radius must stay BELOW isCloseTo()'s 10-tile switch: the old 20-tile
+        // radius stopped the run 11-20 tiles out, isCloseTo() stayed false and the phase
+        // never advanced.
+        if (!Rs2Walker.walkTo(BankLocation.EDGEVILLE.getWorldPoint(), 8)) {
+            log.debug("[BarbarianVillageFisher] walk to bank did not start");
+        }
+    }
+
+    /**
+     * Progress toward a bank that can actually be clicked. When the bank is visible the
+     * orchestrator owns the next step; a loaded-but-off-camera bank is TURNED TO; with no
+     * bank object in the scene the module walks, bounded by {@link #BANK_APPROACH_STOP_MS}.
+     *
+     * @return false when the bounded attempt expired without a clickable bank
+     */
+    private boolean approachBankObject() {
+        if (AScriptBank.bankVisible()) {
+            bankTurnSinceMs = 0L;
+            return true; // the bank cycle takes it from here
+        }
+        var bankObject = AScriptBank.findBankObject();
+        if (bankObject != null) {
+            Microbot.status = "TURNING TO BANK";
+            Rs2Camera.turnTo(bankObject);
+            bankTurnSinceMs = 0L;
+            return true;
+        }
+        if (bankTurnSinceMs == 0L) bankTurnSinceMs = System.currentTimeMillis();
+        if (System.currentTimeMillis() - bankTurnSinceMs > BANK_APPROACH_STOP_MS) {
+            bankTurnSinceMs = 0L;
+            return false;
+        }
+        walkToBank();
+        return true;
     }
 
     private void walkToFishingSpot() {
         Microbot.status = "WALKING TO SPOT";
         if (Rs2Player.isMoving()) return;
-        Rs2Walker.walkTo(FISHING_SPOT, 9);
+        if (!Rs2Walker.walkTo(FISHING_SPOT, 9)) {
+            log.debug("[BarbarianVillageFisher] walk to fishing spot did not start");
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────
@@ -649,19 +698,24 @@ public class BarbarianVillageFisherScript implements AModule {
      * {@link #countRawFish()} is still used directly.
      */
     private int countDroppableItems() {
-        // Raw fish
-        int count = countRawFish();
-        // Cooked fish: Trout=333, Salmon=329, Pike=351
-        count += Rs2Inventory.count(333); // TROUT
-        count += Rs2Inventory.count(329); // SALMON
-        count += Rs2Inventory.count(351); // PIKE
-        // Burnt fish (BURNT_FISH_343 covers trout/salmon/pike/cod)
-        count += Rs2Inventory.count(343);
+        int count = 0;
+        for (int id : DROPPABLE_IDS) {
+            count += Rs2Inventory.count(id);
+        }
         return count;
     }
 
+    /** True when the id is one of the fish the drop phase owns. */
+    private static boolean isDroppable(int id) {
+        for (int droppable : DROPPABLE_IDS) {
+            if (id == droppable) return true;
+        }
+        return false;
+    }
+
     private boolean isCloseTo(WorldPoint location) {
-        return Rs2Player.getWorldLocation().distanceTo(location) <= 10;
+        WorldPoint playerLoc = Rs2Player.getWorldLocation();
+        return playerLoc != null && playerLoc.distanceTo(location) <= 10;
     }
 
     private boolean isGameObjectOnTile(WorldPoint location, int id) {
