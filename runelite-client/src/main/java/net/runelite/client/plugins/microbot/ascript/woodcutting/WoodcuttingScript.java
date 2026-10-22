@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript.woodcutting;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
+import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
@@ -15,6 +16,7 @@ import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
@@ -100,6 +102,8 @@ public class WoodcuttingScript implements AModule {
     private WorldPoint anchor = null;
     /** Target-log count observed last tick (-1 = not tracked yet). */
     private int lastLogCount = -1;
+    /** DROP mode: a drop phase is running (entered when full; ends when the count hits 0). */
+    private boolean dropping = false;
     /** When the first tick saw no choppable tree (0 = a tree is available). */
     private long noTreeSinceMs = 0L;
     /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
@@ -126,6 +130,7 @@ public class WoodcuttingScript implements AModule {
         consecutiveFailures = 0;
         anchor = null;
         lastLogCount = -1;
+        dropping = false;
         noTreeSinceMs = 0L;
         lastAfkTime = 0L;
         postBatchBreakDone = false;
@@ -227,6 +232,26 @@ public class WoodcuttingScript implements AModule {
         if (!Microbot.isLoggedIn()) return false;
         Microbot.status = "BANKING — Woodcutting";
 
+        // 0. An axe carried in the inventory is equipped BEFORE the bank opens: the bank
+        //    window swallows equip clicks, and a player already holding the tool must never
+        //    be sent back for a bank copy. Explicit wear, verified.
+        if (!wearingAnyAxe()) {
+            Axe held = bestAxeInInventory();
+            if (held != null) {
+                if (Rs2Bank.isOpen()) {
+                    Rs2Bank.closeBank();
+                    sleepUntil(() -> !Rs2Bank.isOpen(),
+                            Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
+                }
+                Rs2Inventory.wield(held.getItemId());
+                if (!sleepUntil(WoodcuttingScript::wearingAnyAxe,
+                        Rs2Random.logNormalBounded(2000, 3500, weatherMultiplier))) {
+                    log.warn("[Woodcutting] held axe wear did not land");
+                    return false;
+                }
+            }
+        }
+
         if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
             return false;
         }
@@ -235,7 +260,10 @@ public class WoodcuttingScript implements AModule {
         //    the blanket deposit below cannot send the basket itself away. The keep-list
         //    carries every axe id so the lock sweep can never release a locked axe.
         if (Rs2LogBasket.hasLogBasket()) {
-            Rs2LogBasket.emptyLogBasketAtBank();
+            if (!Rs2LogBasket.emptyLogBasketAtBank()) {
+                log.warn("[Woodcutting] log basket could not be emptied into the bank");
+                return false;
+            }
             AScriptBank.ensureToolLocked(String.valueOf(Rs2LogBasket.getLogBasketId()), axeIdStrings());
         }
 
@@ -269,9 +297,17 @@ public class WoodcuttingScript implements AModule {
             return false;
         }
 
+        // The wear must survive the blanket deposit: a released lock would send the axe to
+        // the bank and the next chop would find no tool.
+        if (!wearingAnyAxe()) {
+            log.warn("[Woodcutting] axe not worn after the deposit");
+            return false;
+        }
+
         batchRanSinceBank = false;
         postBatchBreakDone = false;
         lastLogCount = -1;
+        dropping = false; // a fresh trip — the next fill starts a new drop phase
         return true;
     }
 
@@ -297,10 +333,25 @@ public class WoodcuttingScript implements AModule {
         if (player == null) return;
         if (anchor == null) anchor = player;
 
-        // DROP mode, full inventory: the drop phase replaces chopping until empty.
-        if (config.woodcuttingAction() == WoodcuttingAction.DROP && Rs2Inventory.isFull()) {
-            dropSlice(logId);
-            return;
+        // DROP mode: one drop PHASE per fill — entered when the inventory fills and run
+        // until the log count hits 0. The plain "drop while full" shape freed a slot and
+        // resumed chopping, so the count never reached 0, the batch-end break never fired
+        // and batchRanSinceBank never cleared (Mining's dropping latch, mirrored).
+        if (config.woodcuttingAction() == WoodcuttingAction.DROP) {
+            if (dropping) {
+                if (Rs2Inventory.itemQuantity(logId) == 0) {
+                    dropping = false;
+                    postBatchBreak(config);
+                    return;
+                }
+                dropSlice(logId);
+                return;
+            }
+            if (Rs2Inventory.isFull()) {
+                dropping = true;
+                dropSlice(logId);
+                return;
+            }
         }
 
         // BANK mode, inventory nearly full and a log basket held: fill the basket first —
@@ -325,6 +376,15 @@ public class WoodcuttingScript implements AModule {
             var bank = Rs2Bank.getNearestBank();
             if (bank == null) {
                 fail("no reachable bank found");
+                return;
+            }
+            // A bank object already loaded in the scene is TURNED TO, not walked at: the
+            // walker cannot target an off-camera bank reliably, and a camera turn does not
+            // move the player (cannonball approachBank pattern).
+            TileObject bankObject = AScriptBank.findBankObject();
+            if (bankObject != null) {
+                Microbot.status = "TURNING TO BANK";
+                Rs2Camera.turnTo(bankObject);
                 return;
             }
             travelTo(bank.getWorldPoint());
@@ -551,6 +611,21 @@ public class WoodcuttingScript implements AModule {
         Axe best = null;
         for (Axe axe : Axe.values()) {
             if (bankIds.contains(axe.getItemId()) && axe.isUsableAt(level)) best = axe;
+        }
+        return best;
+    }
+
+    /**
+     * Best axe the player is CARRYING (inventory only). The held-tool path equips this
+     * before the bank opens; a worn axe is handled by {@link #wearingAnyAxe()}.
+     */
+    private static Axe bestAxeInInventory() {
+        int level = Rs2Player.getBoostedSkillLevel(Skill.WOODCUTTING);
+        Axe best = null;
+        for (Axe axe : Axe.values()) {
+            if (Rs2Inventory.hasItem(axe.getItemId()) && axe.isUsableAt(level)) {
+                best = axe;
+            }
         }
         return best;
     }
