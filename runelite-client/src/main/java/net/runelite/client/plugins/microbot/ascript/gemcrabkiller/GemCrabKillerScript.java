@@ -13,6 +13,7 @@ import net.runelite.client.plugins.microbot.ascript.motherloadmine.Pickaxe;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.api.npc.models.Rs2NpcModel;
@@ -22,6 +23,7 @@ import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.prayer.Rs2Prayer;
@@ -31,6 +33,7 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleep;
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -78,6 +81,13 @@ public class GemCrabKillerScript implements AModule {
     private int bankFailureCount = 0;
     /** True when the last doBank() call yielded to the lamp blocking event (not a failure). */
     private boolean bankYieldedToLamp = false;
+    /** Index of the last corpse counted; -1 until the first kill of the session. */
+    private int lastCountedCorpseIndex = -1;
+    /** Loot clicks spent on the current corpse (bounded so a failed click cannot loop). */
+    private int lootAttempts = 0;
+    private static final int MAX_LOOT_ATTEMPTS = 3;
+    /** Deadline for the current WAITING stay, rolled once when the state is entered. */
+    private long waitingDeadlineMs = 0L;
     /** Set once per doFight() call; used for weather-modulated timing. */
     private double weatherMultiplier = 1.0;
     /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
@@ -319,6 +329,9 @@ public class GemCrabKillerScript implements AModule {
         consecutiveFightFailures = 0;
         bankFailureCount = 0;
         bankYieldedToLamp = false;
+        lastCountedCorpseIndex = -1;
+        lootAttempts = 0;
+        waitingDeadlineMs = 0L;
         hasLooted = false;
         waitingTimeStart = null;
         totalCrabKills = 0;
@@ -351,9 +364,11 @@ public class GemCrabKillerScript implements AModule {
                 .query().withId(CAVE_ENTRANCE_ID).nearest();
         if (caveEntrance != null) {
             var composition = caveEntrance.getObjectComposition();
-            if (composition != null
-                    && java.util.Arrays.stream(composition.getActions())
-                    .anyMatch("Crawl-through"::equals)) {
+            // getActions() is null for an object with no options — an unguarded stream() NPEs
+            // inside doAction()'s try and silently kills the tick.
+            String[] actions = composition == null ? null : composition.getActions();
+            if (actions != null
+                    && java.util.Arrays.stream(actions).anyMatch("Crawl-through"::equals)) {
                 // Client-mouse object recipe (AScriptClick — the aScript mouse refactor):
                 // camera first, then the entrance's real clickbox through the client mouse;
                 // the canvas-sized fallback of an entrance that has not rendered is never
@@ -378,70 +393,81 @@ public class GemCrabKillerScript implements AModule {
     }
 
     private void handleFighting(AScriptConfig config) {
-        Rs2NpcModel deadNpc = Microbot.getRs2NpcCache().query().withId(CRAB_NPC_DEAD_ID).nearest();
         Rs2NpcModel npc = Microbot.getRs2NpcCache().query().withId(CRAB_NPC_ID).nearest();
 
-        // Dead crab — loot and exit
-        if (deadNpc != null) {
-            totalCrabKills++;
-            if (config.gemCrabLootCrab()
-                    && hasUsablePickaxe()
-                    && !hasLooted) {
-                Microbot.status = "MINING LOOT";
-                // Client-mouse actor recipe (AScriptClick — the Ammonite attackCrab shape):
-                // camera first, then the dead crab's real clickbox through the client mouse;
-                // the canvas-sized fallback of an actor that has not rendered is never
-                // clicked. "Mine" is the dead crab's left-click default — all a physical
-                // click dispatches; the inventory wait below is the effect verification
-                // (unchanged).
-                AScriptClick.clickActor(deadNpc.getNpc());
-                Rs2Inventory.waitForInventoryChanges(Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
-                sleep(Rs2Random.logNormalBounded(3000, 5000, weatherMultiplier));
-                hasLooted = true;
-                if (Rs2Inventory.isFull()) {
-                    // The internal bank trip runs on a later tick (needsBank is constant
-                    // false, so the house yield cannot take this tick): take the post-kill
-                    // break HERE, with the bank still closed — cannonball placement.
-                    postKillBreak(config);
-                    internalState = InternalState.BANKING;
-                    return;
-                }
-            }
-
-            // Post-kill break — the unit (kill + optional loot) just completed: the
-            // unconditional short pause plus the toggle-gated random AFK, once per kill,
-            // where the kill happened and before the module moves on.
-            postKillBreak(config);
-
-            // Exit cave — same recipe as the way in (see handleWalking): the WAITING state
-            // below is what follows the crawl.
-            AScriptClick.clickObject(Microbot.getRs2TileObjectCache()
-                    .query().withId(CAVE_ENTRANCE_ID).nearest());
-            internalState = InternalState.WAITING;
-            waitingTimeStart = Instant.now();
-            return;
-        } else {
+        // A live crab wins over a corpse. The old order checked the corpse first, so with
+        // both in scene every tick took the exit-the-cave path and the fight was skipped.
+        if (npc != null) {
             hasLooted = false;
             // A new fight is under way — its kill earns the next post-kill break.
             postKillBreakDone = false;
+
+            if (!Rs2Player.isInCombat()) {
+                Microbot.status = "FIGHTING";
+                // Client-mouse actor recipe: "Attack" is the crab's left-click default — all
+                // a physical click dispatches; combat itself is the verification.
+                AScriptClick.clickActor(npc.getNpc());
+            } else {
+                waitingTimeStart = null;
+            }
+            return;
         }
 
-        // No crab at all — go find one
-        if (npc == null) {
+        Rs2NpcModel deadNpc = Microbot.getRs2NpcCache().query().withId(CRAB_NPC_DEAD_ID).nearest();
+        if (deadNpc == null) {
             internalState = InternalState.WALKING;
             return;
         }
 
-        // Attack if not in combat
-        if (!Rs2Player.isInCombat()) {
-            Microbot.status = "FIGHTING";
-            // Client-mouse actor recipe (see the dead-crab click): "Attack" is the crab's
-            // left-click default — all a physical click dispatches; combat itself is the
-            // verification (unchanged).
-            AScriptClick.clickActor(npc.getNpc());
-        } else {
-            waitingTimeStart = null;
+        // Count the kill on the dead-crab EDGE, once per corpse: the old code incremented
+        // on every tick a corpse stayed in scene, so a slow exit inflated the counter.
+        int corpseIndex = deadNpc.getIndex();
+        if (corpseIndex != lastCountedCorpseIndex) {
+            lastCountedCorpseIndex = corpseIndex;
+            lootAttempts = 0;
+            totalCrabKills++;
         }
+
+        if (config.gemCrabLootCrab()
+                && hasUsablePickaxe()
+                && !hasLooted
+                && lootAttempts < MAX_LOOT_ATTEMPTS) {
+            Microbot.status = "MINING LOOT";
+            lootAttempts++;
+            int emptyBefore = Rs2Inventory.emptySlotCount();
+            // Client-mouse actor recipe (AScriptClick — the Ammonite attackCrab shape):
+            // camera first, then the dead crab's real clickbox through the client mouse.
+            AScriptClick.clickActor(deadNpc.getNpc());
+            boolean changed = Rs2Inventory.waitForInventoryChanges(
+                    Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
+            // Loot is only marked when something actually landed: the old code slept and
+            // set hasLooted unconditionally, so a failed click ended the loot for that kill.
+            hasLooted = changed || Rs2Inventory.emptySlotCount() < emptyBefore;
+            sleep(Rs2Random.logNormalBounded(3000, 5000, weatherMultiplier));
+        }
+
+        if (Rs2Inventory.isFull()) {
+            // The internal bank trip runs on a later tick (needsBank is constant false, so
+            // the house yield cannot take this tick): take the post-kill break HERE, with
+            // the bank still closed — cannonball placement.
+            postKillBreak(config);
+            internalState = InternalState.BANKING;
+            return;
+        }
+
+        // Post-kill break — the unit (kill + optional loot) just completed: the
+        // unconditional short pause plus the toggle-gated random AFK, once per kill,
+        // where the kill happened and before the module moves on.
+        postKillBreak(config);
+
+        // Exit cave — same recipe as the way in (see handleWalking): the WAITING state
+        // below is what follows the crawl.
+        AScriptClick.clickObject(Microbot.getRs2TileObjectCache()
+                .query().withId(CAVE_ENTRANCE_ID).nearest());
+        internalState = InternalState.WAITING;
+        waitingTimeStart = Instant.now();
+        waitingDeadlineMs = System.currentTimeMillis()
+                + Rs2Random.logNormalBounded(12000, 18000, weatherMultiplier);
     }
 
     /**
@@ -469,18 +495,25 @@ public class GemCrabKillerScript implements AModule {
         if (waitingTimeStart == null) {
             waitingTimeStart = Instant.now();
         }
+        // Roll the deadline once per stay: the old code re-rolled it every tick, so the
+        // wait never expired while the roll kept coming out longer than the elapsed time.
+        if (waitingDeadlineMs == 0L) {
+            waitingDeadlineMs = System.currentTimeMillis()
+                    + Rs2Random.logNormalBounded(12000, 18000, weatherMultiplier);
+        }
 
         // New crab appeared
         if (Microbot.getRs2NpcCache().query().withId(CRAB_NPC_ID).nearest() != null) {
             internalState = InternalState.FIGHTING;
             waitingTimeStart = null;
+            waitingDeadlineMs = 0L;
             return;
         }
 
         // Timeout — go find next crab
-        long waitDuration = Rs2Random.logNormalBounded(12000, 18000, weatherMultiplier);
-        if (Instant.now().isAfter(waitingTimeStart.plusMillis(waitDuration))) {
+        if (System.currentTimeMillis() >= waitingDeadlineMs) {
             waitingTimeStart = null;
+            waitingDeadlineMs = 0L;
             internalState = InternalState.WALKING;
         }
     }
@@ -492,18 +525,24 @@ public class GemCrabKillerScript implements AModule {
         if (isDharok) {
             int currentHP = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
 
-            // Lower HP with locator orb or rock cake
+            // Lower HP with locator orb or rock cake. The slot is drawn through AScriptPick
+            // (the aScript click contract) — Rs2Inventory.interact(id, ...) always takes the
+            // lowest matching slot, which is a fixed-pixel tell across a whole session.
             if (currentHP > DHAROK_LOW_HP) {
-                if (Rs2Inventory.hasItem(ItemID.LOCATOR_ORB)) {
-                    Rs2Inventory.interact(ItemID.LOCATOR_ORB, "feel");
-                } else if (Rs2Inventory.hasItem(ItemID.DWARVEN_ROCK_CAKE_7510)) {
-                    Rs2Inventory.interact(ItemID.DWARVEN_ROCK_CAKE_7510, "guzzle");
+                Rs2ItemModel orb = AScriptPick.pick(ItemID.LOCATOR_ORB);
+                if (orb != null) {
+                    Rs2Inventory.interact(orb, "feel");
+                } else {
+                    Rs2ItemModel cake = AScriptPick.pick(ItemID.DWARVEN_ROCK_CAKE_7510);
+                    if (cake != null) {
+                        Rs2Inventory.interact(cake, "guzzle");
+                    }
                 }
             }
 
             // Emergency eat (only if useFood enabled — saves from death at 1 HP)
             if (useFood && currentHP <= EAT_EMERGENCY_HP) {
-                Rs2Player.eatAt(100);
+                eatBestFood();
             }
 
             // Rapid heal prayer flick
@@ -516,8 +555,13 @@ public class GemCrabKillerScript implements AModule {
                 }
             }
         } else if (useFood) {
-            // Normal mode with food — eat at threshold
-            Rs2Player.eatAt(EAT_NORMAL_HP);
+            // Normal mode with food — eat at the threshold, compared by levels (the same
+            // NaN-safe shape as the bank check below).
+            int hp = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
+            int maxHp = Rs2Player.getRealSkillLevel(Skill.HITPOINTS);
+            if (maxHp > 0 && hp * 100 < maxHp * EAT_NORMAL_HP) {
+                eatBestFood();
+            }
         }
         // useFood disabled, non-Dharok: no eating at all
 
@@ -536,6 +580,22 @@ public class GemCrabKillerScript implements AModule {
                 return; // state changed — the rest of this tick belongs to the bank trip
             }
         }
+    }
+
+    /**
+     * Eat the best food the inventory holds. The slot is drawn by {@link AScriptPick#pickFood}
+     * (top-heal group, randomized instance) — the house eating path, instead of
+     * {@code Rs2Player.eatAt}, which always eats the first food in slot order.
+     */
+    private boolean eatBestFood() {
+        List<Rs2ItemModel> foods = Rs2Inventory.getInventoryFood().stream()
+                .filter(food -> !food.isNoted())
+                .collect(Collectors.toList());
+        Rs2ItemModel food = AScriptPick.pickFood(foods);
+        if (food == null) return false;
+        return food.getName().toLowerCase().contains("jug of wine")
+                ? Rs2Inventory.interact(food, "drink")
+                : Rs2Inventory.interact(food, "eat");
     }
 
     private void handlePotions(AScriptConfig config) {
