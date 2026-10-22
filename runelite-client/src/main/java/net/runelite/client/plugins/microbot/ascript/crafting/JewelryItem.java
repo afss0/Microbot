@@ -4,6 +4,22 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import net.runelite.api.ItemID;
 
+/**
+ * Craftable jewellery: item ids, mould, level and production-interface coordinates.
+ * <p>
+ * Two identity traps live here, both confirmed against the OSRS wiki:
+ * <ul>
+ *   <li>The bracelet ids in {@code net.runelite.api.ItemID} are the <b>dummy</b>
+ *       entries — {@code GOLD_BRACELET} is 11068 and must be 11069
+ *       ({@code JEWL_GOLD_BRACELET}), {@code SAPPHIRE_BRACELET} is 11071 and must be
+ *       11072. Those ids only reach the bank/inventory through
+ *       {@link #getItemID()} (unused today), so the defect was latent.</li>
+ *   <li>{@link #name} is the item name AND the production-option label, and the
+ *       interface is searched by text: "Dragon bracelet" is not a substring of the
+ *       live label "Dragonstone bracelet" (renamed 2015), so the batch could never
+ *       start. See {@link #productLabels()} for the one label that differs.</li>
+ * </ul>
+ */
 @Getter
 @RequiredArgsConstructor
 public enum JewelryItem {
@@ -12,13 +28,13 @@ public enum JewelryItem {
     // Gold (group 446)
     GOLD_RING("Gold ring", ItemID.GOLD_RING, JewelryGem.NONE, ItemID.RING_MOULD, JewelryType.GOLD, 5, 446, 8),
     GOLD_NECKLACE("Gold necklace", ItemID.GOLD_NECKLACE, JewelryGem.NONE, ItemID.NECKLACE_MOULD, JewelryType.GOLD, 6, 446, 23),
-    GOLD_BRACELET("Gold bracelet", ItemID.GOLD_BRACELET, JewelryGem.NONE, ItemID.BRACELET_MOULD, JewelryType.GOLD, 7, 446, 50),
+    GOLD_BRACELET("Gold bracelet", ItemID.GOLD_BRACELET_11069, JewelryGem.NONE, ItemID.BRACELET_MOULD, JewelryType.GOLD, 7, 446, 50),
     GOLD_AMULET("Gold amulet", ItemID.GOLD_AMULET_U, JewelryGem.NONE, ItemID.AMULET_MOULD, JewelryType.GOLD, 8, 446, 37),
     GOLD_TIARA("Gold tiara", ItemID.GOLD_TIARA, JewelryGem.NONE, ItemID.TIARA_MOULD, JewelryType.GOLD, 42, 270, 13),
 
     // Silver (group 6) — tiaras use production widget (270)
     SILVER_TIARA("Tiara", ItemID.TIARA, JewelryGem.NONE, ItemID.TIARA_MOULD, JewelryType.SILVER, 23, 270, 13),
-    UNSTRUNG_SYMBOL("Holy symbol", ItemID.UNSTRUNG_SYMBOL, JewelryGem.NONE, ItemID.HOLY_MOULD, JewelryType.SILVER, 16, 6, 23),
+    UNSTRUNG_SYMBOL("Unstrung symbol", ItemID.UNSTRUNG_SYMBOL, JewelryGem.NONE, ItemID.HOLY_MOULD, JewelryType.SILVER, 16, 6, 23),
 
     // Opal (silver interface, group 6)
     OPAL_RING("Opal ring", ItemID.OPAL_RING, JewelryGem.OPAL, ItemID.RING_MOULD, JewelryType.SILVER, 1, 6, 7),
@@ -65,7 +81,7 @@ public enum JewelryItem {
     // Dragonstone (gold interface, group 446)
     DRAGONSTONE_RING("Dragonstone ring", ItemID.DRAGONSTONE_RING, JewelryGem.DRAGONSTONE, ItemID.RING_MOULD, JewelryType.GOLD, 55, 446, 13),
     DRAGON_NECKLACE("Dragon necklace", ItemID.DRAGON_NECKLACE, JewelryGem.DRAGONSTONE, ItemID.NECKLACE_MOULD, JewelryType.GOLD, 72, 446, 28),
-    DRAGONSTONE_BRACELET("Dragon bracelet", ItemID.DRAGONSTONE_BRACELET, JewelryGem.DRAGONSTONE, ItemID.BRACELET_MOULD, JewelryType.GOLD, 74, 446, 56),
+    DRAGONSTONE_BRACELET("Dragonstone bracelet", ItemID.DRAGONSTONE_BRACELET, JewelryGem.DRAGONSTONE, ItemID.BRACELET_MOULD, JewelryType.GOLD, 74, 446, 56),
     DRAGONSTONE_AMULET("Dragonstone amulet", ItemID.DRAGONSTONE_AMULET_U, JewelryGem.DRAGONSTONE, ItemID.AMULET_MOULD, JewelryType.GOLD, 80, 446, 42),
 
     // Onyx (gold interface, group 446)
@@ -93,6 +109,27 @@ public enum JewelryItem {
 
     public boolean hasGem() {
         return gem != JewelryGem.NONE;
+    }
+
+    /**
+     * The labels the production interface may carry for this product. The crafting
+     * interface is searched by text, so a miss here is a silent batch failure — the
+     * search is retried and then counts as a failed attempt.
+     * <p>
+     * The interface label is NOT always the item name: amulets show "Gold amulet"
+     * for the "Gold amulet (u)" item, and the unstrung-symbol option is the one
+     * entry whose label could not be confirmed against the live interface. Both
+     * spellings are therefore accepted for it — the item page and every other gold
+     * entry follow the item name ("Dragonstone bracelet", renamed from "Dragon
+     * bracelet" in 2015), so the item name goes first and the legacy label second.
+     *
+     * @return candidate labels, most likely first
+     */
+    public String[] productLabels() {
+        if (this == UNSTRUNG_SYMBOL) {
+            return new String[]{"Unstrung symbol", "Holy symbol"};
+        }
+        return new String[]{name};
     }
 
     @Override

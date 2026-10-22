@@ -1,6 +1,7 @@
 package net.runelite.client.plugins.microbot.ascript.crafting;
 
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.ItemID;
 import net.runelite.api.TileObject;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
@@ -77,6 +78,14 @@ public class CraftingScript implements AModule {
     /** Track consecutive craft failures to trigger exit after persistent failures. */
     private int consecutiveCraftFailures = 0;
     private static final int MAX_CONSECUTIVE_CRAFT_FAILURES = 3;
+    /**
+     * Plain needle (1733) and costume needle (29920) as IDs. By NAME the plain needle is a
+     * substring of "Costume needle" (and of anything else ending in "needle"), so a name
+     * lookup could report the wrong tool as present, lock the wrong slot, or Use the wrong
+     * needle on the leather.
+     */
+    private static final int NEEDLE_ID = ItemID.NEEDLE;
+    private static final int COSTUME_NEEDLE_ID = ItemID.COSTUME_NEEDLE;
 
     public enum Phase {
         NONE, GEMS, GLASS, STAFFS, FLAX, DRAGON_LEATHER, JEWELRY
@@ -220,12 +229,20 @@ public class CraftingScript implements AModule {
         return !AScriptBank.hasUnnotedItem("flax");
     }
 
+    /** The configured needle's id (plain 1733 or costume 29920). */
+    private static int needleId(AScriptConfig config) {
+        return config.useCostumeNeedle() ? COSTUME_NEEDLE_ID : NEEDLE_ID;
+    }
+
+    /** The configured needle's display name — status/notify text only, never item resolution. */
+    private static String needleLabel(AScriptConfig config) {
+        return config.useCostumeNeedle() ? "costume needle" : "needle";
+    }
+
     private boolean needsBankDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
         if (armour == CraftingDragonLeather.NONE) return false;
-        boolean hasNeedle = config.useCostumeNeedle()
-                ? AScriptBank.hasUnnotedItem("costume needle")
-                : AScriptBank.hasUnnotedItem("needle");
+        boolean hasNeedle = AScriptBank.hasUnnotedItem(needleId(config));
         boolean hasThread = config.useCostumeNeedle() || AScriptBank.hasUnnotedItem("thread");
         return !Rs2Inventory.hasItem(armour.getLeatherId()) || !hasNeedle || !hasThread;
     }
@@ -299,9 +316,9 @@ public class CraftingScript implements AModule {
     private boolean bankMissingDragonLeather(AScriptConfig config) {
         CraftingDragonLeather armour = config.dragonLeatherType();
         if (armour == CraftingDragonLeather.NONE) return false;
-        String needle = config.useCostumeNeedle() ? "costume needle" : "needle";
+        int needleId = needleId(config);
         if (!Rs2Inventory.hasItem(armour.getLeatherId()) && !Rs2Bank.hasBankItem(armour.getLeatherId(), 1)) return true;
-        if (!AScriptBank.hasUnnotedItem(needle) && !Rs2Bank.hasBankItem(needle, 1)) return true;
+        if (!AScriptBank.hasUnnotedItem(needleId) && !Rs2Bank.hasBankItem(needleId, 1)) return true;
         if (!config.useCostumeNeedle() && !AScriptBank.hasUnnotedItem("thread") && !Rs2Bank.hasBankItem("thread", 1)) return true;
         return false;
     }
@@ -391,10 +408,9 @@ public class CraftingScript implements AModule {
         StringBuilder sb = new StringBuilder();
         if (!Rs2Inventory.hasItem(armour.getLeatherId()) && !Rs2Bank.hasBankItem(armour.getLeatherId(), 1))
             sb.append(armour.getName()).append(" (not in bank), ");
-        boolean hasNeedle = config.useCostumeNeedle()
-                ? AScriptBank.hasUnnotedItem("costume needle") || Rs2Bank.hasBankItem("costume needle", 1)
-                : AScriptBank.hasUnnotedItem("needle") || Rs2Bank.hasBankItem("needle", 1);
-        if (!hasNeedle) sb.append(config.useCostumeNeedle() ? "costume needle" : "needle").append(" (not in bank), ");
+        int needleId = needleId(config);
+        boolean hasNeedle = AScriptBank.hasUnnotedItem(needleId) || Rs2Bank.hasBankItem(needleId, 1);
+        if (!hasNeedle) sb.append(needleLabel(config)).append(" (not in bank), ");
         boolean hasThread = config.useCostumeNeedle()
                 || AScriptBank.hasUnnotedItem("thread") || Rs2Bank.hasBankItem("thread", 1);
         if (!hasThread) sb.append("thread (not in bank), ");
@@ -559,12 +575,11 @@ public class CraftingScript implements AModule {
         // Deposit via toolbar button
         if (!AScriptBank.depositAndWaitEmpty()) return false;
 
-        boolean hasNeedle = config.useCostumeNeedle()
-                ? AScriptBank.hasUnnotedItem("costume needle")
-                : AScriptBank.hasUnnotedItem("needle");
+        int needleId = needleId(config);
+        boolean hasNeedle = AScriptBank.hasUnnotedItem(needleId);
         boolean hasThread = config.useCostumeNeedle() || AScriptBank.hasUnnotedItem("thread");
 
-        if (!hasNeedle && !AScriptBank.ensureToolLocked(config.useCostumeNeedle() ? "costume needle" : "needle"))
+        if (!hasNeedle && !AScriptBank.ensureToolLocked(String.valueOf(needleId)))
             return false;
         if (!hasThread && !config.useCostumeNeedle() && !AScriptBank.withdrawVerified("thread"))
             return false;
@@ -976,11 +991,9 @@ public class CraftingScript implements AModule {
 
         int before = countMaterial(materialRef);
         Rs2ItemModel leatherItem = AScriptPick.pick(armour.getLeatherId());
-        // The costume-needle variant picks its own name string; resolution stays the old
-        // substring match Rs2Inventory.use(name) used, so the dispatch picks the same
-        // needle the pre-recipe code would have.
-        Rs2ItemModel needleItem = Rs2Inventory.get(
-                config.useCostumeNeedle() ? "costume needle" : "needle");
+        // The configured needle, resolved by ID immediately before the click: "needle" also
+        // matches "Costume needle", so a name lookup can hand back the other tool.
+        Rs2ItemModel needleItem = Rs2Inventory.get(needleId(config));
         if (!AScriptClick.useItemOnItem(leatherItem, needleItem)) {
             Microbot.status = "IDLE"; // recipe logged + cancelled its own selection
             return false;
@@ -1202,8 +1215,15 @@ public class CraftingScript implements AModule {
         // actually dispatched. A single silent miss here is what used to send the old loop
         // straight back to the furnace mid-batch.
         boolean clicked = sleepUntilTrue(
-                () -> Rs2Widget.clickWidget(item.getName(), java.util.Optional.of(item.getWidgetGroup()),
-                        item.getWidgetChild(), false),
+                () -> {
+                    for (String label : item.productLabels()) {
+                        if (Rs2Widget.clickWidget(label, java.util.Optional.of(item.getWidgetGroup()),
+                                item.getWidgetChild(), false)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                },
                 300, Rs2Random.logNormalBounded(3000, 5000, weatherMultiplier));
         if (!clicked) {
             failJewelryAttempt("could not click the " + item.getName() + " option");
