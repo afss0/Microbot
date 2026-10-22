@@ -196,14 +196,11 @@ public class AmmoniteCrabsScript implements AModule {
                 && Rs2Inventory.getFilteredPotionItemsInInventory(config.ammoniteCrabPotion().getPotionName()).isEmpty()) {
             if (!AScriptBank.withdrawVerified(String.valueOf(config.ammoniteCrabPotion().getId()),
                     config.ammoniteCrabPotionAmount())) {
-                AScriptNotify.notify("Banking Failed",
-                        "No " + config.ammoniteCrabPotion().getPotionName() + "(4) in bank");
                 return false;
             }
         }
         if (config.ammoniteCrabUseFood() && Rs2Inventory.getInventoryFood().isEmpty()) {
             if (!AScriptBank.withdrawVerified(String.valueOf(config.ammoniteCrabFood().getId()))) {
-                AScriptNotify.notify("Banking Failed", "No " + config.ammoniteCrabFood().getName() + " in bank");
                 return false;
             }
         }

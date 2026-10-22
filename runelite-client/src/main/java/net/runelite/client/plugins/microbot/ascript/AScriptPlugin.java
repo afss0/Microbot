@@ -59,7 +59,9 @@ public class AScriptPlugin extends Plugin {
         Microbot.getBlockingEventManager().add(dismissNpcEvent);
         Microbot.getBlockingEventManager().add(useLampEvent);
         LampUtility.reset();
-        Microbot.pauseAllScripts.compareAndSet(true, false);
+        // No pauseAllScripts.compareAndSet(true, false) here: enabling aScript must not
+        // resume scripts that the user (or a break handler) paused. This plugin did not set
+        // that pause and must not clear it — scripts start from the overlay/panel action.
         script.run(config);
     }
 
