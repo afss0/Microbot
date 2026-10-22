@@ -227,7 +227,6 @@ public class CannonballSmelterScript implements AModule {
             mouldName = Rs2Bank.hasItem("double ammo mould") ? "double ammo mould" : "ammo mould";
         }
         if (!AScriptBank.ensureToolLocked(mouldName)) {
-            AScriptNotify.notify("Banking Failed", "No ammo mould or double ammo mould in bank");
             return false;
         }
 
@@ -247,7 +246,6 @@ public class CannonballSmelterScript implements AModule {
 
         // 3. Withdraw steel bars (fill the inventory).
         if (!AScriptBank.withdrawVerified("steel bar")) {
-            AScriptNotify.notify("Banking Failed", "No steel bars in bank");
             return false;
         }
 
