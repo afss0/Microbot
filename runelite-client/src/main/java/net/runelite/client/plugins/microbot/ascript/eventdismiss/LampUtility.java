@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ItemID;
 import net.runelite.api.Skill;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -174,10 +175,20 @@ public class LampUtility {
             return false;
         }
 
-        Rs2Widget.clickWidget(LAMP_WIDGET_GROUP, skillWidgetId);
+        if (!Rs2Widget.clickWidget(LAMP_WIDGET_GROUP, skillWidgetId)) {
+            // The confirm awards whichever skill is SELECTED: a click that did not land
+            // would confirm the previous (default) selection and train the wrong skill.
+            log.warn("Lamp skill click did not land: {}", skill);
+            noteUseFailure();
+            return false;
+        }
         Global.sleep(Rs2Random.logNormalBounded(600, 1200));
 
-        Rs2Widget.clickWidget(LAMP_WIDGET_GROUP, LAMP_CONFIRM_BUTTON);
+        if (!Rs2Widget.clickWidget(LAMP_WIDGET_GROUP, LAMP_CONFIRM_BUTTON)) {
+            log.warn("Lamp confirm click did not land: {}", skill);
+            noteUseFailure();
+            return false;
+        }
 
         // Confirming the skill produces an XP-award "Click here to continue" dialogue.
         // Dismiss it so the lamp is actually consumed and the leftover dialogue does not
@@ -214,6 +225,12 @@ public class LampUtility {
         if (!Rs2Tab.switchTo(InterfaceTab.INVENTORY)) {
             return false;
         }
+        // A pending item/spell selection turns the next inventory click into "use on", so
+        // the rub would land as a use-on-lamp instead of the Rub op.
+        if (Rs2Inventory.isItemSelected() && !AScriptClick.clearSelection()) {
+            log.warn("Could not clear the pending selection before rubbing the lamp");
+            return false;
+        }
         Rs2ItemModel lamp = Rs2Inventory.get(ItemID.LAMP);
         Rectangle bounds = lamp == null ? null : Rs2Inventory.itemBounds(lamp);
         if (bounds == null) {
@@ -234,7 +251,10 @@ public class LampUtility {
         if (!Rs2Widget.isWidgetVisible(LAMP_WIDGET_GROUP, LAMP_WIDGET_ROOT)) {
             return;
         }
-        Rs2Widget.findWidgetsWithAction("Close", LAMP_WIDGET_GROUP, true);
+        // findWidgetsWithAction walks live widget state: a scheduler-thread call reads off
+        // the client thread.
+        Microbot.getClientThread().runOnClientThreadOptional(
+                () -> Rs2Widget.findWidgetsWithAction("Close", LAMP_WIDGET_GROUP, true));
         if (Global.sleepUntil(() -> !Rs2Widget.isWidgetVisible(LAMP_WIDGET_GROUP, LAMP_WIDGET_ROOT), 2000)) {
             return;
         }
