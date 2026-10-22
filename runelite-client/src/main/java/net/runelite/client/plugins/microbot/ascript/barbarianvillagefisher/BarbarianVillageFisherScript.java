@@ -270,7 +270,6 @@ public class BarbarianVillageFisherScript implements AModule {
         // a bare re-withdraw left it unlocked in the inventory for the whole cycle.
         if (!Rs2Inventory.hasItem(rodId)) {
             if (!AScriptBank.ensureToolLocked(String.valueOf(rodId), keepLocked)) {
-                AScriptNotify.notify("Banking Failed", "No " + getRodLabel(config) + " in bank");
                 consecutiveBankFailures++;
                 return false;
             }
@@ -280,7 +279,6 @@ public class BarbarianVillageFisherScript implements AModule {
         // stack ("withdraw all" drains the bank pile in one interaction).
         if (!Rs2Inventory.hasItem(baitId)
                 && !AScriptBank.ensureStackLocked(String.valueOf(baitId), keepLocked)) {
-            AScriptNotify.notify("Banking Failed", "No " + getBaitLabel(config) + " in bank");
             consecutiveBankFailures++;
             return false;
         }
