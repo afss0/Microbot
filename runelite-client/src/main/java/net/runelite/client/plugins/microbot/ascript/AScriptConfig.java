@@ -407,7 +407,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Jewel Enchant",
             description = "Jewellery enchanting settings",
-            position = 5,
+            position = 14,
             closedByDefault = true
     )
     String jewelEnchantSection = "jewelenchant";
@@ -577,7 +577,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Ammonite Crabs",
             description = "Ammonite crab killer settings",
-            position = 7,
+            position = 15,
             closedByDefault = true
     )
     String ammoniteCrabsSection = "ammonitecrabs";
@@ -949,7 +949,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "QOL",
             description = "Quality of Life settings",
-            position = 4
+            position = 13
     )
     String qolSection = "qol";
 

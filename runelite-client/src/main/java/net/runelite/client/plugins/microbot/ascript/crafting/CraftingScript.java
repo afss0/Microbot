@@ -482,13 +482,11 @@ public class CraftingScript implements AModule {
         if (amethyst) {
             if (!AScriptBank.ensureToolLocked("chisel")) return false;
             if (!AScriptBank.withdrawVerified(Integer.toString(21347))) {
-                AScriptNotify.notify("Banking Failed", "No amethyst blocks in bank");
                 return false;
             }
         } else {
             if (!AScriptBank.ensureToolLocked("chisel")) return false;
             if (!AScriptBank.withdrawVerified(uncutGemName)) {
-                AScriptNotify.notify("Banking Failed", "No " + uncutGemName + " in bank");
                 return false;
             }
         }
@@ -501,7 +499,6 @@ public class CraftingScript implements AModule {
 
         if (!AScriptBank.ensureToolLocked("glassblowing pipe")) return false;
         if (!AScriptBank.withdrawVerified("molten glass")) {
-            AScriptNotify.notify("Banking Failed", "No molten glass in bank");
             return false;
         }
         return true;
@@ -563,7 +560,6 @@ public class CraftingScript implements AModule {
         if (!AScriptBank.depositAndWaitEmpty()) return false;
 
         if (!AScriptBank.withdrawVerified("flax")) {
-            AScriptNotify.notify("Banking Failed", "No flax in bank");
             return false;
         }
         return true;
@@ -585,7 +581,6 @@ public class CraftingScript implements AModule {
             return false;
 
         if (!AScriptBank.withdrawVerified(Integer.toString(armour.getLeatherId()))) {
-            AScriptNotify.notify("Banking Failed", "No dragon leather in bank");
             return false;
         }
         return true;
@@ -600,7 +595,6 @@ public class CraftingScript implements AModule {
         // ensureToolLocked deposits strays + withdraws + locks (inventory ends up
         // with just the locked mould).
         if (!AScriptBank.ensureToolLocked(Integer.toString(item.getToolItemID()))) {
-            AScriptNotify.notify("Banking Failed", "Missing mould in bank for " + item.getName());
             return false;
         }
 

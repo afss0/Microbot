@@ -231,7 +231,6 @@ public class FiremakingScript implements AModule {
         // 1. Tinderbox FIRST (locked tool slot — the blanket deposit must not remove it).
         //    Numeric id on purpose: a "tinderbox" name match could pull a Damp/Fever tinderbox.
         if (!AScriptBank.ensureToolLocked(String.valueOf(ItemID.TINDERBOX))) {
-            AScriptNotify.notify("Banking Failed", "No tinderbox in bank");
             return false;
         }
 
@@ -253,7 +252,6 @@ public class FiremakingScript implements AModule {
         //    substring of every log type ("oak logs", "magic logs", ...) and would over-withdraw.
         FiremakingLog choice = config.firemakingLog();
         if (!AScriptBank.withdrawVerified(String.valueOf(choice.getItemId()))) {
-            AScriptNotify.notify("Banking Failed", "No " + choice.getName().toLowerCase() + " in bank");
             return false;
         }
 
