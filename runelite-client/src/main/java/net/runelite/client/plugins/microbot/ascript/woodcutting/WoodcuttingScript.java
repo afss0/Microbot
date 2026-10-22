@@ -89,14 +89,8 @@ public class WoodcuttingScript implements AModule {
             HUMAN_WOODCUTTING_GAUNTLET_AXE_HM,
             MISC_HUMAN_WOODCUTTING_STEEL_AXE);
 
-    /** Spec axes (hub parity) — the special attack boosts Woodcutting. */
-    private static final Set<Integer> SPEC_AXE_IDS = Set.of(
-            net.runelite.api.gameval.ItemID.DRAGON_AXE,
-            net.runelite.api.gameval.ItemID.DRAGON_AXE_2H,
-            net.runelite.api.gameval.ItemID.CRYSTAL_AXE,
-            net.runelite.api.gameval.ItemID.CRYSTAL_AXE_2H,
-            net.runelite.api.gameval.ItemID.INFERNAL_AXE,
-            net.runelite.api.gameval.ItemID.TRAILBLAZER_AXE);
+    /** Spec axes (hub parity) — the special attack boosts Woodcutting. Derived from {@link Axe}. */
+    private static final Set<Integer> SPEC_AXE_IDS = Axe.specialAttackAxeIds();
 
     private Phase currentPhase = Phase.NONE;
     private boolean exitRequested = false;
@@ -252,7 +246,8 @@ public class WoodcuttingScript implements AModule {
         if (!wearingAnyAxe()) {
             Axe best = bestAxeInBank();
             if (best == null) {
-                AScriptNotify.notify("Banking Failed", "No axe in bank");
+                AScriptNotify.notify("Banking Failed",
+                        "No axe in bank usable at Woodcutting " + Rs2Player.getBoostedSkillLevel(Skill.WOODCUTTING));
                 return false;
             }
             Rs2Bank.withdrawAndEquip(best.getItemId());
@@ -516,10 +511,12 @@ public class WoodcuttingScript implements AModule {
                 && WOODCUTTING_ANIMATION_IDS.contains(Rs2Player.getAnimation());
     }
 
-    /** Any axe worn or in the inventory. */
+    /** Any axe worn or in the inventory that the player can actually chop with. */
     private static boolean hasAxe() {
+        int level = Rs2Player.getBoostedSkillLevel(Skill.WOODCUTTING);
         for (Axe axe : Axe.values()) {
-            if (Rs2Equipment.isWearing(axe.getItemId()) || Rs2Inventory.hasItem(axe.getItemId())) {
+            if (axe.isUsableAt(level)
+                    && (Rs2Equipment.isWearing(axe.getItemId()) || Rs2Inventory.hasItem(axe.getItemId()))) {
                 return true;
             }
         }
@@ -542,14 +539,18 @@ public class WoodcuttingScript implements AModule {
      * Best axe in the bank: the highest tier present, from ONE {@code Rs2Bank.getAll()}
      * snapshot (the JewelEnchant staff-scan lesson: a per-tier scan through the retrying
      * reads pays a 2-tick retry per miss and stalls the step silently).
+     * <p>
+     * Level-gated like {@link #hasAxe()}: withdrawing an axe above the player's
+     * Woodcutting level only trades "no axe" for "an axe that cannot chop".
      */
     private static Axe bestAxeInBank() {
+        int level = Rs2Player.getBoostedSkillLevel(Skill.WOODCUTTING);
         Set<Integer> bankIds = Rs2Bank.getAll()
                 .map(Rs2ItemModel::getId)
                 .collect(Collectors.toSet());
         Axe best = null;
         for (Axe axe : Axe.values()) {
-            if (bankIds.contains(axe.getItemId())) best = axe;
+            if (bankIds.contains(axe.getItemId()) && axe.isUsableAt(level)) best = axe;
         }
         return best;
     }

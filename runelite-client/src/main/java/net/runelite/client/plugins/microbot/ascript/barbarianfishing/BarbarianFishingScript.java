@@ -223,9 +223,14 @@ public class BarbarianFishingScript implements AModule {
         // toolbar deposit never removes them, so banking keeps whichever is held
         // and withdraws anew only what is missing. Both ride in one keep-list so the
         // second ensure never releases the rod's fresh lock as a stray.
-        List<String> keepLocked = Arrays.asList("Barbarian rod", "Feather");
-        if (!AScriptBank.ensureToolLocked("Barbarian rod", keepLocked)) return false;
-        if (!AScriptBank.ensureStackLocked("Feather", keepLocked)) return false;
+        // Ids, not names: the lock match is a case-insensitive substring, so "Feather"
+        // also matches "Stripy feather"/"Red feather" and "Barbarian rod" would lock any
+        // rod-shaped name — the anchor must be the exact item.
+        String rodRef = String.valueOf(ItemID.BARBARIAN_ROD);
+        String featherRef = String.valueOf(ItemID.FEATHER);
+        List<String> keepLocked = Arrays.asList(rodRef, featherRef);
+        if (!AScriptBank.ensureToolLocked(rodRef, keepLocked)) return false;
+        if (!AScriptBank.ensureStackLocked(featherRef, keepLocked)) return false;
 
         // Deposit everything else (fish caught before the trip) via the toolbar button.
         if (!AScriptBank.depositAndWaitEmpty()) return false;
