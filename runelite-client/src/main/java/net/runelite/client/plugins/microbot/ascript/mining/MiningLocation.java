@@ -5,6 +5,7 @@ import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
@@ -28,6 +29,10 @@ public class MiningLocation {
     private final Map<Quest, QuestState> requiredQuests;
     private final Map<Skill, Integer> requiredSkills;
     private final Map<Integer, Integer> requiredItems; // itemId -> amount; must be worn or carried
+
+    /** Aprons the Crafting Guild gate accepts — and only when WORN. */
+    private static final java.util.Set<Integer> APRON_IDS =
+            java.util.Set.of(ItemID.BROWN_APRON, ItemID.GOLDEN_APRON);
 
     public MiningLocation(WorldPoint worldPoint, String name, boolean membersOnly) {
         this(worldPoint, name, membersOnly, new HashMap<>(), new HashMap<>(), new HashMap<>());
@@ -71,9 +76,15 @@ public class MiningLocation {
         if (!skillsMet) {
             return false;
         }
-        return requiredItems.entrySet().stream().allMatch(entry ->
-                Rs2Inventory.count(entry.getKey()) + (Rs2Equipment.isWearing(entry.getKey()) ? 1 : 0)
-                        >= entry.getValue());
+        return requiredItems.entrySet().stream().allMatch(entry -> {
+            // Aprons open the Crafting Guild gate only when WORN: a carried apron is not
+            // accepted, and the golden apron works as well as the brown one.
+            if (APRON_IDS.contains(entry.getKey())) {
+                return APRON_IDS.stream().anyMatch(id -> Rs2Equipment.isWearing(id));
+            }
+            return Rs2Inventory.count(entry.getKey())
+                    + (Rs2Equipment.isWearing(entry.getKey()) ? 1 : 0) >= entry.getValue();
+        });
     }
 
     @Override
