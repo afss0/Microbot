@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.client.game.FishingSpot;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
@@ -49,6 +50,17 @@ public class BarbarianVillageFisherScript implements AModule {
 
     // Raw fish IDs: Trout (335), Salmon (331), Pike (349)
     private static final int[] RAW_FISH = {335, 331, 349};
+    /**
+     * Rod and bait are resolved by ID, never by name: every relevant name is a substring
+     * of a larger family. "Fishing rod" is contained in "Fly fishing rod", and "Feather"
+     * is contained in each coloured feather ("Red feather", "Stripy feather", ...), so a
+     * name lookup can withdraw/lock/drop the wrong item — or count the wrong item as bait
+     * and fish with an empty inventory.
+     */
+    private static final int FISHING_ROD_ID = ItemID.FISHING_ROD;
+    private static final int FLY_FISHING_ROD_ID = ItemID.FLY_FISHING_ROD;
+    private static final int FISHING_BAIT_ID = ItemID.FISHING_BAIT;
+    private static final int FEATHER_ID = ItemID.FEATHER;
     private static final int BARBARIAN_VILLAGE_FIRE_ID = 43475;
     private static final WorldPoint BARBARIAN_VILLAGE_FIRE_POINT = new WorldPoint(3106, 3432, 0);
     private static final WorldPoint FISHING_SPOT = new WorldPoint(3108, 3432, 0);
@@ -99,8 +111,8 @@ public class BarbarianVillageFisherScript implements AModule {
         // proximity so the overlay and the NONE → active resetExitFlag() transition
         // see a real phase instead of a hardcoded placeholder.
         if (Rs2Inventory.isFull()
-                || !Rs2Inventory.hasItem(getRodName(config))
-                || !Rs2Inventory.hasItem(getBaitName(config))) {
+                || !Rs2Inventory.hasItem(getRodId(config))
+                || !Rs2Inventory.hasItem(getBaitId(config))) {
             currentPhase = Phase.WALK_TO_BANK;
         } else if (isCloseTo(FISHING_SPOT)) {
             currentPhase = Phase.FISHING;
@@ -139,10 +151,10 @@ public class BarbarianVillageFisherScript implements AModule {
     @Override
     public boolean needsBank(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
-        String rodName = getRodName(config);
-        String baitName = getBaitName(config);
+        int rodId = getRodId(config);
+        int baitId = getBaitId(config);
         // Need bank if we don't have rod or bait
-        if (!Rs2Inventory.hasItem(rodName) || !Rs2Inventory.hasItem(baitName)) return true;
+        if (!Rs2Inventory.hasItem(rodId) || !Rs2Inventory.hasItem(baitId)) return true;
         // Need bank if inventory is full AND function requires banking
         BarbarianFishingFunctions func = config.barbarianVillageFisherFunction();
         if (Rs2Inventory.isFull()) {
@@ -176,25 +188,25 @@ public class BarbarianVillageFisherScript implements AModule {
     public boolean isBankMissingMaterials(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
         if (!needsBank(config)) return false;
-        String rodName = getRodName(config);
-        String baitName = getBaitName(config);
+        int rodId = getRodId(config);
+        int baitId = getBaitId(config);
         // Missing from BOTH inventory and bank. The bank reads are the retrying hasBankItem
         // family — the bare mirror read can report an item the bank no longer lists.
-        if (!Rs2Inventory.hasItem(rodName) && !Rs2Bank.hasBankItem(rodName, 1)) return true;
-        if (!Rs2Inventory.hasItem(baitName) && !Rs2Bank.hasBankItem(baitName, 1)) return true;
+        if (!Rs2Inventory.hasItem(rodId) && !Rs2Bank.hasBankItem(rodId, 1)) return true;
+        if (!Rs2Inventory.hasItem(baitId) && !Rs2Bank.hasBankItem(baitId, 1)) return true;
         return false;
     }
 
     @Override
     public String describeMissing(AScriptConfig config) {
-        String rodName = getRodName(config);
-        String baitName = getBaitName(config);
+        int rodId = getRodId(config);
+        int baitId = getBaitId(config);
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(rodName) && !Rs2Bank.hasBankItem(rodName, 1))
-            sb.append(rodName);
-        if (!Rs2Inventory.hasItem(baitName) && !Rs2Bank.hasBankItem(baitName, 1)) {
+        if (!Rs2Inventory.hasItem(rodId) && !Rs2Bank.hasBankItem(rodId, 1))
+            sb.append(getRodLabel(config));
+        if (!Rs2Inventory.hasItem(baitId) && !Rs2Bank.hasBankItem(baitId, 1)) {
             if (sb.length() > 0) sb.append(", ");
-            sb.append(baitName);
+            sb.append(getBaitLabel(config));
         }
         return sb.toString();
     }
@@ -212,8 +224,8 @@ public class BarbarianVillageFisherScript implements AModule {
         }
 
         Microbot.status = "BANKING";
-        String rodName = getRodName(config);
-        String baitName = getBaitName(config);
+        int rodId = getRodId(config);
+        int baitId = getBaitId(config);
         BarbarianFishingFunctions func = config.barbarianVillageFisherFunction();
 
         if (!Rs2Bank.isOpen()) {
@@ -234,9 +246,9 @@ public class BarbarianVillageFisherScript implements AModule {
         // Both ride in one keep-list: without it the second ensure treats the lock
         // the first just set as another module's stray and unlocks + deposits it
         // (the rod deposit/re-withdraw ping-pong, observed live 2026-10-10).
-        List<String> keepLocked = Arrays.asList(rodName, baitName);
-        if (!AScriptBank.ensureToolLocked(rodName, keepLocked)
-                || !AScriptBank.ensureStackLocked(baitName, keepLocked)) {
+        List<String> keepLocked = Arrays.asList(String.valueOf(rodId), String.valueOf(baitId));
+        if (!AScriptBank.ensureToolLocked(String.valueOf(rodId), keepLocked)
+                || !AScriptBank.ensureStackLocked(String.valueOf(baitId), keepLocked)) {
             consecutiveBankFailures++;
             return false;
         }
@@ -249,9 +261,9 @@ public class BarbarianVillageFisherScript implements AModule {
 
         // Withdraw rod if missing — via ensure so it comes back LOCKED, never bare:
         // a bare re-withdraw left it unlocked in the inventory for the whole cycle.
-        if (!Rs2Inventory.hasItem(rodName)) {
-            if (!AScriptBank.ensureToolLocked(rodName, keepLocked)) {
-                AScriptNotify.notify("Banking Failed", "No " + rodName + " in bank");
+        if (!Rs2Inventory.hasItem(rodId)) {
+            if (!AScriptBank.ensureToolLocked(String.valueOf(rodId), keepLocked)) {
+                AScriptNotify.notify("Banking Failed", "No " + getRodLabel(config) + " in bank");
                 consecutiveBankFailures++;
                 return false;
             }
@@ -259,9 +271,9 @@ public class BarbarianVillageFisherScript implements AModule {
 
         // No bait left: locked stack consumed entirely — withdraw a fresh full
         // stack ("withdraw all" drains the bank pile in one interaction).
-        if (!Rs2Inventory.hasItem(baitName)
-                && !AScriptBank.ensureStackLocked(baitName, keepLocked)) {
-            AScriptNotify.notify("Banking Failed", "No " + baitName + " in bank");
+        if (!Rs2Inventory.hasItem(baitId)
+                && !AScriptBank.ensureStackLocked(String.valueOf(baitId), keepLocked)) {
+            AScriptNotify.notify("Banking Failed", "No " + getBaitLabel(config) + " in bank");
             consecutiveBankFailures++;
             return false;
         }
@@ -325,12 +337,12 @@ public class BarbarianVillageFisherScript implements AModule {
     // ── Dynamic phase resolution ─────────────────────────────
 
     private void resolveDynamicPhase(AScriptConfig config) {
-        String rodName = getRodName(config);
-        String baitName = getBaitName(config);
+        int rodId = getRodId(config);
+        int baitId = getBaitId(config);
         BarbarianFishingFunctions func = config.barbarianVillageFisherFunction();
 
         // Missing materials → bank
-        if (!Rs2Inventory.hasItem(rodName) || !Rs2Inventory.hasItem(baitName)) {
+        if (!Rs2Inventory.hasItem(rodId) || !Rs2Inventory.hasItem(baitId)) {
             if (isCloseTo(BankLocation.EDGEVILLE.getWorldPoint())) {
                 currentPhase = Phase.BANKING;
             } else {
@@ -448,14 +460,14 @@ public class BarbarianVillageFisherScript implements AModule {
 
     private void doDropping(AScriptConfig config) {
         Microbot.status = "DROPPING";
-        String rodName = getRodName(config);
-        String baitName = getBaitName(config);
+        int rodId = getRodId(config);
+        int baitId = getBaitId(config);
         // Drop-target decisions (AScriptPick.nextDropTarget) over the not-rod/bait instances the
         // old dropAllExcept(STANDARD) walked in slot order: uniform first draw, then a
         // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
         // cursor. Client-mouse clicks — the shared dropAll* helper dispatched by injection.
         List<Rs2ItemModel> candidates = Rs2Inventory.getList(item ->
-                !rodName.equalsIgnoreCase(item.getName()) && !baitName.equalsIgnoreCase(item.getName()));
+                item.getId() != rodId && item.getId() != baitId);
         boolean firstDraw = true;
         while (!candidates.isEmpty()) {
             Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
@@ -592,14 +604,28 @@ public class BarbarianVillageFisherScript implements AModule {
 
     // ── Helpers ──────────────────────────────────────────────
 
-    private String getRodName(AScriptConfig config) {
+    /** Rod id for the configured fishing type (ids, never names — see the constants above). */
+    private int getRodId(AScriptConfig config) {
         return config.barbarianVillageFisherType() == BarbarianFishingType.BAIT_FISHING
-                ? "Fishing rod" : "Fly fishing rod";
+                ? FISHING_ROD_ID : FLY_FISHING_ROD_ID;
     }
 
-    private String getBaitName(AScriptConfig config) {
+    /** Bait id for the configured fishing type. */
+    private int getBaitId(AScriptConfig config) {
         return config.barbarianVillageFisherType() == BarbarianFishingType.BAIT_FISHING
-                ? "Fishing bait" : "Feather";
+                ? FISHING_BAIT_ID : FEATHER_ID;
+    }
+
+    /** User-facing rod name (status/notify only — never used to resolve an item). */
+    private String getRodLabel(AScriptConfig config) {
+        return config.barbarianVillageFisherType() == BarbarianFishingType.BAIT_FISHING
+                ? "fishing rod" : "fly fishing rod";
+    }
+
+    /** User-facing bait name (status/notify only — never used to resolve an item). */
+    private String getBaitLabel(AScriptConfig config) {
+        return config.barbarianVillageFisherType() == BarbarianFishingType.BAIT_FISHING
+                ? "fishing bait" : "feather";
     }
 
     private boolean hasRawFish() {

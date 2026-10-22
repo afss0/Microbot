@@ -823,6 +823,20 @@ public final class AScriptBank {
     }
 
     /**
+     * Id-exact variant of {@link #hasUnnotedItem(String)}.
+     * <p>
+     * Use this for any fixed item whose name is a substring of another item's name — the
+     * name form matches "Feather" against "Stripy feather"/"Red feather" and "needle"
+     * against "Costume needle", so a name check can report the wrong item as present.
+     *
+     * @param id the exact item id to match
+     * @return true when an unnoted instance of that id is in the inventory
+     */
+    public static boolean hasUnnotedItem(int id) {
+        return Rs2Inventory.items().anyMatch(item -> !item.isNoted() && item.getId() == id);
+    }
+
+    /**
      * Free inventory slots right now — the reservation basis for every multi-material withdraw.
      * <p>
      * Locked slots (held tools, the mould, the XP lamp) count as OCCUPIED, which is the point:
