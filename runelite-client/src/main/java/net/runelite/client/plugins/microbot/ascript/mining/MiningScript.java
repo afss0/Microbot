@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript.mining;
 
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Skill;
+import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.NpcID;
@@ -18,6 +19,7 @@ import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.depositbox.Rs2DepositBox;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
@@ -303,6 +305,26 @@ public class MiningScript implements AModule {
         if (!Microbot.isLoggedIn()) return false;
         Microbot.status = "BANKING — Mining";
 
+        // 0. A pickaxe carried in the inventory is equipped BEFORE the bank opens: the
+        //    bank window swallows equip clicks, and a player already holding the tool must
+        //    never be sent back for a bank copy. Explicit wear, verified.
+        if (!wearingAnyPickaxe()) {
+            Pickaxe held = bestPickaxeInInventory();
+            if (held != null) {
+                if (Rs2Bank.isOpen()) {
+                    Rs2Bank.closeBank();
+                    sleepUntil(() -> !Rs2Bank.isOpen(),
+                            Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
+                }
+                Rs2Inventory.wield(held.getItemId());
+                if (!sleepUntil(MiningScript::wearingAnyPickaxe,
+                        Rs2Random.logNormalBounded(2000, 3500, weatherMultiplier))) {
+                    log.warn("[Mining] held pickaxe wear did not land");
+                    return false;
+                }
+            }
+        }
+
         if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
             return false;
         }
@@ -332,6 +354,13 @@ public class MiningScript implements AModule {
         // 2. Deposit everything non-locked via the toolbar button.
         if (!AScriptBank.depositAndWaitEmpty()) {
             log.warn("[Mining] deposit failed");
+            return false;
+        }
+
+        // The wear must survive the blanket deposit: if the lock was released, the
+        // pickaxe goes to the bank and the next mining tick finds no tool.
+        if (!wearingAnyPickaxe()) {
+            log.warn("[Mining] pickaxe not worn after the deposit");
             return false;
         }
 
@@ -428,6 +457,16 @@ public class MiningScript implements AModule {
             var bank = Rs2Bank.getNearestBank();
             if (bank == null) {
                 fail("no reachable bank found");
+                return;
+            }
+            // A bank object already loaded in the scene is TURNED TO, not walked at: the
+            // walker cannot target an off-camera bank reliably, and a camera turn does not
+            // move the player (cannonball approachBank pattern). Travel continues only
+            // while no bank object is loaded.
+            TileObject bankObject = AScriptBank.findBankObject();
+            if (bankObject != null) {
+                Microbot.status = "TURNING TO BANK";
+                Rs2Camera.turnTo(bankObject);
                 return;
             }
             travelTo(bank.getWorldPoint());
@@ -799,6 +838,21 @@ public class MiningScript implements AModule {
         Pickaxe best = null;
         for (Pickaxe p : Pickaxe.values()) {
             if (bankIds.contains(p.getItemId()) && level >= p.getMiningLevel()) {
+                best = p;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Best pickaxe the player is CARRYING (inventory only). The held-tool path equips this
+     * before the bank opens; a worn pickaxe is handled by {@link #wearingAnyPickaxe()}.
+     */
+    private static Pickaxe bestPickaxeInInventory() {
+        int level = Rs2Player.getRealSkillLevel(Skill.MINING);
+        Pickaxe best = null;
+        for (Pickaxe p : Pickaxe.values()) {
+            if (Rs2Inventory.hasItem(p.getItemId()) && p.isUsableAt(level)) {
                 best = p;
             }
         }
