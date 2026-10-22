@@ -20,6 +20,7 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.walker.recovery.CantReachTargetRecovery;
 import org.jetbrains.annotations.Nullable;
 
+import java.awt.Rectangle;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -1316,10 +1317,11 @@ public class Rs2Npc {
                 Microbot.log("Natural mouse is not enabled, can't hover");
             return false;
         }
-        Point point = Rs2UiHelper.getClickingPoint(Rs2UiHelper.getActorClickbox(actor), true);
-        if (point.getX() == 1 && point.getY() == 1) {
+        Rectangle clickbox = Rs2UiHelper.getActorClickbox(actor);
+        if (Rs2UiHelper.isFallbackRectangle(clickbox)) {
             return false;
         }
+        Point point = Rs2UiHelper.getClickingPoint(clickbox, true);
         Microbot.getNaturalMouse().moveTo(point.getX(), point.getY());
         return true;
     }

@@ -98,6 +98,16 @@ public final class DiagnosticReport
 		{
 			return "";
 		}
+		String text = redact(raw).replaceAll("\\s+", " ").trim();
+		if (text.length() > MAX_VALUE_LENGTH)
+		{
+			text = text.substring(0, MAX_VALUE_LENGTH - 3) + "...";
+		}
+		return text;
+	}
+
+	static String redact(String raw)
+	{
 		String text = HTML_TAG.matcher(raw).replaceAll(" ");
 		text = CONTROL.matcher(text).replaceAll(" ");
 		text = URL_CREDENTIALS.matcher(text).replaceAll("$1[redacted]@");
@@ -105,11 +115,6 @@ public final class DiagnosticReport
 		text = UNIX_PATH.matcher(text).replaceAll("[path]");
 		text = EMAIL.matcher(text).replaceAll("[redacted]");
 		text = SECRET.matcher(text).replaceAll("[redacted]");
-		text = text.replaceAll("\\s+", " ").trim();
-		if (text.length() > MAX_VALUE_LENGTH)
-		{
-			text = text.substring(0, MAX_VALUE_LENGTH - 3) + "...";
-		}
 		return text;
 	}
 

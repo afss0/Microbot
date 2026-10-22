@@ -1328,8 +1328,7 @@ public class Rs2Walker {
         // door: the retry's plan ran against the previous walk's blocks (SEARCH_EXHAUSTED against a
         // sealed goal), collapsed to a 1-tile path, and the retry burned itself on it while the
         // unlearn arrived two lines later.
-        withdrawWalkScopedDoorBlocks();
-        Rs2WalkerTransports.withdrawWalkScopedTransportBlocks();
+        withdrawPreviousWalkScopedBlocks(walkerLock.getHoldCount());
         WorldPoint playerLocWalk = Rs2Player.getWorldLocation();
         if (playerLocWalk == null) {
             return WalkerState.MOVING;
@@ -1395,6 +1394,14 @@ public class Rs2Walker {
         }
         markWalkSessionStart(target);
         return processWalk(target, distance);
+    }
+
+    static void withdrawPreviousWalkScopedBlocks(int walkerLockHoldCount) {
+        if (walkerLockHoldCount > 1) {
+            return;
+        }
+        withdrawWalkScopedDoorBlocks();
+        Rs2WalkerTransports.withdrawWalkScopedTransportBlocks();
     }
 
     /**

@@ -18,6 +18,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -127,6 +128,8 @@ public class MembershipPromptEventTest
 	private void runClientThreadInline() throws Exception
 	{
 		when(clientThread.runOnClientThreadOptional(any())).thenAnswer(invocation ->
+			Optional.ofNullable(((Callable<Object>) invocation.getArgument(0)).call()));
+		when(clientThread.runOnClientThreadOptional(any(), anyLong())).thenAnswer(invocation ->
 			Optional.ofNullable(((Callable<Object>) invocation.getArgument(0)).call()));
 	}
 

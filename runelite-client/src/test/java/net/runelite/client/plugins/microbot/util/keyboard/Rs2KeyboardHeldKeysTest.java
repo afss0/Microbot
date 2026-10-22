@@ -57,7 +57,7 @@ public class Rs2KeyboardHeldKeysTest
 				record(e);
 				// Dispatch runs the listeners on the calling thread, so taking over from in here
 				// lands the takeover strictly between two characters. No second thread, no race.
-				if (takeOverAfterFirstChar && received.size() == 1)
+				if (takeOverAfterFirstChar && received.size() == 2)
 				{
 					net.runelite.client.plugins.microbot.util.input.InputArbiter.onRealButtonPressed(
 						java.awt.event.MouseEvent.BUTTON1);
@@ -155,10 +155,13 @@ public class Rs2KeyboardHeldKeysTest
 
 		Rs2Keyboard.typeString("myBankPin");
 
-		// One, not zero and not nine. Zero would mean the takeover beat the first character, and a
-		// check hoisted out of the loop instead of run per character would let all nine through.
-		assertEquals("the string must stop where the takeover landed", 1, received.size());
-		assertEquals(KeyEvent.KEY_TYPED, received.get(0).getID());
+		// One character, not zero and not nine. Zero would mean the takeover beat the first character,
+		// and a check hoisted out of the loop instead of run per character would let all nine through.
+		assertEquals("the string must stop where the takeover landed", 3, received.size());
+		assertEquals(KeyEvent.KEY_PRESSED, received.get(0).getID());
+		assertEquals(KeyEvent.KEY_TYPED, received.get(1).getID());
+		assertEquals(KeyEvent.KEY_RELEASED, received.get(2).getID());
+		assertEquals(KeyEvent.VK_M, received.get(2).getKeyCode());
 	}
 
 	@Test

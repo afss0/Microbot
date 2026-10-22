@@ -10,16 +10,16 @@ The `Rs2Keyboard` class simulates keyboard actions such as typing strings, press
 - **Returns**: `Canvas` - The game's canvas used for dispatching keyboard events.
 
 ### `typeString`
-- **Description**: Types a string by dispatching a sequence of `KEY_TYPED` events for each character.
+- **Description**: Types a string one character at a time, each as `KEY_PRESSED`, `KEY_TYPED` and `KEY_RELEASED` on its US-layout key, with shift pressed around uppercase letters and shifted symbols.
 - **Parameters**:
     - `word`: `String` - The string to type.
-- **Behavior**: Simulates typing with delays between key presses.
+- **Behavior**: Holds each key for a log-normal 50-130 ms and waits 40-160 ms between keys. Characters with no US-layout key are sent as `KEY_TYPED` only. Stops at the first character suppressed by a human takeover.
 
 ### `keyPress`
 - **Description**: Presses a single character key.
 - **Parameters**:
     - `key`: `char` - The character key to press.
-- **Behavior**: Dispatches a `KEY_TYPED` event for the character.
+- **Behavior**: Same press, typed and release sequence as one character of `typeString`.
 
 ### `holdShift`
 - **Description**: Holds the shift key down.

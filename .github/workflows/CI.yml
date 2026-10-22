@@ -40,3 +40,11 @@ jobs:
 
       - name: Build and Test
         run: ./ci/build.sh
+
+      - name: Check generated obfuscation values
+        run: |
+          ./scripts/update-obfuscation-values.sh
+          if ! git diff --exit-code -- docs/DETECTION_HARDENING.md docs/obfuscation hwid-agent/historical-clients.txt runelite-client/src/main/resources/net/runelite/client/plugins/microbot/util/reflection/menu-action-info.properties; then
+            echo "::error::Generated obfuscation values are stale. Run scripts/update-obfuscation-values.sh and commit the result."
+            exit 1
+          fi

@@ -4,7 +4,6 @@ import net.runelite.client.RuneLiteProperties;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.config.TopLevelConfigPanel;
-import net.runelite.client.plugins.microbot.diagnostics.DiagnosticReportCollector;
 import net.runelite.client.plugins.microbot.recovery.StartupRecovery;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.ColorScheme;
@@ -20,7 +19,6 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import lombok.extern.slf4j.Slf4j;
 import java.awt.*;
-import java.awt.datatransfer.StringSelection;
 import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -33,10 +31,12 @@ public class MicrobotTopLevelConfigPanel extends PluginPanel {
     private final JPanel content;
 
     private final EventBus eventBus;
-    private final DiagnosticReportCollector diagnosticReportCollector;
+    private final MicrobotCloudPanel cloudPanel;
+    private final MicrobotHelpMenu helpMenu;
     private final MicrobotPluginListPanel pluginListPanel;
     private final MaterialTab pluginListPanelTab;
     private final MaterialTab profilePanelTab;
+    private final MaterialTab pluginHubTab;
 
     private boolean active = false;
     private MicrobotPluginPanel current;
@@ -89,12 +89,14 @@ public class MicrobotTopLevelConfigPanel extends PluginPanel {
             MicrobotPluginListPanel pluginListPanel,
             MicrobotProfilePanel profilePanel,
             Provider<MicrobotPluginHubPanel> microbotPluginHubPanelProvider,
-            DiagnosticReportCollector diagnosticReportCollector
+            MicrobotCloudPanel cloudPanel,
+            MicrobotHelpMenu helpMenu
     ) {
         super(false);
 
         this.eventBus = eventBus;
-        this.diagnosticReportCollector = diagnosticReportCollector;
+        this.cloudPanel = cloudPanel;
+        this.helpMenu = helpMenu;
 
         tabGroup = new MaterialTabGroup();
         tabGroup.setLayout(new GridLayout(1, 0, 7, 7));
@@ -117,7 +119,7 @@ public class MicrobotTopLevelConfigPanel extends PluginPanel {
 
         pluginListPanelTab = addTab(pluginListPanel.getMuxer(), installedIcon, "Installed Microbot Plugins");
         profilePanelTab = addTab(profilePanel, "profile_icon.png", "Profiles");
-        addTab(microbotPluginHubPanelProvider, hubIcon, "Microbot Hub");
+        pluginHubTab = addTab(microbotPluginHubPanelProvider, hubIcon, "Microbot Hub");
 
         tabGroup.select(pluginListPanelTab);
     }
@@ -125,19 +127,29 @@ public class MicrobotTopLevelConfigPanel extends PluginPanel {
     private JPanel buildVersionFooter() {
         JPanel footer = new JPanel();
         footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
-        footer.setBorder(new EmptyBorder(4, 0, 4, 0));
+        footer.setBorder(new EmptyBorder(0, 0, 4, 0));
+        footer.add(cloudPanel);
 
         String version = RuneLiteProperties.getMicrobotVersion();
         JLabel versionLabel = new JLabel(version == null || version.isBlank() ? "microbot" : "microbot v" + version, SwingConstants.CENTER);
         versionLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         versionLabel.setFont(FontManager.getRunescapeSmallFont());
         versionLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        versionLabel.setBorder(new EmptyBorder(4, 0, 0, 0));
         footer.add(versionLabel);
+
         if (StartupRecovery.mode().isSafeMode()) {
             footer.add(buildSafeModeNotice());
         }
-        footer.add(buildDiagnosticsButton());
-        footer.add(buildRecoveryButton());
+
+        JLabel nextStart = new JLabel("Safe mode is on for the next start", SwingConstants.CENTER);
+        nextStart.setAlignmentX(Component.CENTER_ALIGNMENT);
+        nextStart.setFont(FontManager.getRunescapeSmallFont());
+        nextStart.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
+        nextStart.setBorder(new EmptyBorder(2, 6, 0, 6));
+        nextStart.setVisible(StartupRecovery.nextStartSafeMode());
+        helpMenu.onSafeModeChanged(() -> nextStart.setVisible(StartupRecovery.nextStartSafeMode()));
+        footer.add(nextStart);
 
         String proxy = ClientUI.proxyMessage;
         if (proxy != null && !proxy.isBlank()) {
@@ -167,57 +179,6 @@ public class MicrobotTopLevelConfigPanel extends PluginPanel {
                     .collect(Collectors.joining("<br>")) + "</html>");
         }
         return label;
-    }
-
-    private JButton buildRecoveryButton() {
-        JButton button = new JButton();
-        button.setAlignmentX(Component.CENTER_ALIGNMENT);
-        button.setFont(FontManager.getRunescapeSmallFont());
-        button.setFocusable(false);
-        button.setToolTipText("Start Microbot once without external (Hub or sideloaded) plugins and the GPU plugin, to recover from a plugin that freezes or crashes the client. Plugin files and settings are kept.");
-        updateRecoveryButton(button);
-        button.addActionListener(e -> {
-            boolean enable = !StartupRecovery.nextStartSafeMode();
-            if (!StartupRecovery.requestNextStartSafeMode(enable)) {
-                button.setText("Recovery unavailable");
-                button.setEnabled(false);
-                return;
-            }
-            updateRecoveryButton(button);
-            if (enable) {
-                JOptionPane.showMessageDialog(this,
-                        "The next start will use safe mode: external plugins and the GPU plugin stay off for that session only.\n"
-                                + "Close Microbot and start it again. Your plugins and settings are kept, and the start after that is normal.",
-                        "Safe mode on next start", JOptionPane.INFORMATION_MESSAGE);
-            }
-        });
-        return button;
-    }
-
-    private static void updateRecoveryButton(JButton button) {
-        button.setText(StartupRecovery.nextStartSafeMode() ? "Cancel safe mode next start" : "Safe mode next start");
-    }
-
-    private JButton buildDiagnosticsButton() {
-        JButton button = new JButton("Copy diagnostics");
-        button.setAlignmentX(Component.CENTER_ALIGNMENT);
-        button.setFont(FontManager.getRunescapeSmallFont());
-        button.setFocusable(false);
-        button.setToolTipText("Copy client, build, walker and plugin details for bug reports. Excludes account names, chat, tokens and file paths.");
-        Timer reset = new Timer(2000, e -> button.setText("Copy diagnostics"));
-        reset.setRepeats(false);
-        button.addActionListener(e -> {
-            try {
-                String report = diagnosticReportCollector.collectReport();
-                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(report), null);
-                button.setText("Copied");
-            } catch (Exception ex) {
-                log.warn("Could not copy diagnostics: {}", ex.getMessage());
-                button.setText("Copy failed");
-            }
-            reset.restart();
-        });
-        return button;
     }
 
     private MaterialTab addTab(MicrobotPluginPanel panel, ImageIcon icon, String tooltip) {
@@ -296,12 +257,31 @@ public class MicrobotTopLevelConfigPanel extends PluginPanel {
     public void onActivate() {
         active = true;
         current.onActivate();
+        cloudPanel.setActive(true);
     }
 
     @Override
     public void onDeactivate() {
         active = false;
         current.onDeactivate();
+        cloudPanel.setActive(false);
+    }
+
+    Component getProfilesTab() {
+        return profilePanelTab;
+    }
+
+    Component getPluginHubTab() {
+        return pluginHubTab;
+    }
+
+    Component getTabContent() {
+        return content;
+    }
+
+    void showInstalledTab() {
+        tabGroup.select(pluginListPanelTab);
+        pluginListPanel.getMuxer().pushState(pluginListPanel);
     }
 
     public void openConfigurationPanel(String name) {

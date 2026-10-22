@@ -15,5 +15,5 @@ body:
   - type: textarea
     attributes:
       label: Diagnostics
-      description: Open the Microbot side panel (Community Plugins), click **Copy diagnostics** under the version, and paste the result here.
+      description: Click the bug icon in the client's right-hand toolbar, choose **Copy diagnostics**, and paste the result here.
       render: text

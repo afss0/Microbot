@@ -31,6 +31,8 @@ include("jshell")
 project(":jshell").projectDir = file("./runelite-jshell")
 include("client")
 project(":client").projectDir = file("./runelite-client")
+include("hwid-agent")
+project(":hwid-agent").projectDir = file("./hwid-agent")
 apply(from = "./common.settings.gradle.kts")
 
 includeBuild("cache")

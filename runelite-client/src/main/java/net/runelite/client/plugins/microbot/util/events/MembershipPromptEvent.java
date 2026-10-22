@@ -17,9 +17,10 @@ public class MembershipPromptEvent implements BlockingEvent {
             {InterfaceID.MembershipBenefitsPromptHop.UNIVERSE, InterfaceID.MembershipBenefitsPromptHop.CLOSE_BUTTON},
     };
 
+
     @Override
     public boolean validate() {
-        return findCloseButton() != null;
+        return ClientThreadProbe.isVisible(() -> findCloseButton(Microbot.getClient()) != null);
     }
 
     @Override

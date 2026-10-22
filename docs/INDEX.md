@@ -1,5 +1,6 @@
 - [Architecture](ARCHITECTURE.md)
 - [Decision Records](decisions/)
+- [Detection Hardening](DETECTION_HARDENING.md)
 - [Development Setup](development.md)
 - [Installation](installation.md)
 - [API Overview](../runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/README.md)

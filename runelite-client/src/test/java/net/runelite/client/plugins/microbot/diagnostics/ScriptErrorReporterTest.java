@@ -12,6 +12,7 @@ import net.runelite.client.ClientSessionManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.MicrobotApi;
+import net.runelite.client.plugins.microbot.alerts.ClientAlertReporter;
 import net.runelite.client.plugins.microbot.externalplugins.MicrobotPluginManager;
 import net.runelite.client.util.ResetResistantAttachment;
 import static org.junit.Assert.assertEquals;
@@ -23,6 +24,7 @@ import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -39,6 +41,7 @@ public class ScriptErrorReporterTest
 	private final LoggerContext context = new LoggerContext();
 	private MicrobotApi api;
 	private ClientSessionManager sessions;
+	private ClientAlertReporter alerts;
 	private ScriptErrorReporter reporter;
 
 	@Before
@@ -46,6 +49,7 @@ public class ScriptErrorReporterTest
 	{
 		api = mock(MicrobotApi.class);
 		sessions = mock(ClientSessionManager.class);
+		alerts = mock(ClientAlertReporter.class);
 		when(sessions.getMicrobotSessionId()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000001"));
 		MicrobotPluginManager pluginManager = mock(MicrobotPluginManager.class);
 		when(pluginManager.getInstalledPlugins()).thenReturn(List.of(new FakePlugin()));
@@ -55,7 +59,7 @@ public class ScriptErrorReporterTest
 
 	private ScriptErrorReporter reporter(MicrobotPluginManager pluginManager, boolean disableTelemetry)
 	{
-		ScriptErrorReporter reporter = new ScriptErrorReporter(api, pluginManager, mock(ScheduledExecutorService.class), sessions, disableTelemetry);
+		ScriptErrorReporter reporter = new ScriptErrorReporter(api, pluginManager, mock(ScheduledExecutorService.class), sessions, alerts, disableTelemetry);
 		reporter.setContext(context);
 		reporter.start();
 		return reporter;
@@ -145,6 +149,20 @@ public class ScriptErrorReporterTest
 		{
 			return e;
 		}
+	}
+
+	@Test
+	public void passesScrubbedErrorsToLinkedAlerts()
+	{
+		reporter.rememberPlayerName("Zezima");
+		log(Level.ERROR, "loop failed", boom());
+		verify(alerts, never()).onScriptError(any(), any(), any());
+
+		when(alerts.isActive()).thenReturn(true);
+		log(Level.ERROR, "Zezima could not bank", new IllegalStateException("Zezima is dead"));
+		ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+		verify(alerts).onScriptError(eq("some.Script"), any(), message.capture());
+		assertEquals("[player] could not bank (IllegalStateException: [player] is dead)", message.getValue());
 	}
 
 	@Test
@@ -258,7 +276,7 @@ public class ScriptErrorReporterTest
 	public void installedReporterKeepsCollectingErrorsAfterLogbackReset()
 	{
 		ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
-		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), executor, sessions, false);
+		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), executor, sessions, mock(ClientAlertReporter.class), false);
 		ResetResistantAttachment attachment = installed.install(context);
 
 		context.reset();
@@ -273,7 +291,7 @@ public class ScriptErrorReporterTest
 	@Test
 	public void reinstalledReporterCountsEachErrorOnceAfterLogbackReset()
 	{
-		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), mock(ScheduledExecutorService.class), sessions, false);
+		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), mock(ScheduledExecutorService.class), sessions, mock(ClientAlertReporter.class), false);
 		installed.install(context).remove();
 		installed.install(context);
 
@@ -289,7 +307,7 @@ public class ScriptErrorReporterTest
 	@Test
 	public void removedReporterIgnoresErrorsAfterLogbackReset()
 	{
-		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), mock(ScheduledExecutorService.class), sessions, false);
+		ScriptErrorReporter installed = new ScriptErrorReporter(api, mock(MicrobotPluginManager.class), mock(ScheduledExecutorService.class), sessions, mock(ClientAlertReporter.class), false);
 		installed.install(context).remove();
 
 		context.reset();

@@ -7,6 +7,7 @@ import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.mouse.BotEventGuard;
 
 import java.awt.*;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.util.ArrayList;
@@ -42,9 +43,8 @@ public class Rs2Keyboard
 	 * @param id       the KeyEvent type (e.g. KEY_TYPED, KEY_PRESSED, etc.)
 	 * @param keyCode  the key code from {@link KeyEvent}
 	 * @param keyChar  the character to type, if applicable
-	 * @param delay    the delay in milliseconds before the event time is set
 	 */
-	private static boolean dispatchKeyEvent(int id, int keyCode, char keyChar, int delay)
+	private static boolean dispatchKeyEvent(int id, int keyCode, char keyChar)
 	{
 		// Keyboard emission never goes through InputLoop, so this is its only checkpoint. Without
 		// it a takeover mid-typeString sprays the rest of the string into whatever the human just
@@ -55,7 +55,7 @@ public class Rs2Keyboard
 			return false;
 		}
 		Canvas canvas = getCanvas();
-		KeyEvent event = new KeyEvent(canvas, id, System.currentTimeMillis() + delay, 0, keyCode, keyChar);
+		KeyEvent event = new KeyEvent(canvas, id, System.currentTimeMillis(), modifiersFor(id, keyCode), keyCode, keyChar);
 		KeyListener[] listeners = canvas.getKeyListeners();
 		// The arbiter's observe-only KeyListener is one of these, so without the guard the bot
 		// reads its own keystrokes as a takeover.
@@ -85,9 +85,25 @@ public class Rs2Keyboard
 		return true;
 	}
 
+	static final int KEY_HOLD_MIN_MS = 50;
+	static final int KEY_HOLD_MAX_MS = 130;
+	static final int KEY_GAP_MIN_MS = 40;
+	static final int KEY_GAP_MAX_MS = 160;
+	static final int SHIFT_LEAD_MIN_MS = 20;
+	static final int SHIFT_LEAD_MAX_MS = 80;
+
+	private static final String SHIFTED_DIGITS = ")!@#$%^&*(";
+	private static final String PUNCTUATION_KEYS = "-=[]\\;',./`";
+	private static final String SHIFTED_PUNCTUATION = "_+{}|:\"<>?~";
+	private static final int[] PUNCTUATION_VKS = {
+		KeyEvent.VK_MINUS, KeyEvent.VK_EQUALS, KeyEvent.VK_OPEN_BRACKET, KeyEvent.VK_CLOSE_BRACKET,
+		KeyEvent.VK_BACK_SLASH, KeyEvent.VK_SEMICOLON, KeyEvent.VK_QUOTE, KeyEvent.VK_COMMA,
+		KeyEvent.VK_PERIOD, KeyEvent.VK_SLASH, KeyEvent.VK_BACK_QUOTE
+	};
+
 	/**
-	 * Types out a string character-by-character using KEY_TYPED events.
-	 * Each character is sent with a short randomized delay and sleep between characters.
+	 * Types out a string character-by-character, each one pressed, typed and released the way a
+	 * physical key produces it, with shift held around characters that need it.
 	 *
 	 * @param word the string to type into the game
 	 */
@@ -95,25 +111,109 @@ public class Rs2Keyboard
 	{
 		for (char c : word.toCharArray())
 		{
-			int delay = Rs2Random.logNormalBounded(20, 200);
-			// Stop at the first suppressed character rather than spinning through the rest.
-			if (!dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, c, delay))
+			if (!typeChar(c))
 			{
 				return;
 			}
-			Global.sleep(Rs2Random.logNormalBounded(100, 200));
+			Global.sleep(Rs2Random.logNormalBounded(KEY_GAP_MIN_MS, KEY_GAP_MAX_MS));
 		}
 	}
 
 	/**
-	 * Simulates pressing a single character using a KEY_TYPED event.
+	 * Simulates pressing a single character.
 	 *
 	 * @param key the character to press
 	 */
 	public static void keyPress(final char key)
 	{
-		int delay = Rs2Random.logNormalBounded(20, 200);
-		dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, key, delay);
+		typeChar(key);
+	}
+
+	private static boolean typeChar(char c)
+	{
+		int vk = keyCodeFor(c);
+		if (vk == KeyEvent.VK_UNDEFINED)
+		{
+			return dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, c);
+		}
+
+		boolean pressShift = needsShift(c) && !HELD_KEYS.contains(KeyEvent.VK_SHIFT);
+		if (pressShift)
+		{
+			if (!hold(KeyEvent.VK_SHIFT))
+			{
+				return false;
+			}
+			Global.sleep(Rs2Random.logNormalBounded(SHIFT_LEAD_MIN_MS, SHIFT_LEAD_MAX_MS));
+		}
+
+		boolean pressed = dispatchKeyEvent(KeyEvent.KEY_PRESSED, vk, c);
+		if (pressed)
+		{
+			dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, c);
+			Global.sleep(Rs2Random.logNormalBounded(KEY_HOLD_MIN_MS, KEY_HOLD_MAX_MS));
+			dispatchKeyEvent(KeyEvent.KEY_RELEASED, vk, c);
+		}
+
+		if (pressShift)
+		{
+			Global.sleep(Rs2Random.logNormalBounded(SHIFT_LEAD_MIN_MS, SHIFT_LEAD_MAX_MS));
+			keyRelease(KeyEvent.VK_SHIFT);
+		}
+		return pressed;
+	}
+
+	static int keyCodeFor(char c)
+	{
+		if (c >= 'a' && c <= 'z') return KeyEvent.VK_A + (c - 'a');
+		if (c >= 'A' && c <= 'Z') return KeyEvent.VK_A + (c - 'A');
+		if (c >= '0' && c <= '9') return KeyEvent.VK_0 + (c - '0');
+		if (c == ' ') return KeyEvent.VK_SPACE;
+		int shiftedDigit = SHIFTED_DIGITS.indexOf(c);
+		if (shiftedDigit >= 0) return KeyEvent.VK_0 + shiftedDigit;
+		int punctuation = PUNCTUATION_KEYS.indexOf(c);
+		if (punctuation >= 0) return PUNCTUATION_VKS[punctuation];
+		int shiftedPunctuation = SHIFTED_PUNCTUATION.indexOf(c);
+		if (shiftedPunctuation >= 0) return PUNCTUATION_VKS[shiftedPunctuation];
+		return KeyEvent.VK_UNDEFINED;
+	}
+
+	static boolean needsShift(char c)
+	{
+		return (c >= 'A' && c <= 'Z') || SHIFTED_DIGITS.indexOf(c) >= 0 || SHIFTED_PUNCTUATION.indexOf(c) >= 0;
+	}
+
+	static int modifiersFor(int id, int keyCode)
+	{
+		int mask = 0;
+		for (Integer held : HELD_KEYS)
+		{
+			mask |= modifierMask(held);
+		}
+		if (id == KeyEvent.KEY_PRESSED)
+		{
+			mask |= modifierMask(keyCode);
+		}
+		else if (id == KeyEvent.KEY_RELEASED)
+		{
+			mask &= ~modifierMask(keyCode);
+		}
+		return mask;
+	}
+
+	private static int modifierMask(int keyCode)
+	{
+		switch (keyCode)
+		{
+			case KeyEvent.VK_SHIFT:
+				return InputEvent.SHIFT_DOWN_MASK;
+			case KeyEvent.VK_CONTROL:
+				return InputEvent.CTRL_DOWN_MASK;
+			case KeyEvent.VK_ALT:
+				return InputEvent.ALT_DOWN_MASK;
+			default:
+				return 0;
+		}
 	}
 
 	/**
@@ -121,7 +221,7 @@ public class Rs2Keyboard
 	 */
 	public static void holdShift()
 	{
-		hold(KeyEvent.VK_SHIFT, Rs2Random.logNormalBounded(20, 200));
+		hold(KeyEvent.VK_SHIFT);
 	}
 
 	/**
@@ -130,13 +230,15 @@ public class Rs2Keyboard
 	 * A lock here would have to be held across the dispatch, which runs the client's own key
 	 * handler, and stalling every script thread behind that is the worse failure.
 	 */
-	private static void hold(int key, int delay)
+	private static boolean hold(int key)
 	{
 		// Only if the press went out, or releaseHeldKeys would release a key never held.
-		if (dispatchKeyEvent(KeyEvent.KEY_PRESSED, key, CHAR_UNDEFINED, delay))
+		if (dispatchKeyEvent(KeyEvent.KEY_PRESSED, key, CHAR_UNDEFINED))
 		{
 			HELD_KEYS.add(key);
+			return true;
 		}
+		return false;
 	}
 
 	/**
@@ -154,7 +256,7 @@ public class Rs2Keyboard
 	 */
 	public static void keyHold(int key)
 	{
-		hold(key, 0);
+		hold(key);
 	}
 
 	/**
@@ -170,8 +272,7 @@ public class Rs2Keyboard
 		{
 			return;
 		}
-		int delay = Rs2Random.logNormalBounded(20, 200);
-		dispatchKeyEvent(KeyEvent.KEY_RELEASED, key, CHAR_UNDEFINED, delay);
+		dispatchKeyEvent(KeyEvent.KEY_RELEASED, key, CHAR_UNDEFINED);
 	}
 
 	/**
@@ -186,7 +287,7 @@ public class Rs2Keyboard
 		{
 			if (HELD_KEYS.remove(key))
 			{
-				dispatchKeyEvent(KeyEvent.KEY_RELEASED, key, CHAR_UNDEFINED, 0);
+				dispatchKeyEvent(KeyEvent.KEY_RELEASED, key, CHAR_UNDEFINED);
 			}
 		}
 	}
@@ -206,22 +307,24 @@ public class Rs2Keyboard
 		char typed = toTypedChar(key);
 		if (typed == CHAR_UNDEFINED)
 		{
-			keyHold(key);
-			keyRelease(key);
+			if (hold(key))
+			{
+				Global.sleep(Rs2Random.logNormalBounded(KEY_HOLD_MIN_MS, KEY_HOLD_MAX_MS));
+				keyRelease(key);
+			}
 			return;
 		}
 
 		// A suppressed press must not be followed by a release.
-		if (!dispatchKeyEvent(KeyEvent.KEY_PRESSED, key, typed, 0))
+		if (!dispatchKeyEvent(KeyEvent.KEY_PRESSED, key, typed))
 		{
 			return;
 		}
-		int delay = Rs2Random.logNormalBounded(20, 200);
-		dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, typed, delay);
+		dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, typed);
+		Global.sleep(Rs2Random.logNormalBounded(KEY_HOLD_MIN_MS, KEY_HOLD_MAX_MS));
 		// Unconditional: the press went out, so the release owes the client its pair even if the
 		// human took over in between.
-		int releaseDelay = Rs2Random.between(20, 200);
-		dispatchKeyEvent(KeyEvent.KEY_RELEASED, key, CHAR_UNDEFINED, releaseDelay);
+		dispatchKeyEvent(KeyEvent.KEY_RELEASED, key, typed);
 	}
 
 	/**
@@ -261,6 +364,6 @@ public class Rs2Keyboard
 	 * Sends a KEY_TYPED event for the Enter key to ensure it is released.
 	 */
 	public static void resetEnter() {
-		dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, '\n', 10);
+		dispatchKeyEvent(KeyEvent.KEY_TYPED, KeyEvent.VK_UNDEFINED, '\n');
 	}
 }

@@ -6,9 +6,12 @@ import net.runelite.client.plugins.microbot.util.mouse.BotEventGuard;
 
 import java.awt.AWTEvent;
 import java.awt.Canvas;
+import java.awt.event.InputEvent;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
@@ -26,6 +29,8 @@ public final class AwtEmitter
 	private static final int EDGE_SIGMA_PX = 35;
 	private static final int COVERED_SIGMA_PX = 120;
 	private static final double COVERED_EDGE_RETURN_CHANCE = 0.35;
+
+	private static final Set<Integer> HELD_BUTTONS = ConcurrentHashMap.newKeySet();
 
 	private AwtEmitter()
 	{
@@ -46,7 +51,9 @@ public final class AwtEmitter
 		enterIfOutside(canvas, canvasX, canvasY);
 		Point component = StretchMapper.toComponent(canvasX, canvasY);
 		recordPosition(canvasX, canvasY);
-		dispatch(canvas, new MouseEvent(canvas, MouseEvent.MOUSE_MOVED, System.currentTimeMillis(), 0,
+		int held = heldMask();
+		int id = held == 0 ? MouseEvent.MOUSE_MOVED : MouseEvent.MOUSE_DRAGGED;
+		dispatch(canvas, new MouseEvent(canvas, id, System.currentTimeMillis(), held,
 			component.getX(), component.getY(), 0, false));
 	}
 
@@ -81,6 +88,14 @@ public final class AwtEmitter
 
 	private static void button(int id, int canvasX, int canvasY, int button)
 	{
+		if (id == MouseEvent.MOUSE_PRESSED)
+		{
+			HELD_BUTTONS.add(button);
+		}
+		else if (id == MouseEvent.MOUSE_RELEASED)
+		{
+			HELD_BUTTONS.remove(button);
+		}
 		Canvas canvas = canvas();
 		if (canvas == null)
 		{
@@ -89,8 +104,23 @@ public final class AwtEmitter
 		enterIfOutside(canvas, canvasX, canvasY);
 		Point component = StretchMapper.toComponent(canvasX, canvasY);
 		recordPosition(canvasX, canvasY);
-		dispatch(canvas, new MouseEvent(canvas, id, System.currentTimeMillis(), 0,
+		dispatch(canvas, new MouseEvent(canvas, id, System.currentTimeMillis(), heldMask(),
 			component.getX(), component.getY(), 1, false, button));
+	}
+
+	public static int heldMask()
+	{
+		int mask = 0;
+		for (Integer button : HELD_BUTTONS)
+		{
+			mask |= InputEvent.getMaskForButton(button);
+		}
+		return mask;
+	}
+
+	static void resetHeldButtonsForTest()
+	{
+		HELD_BUTTONS.clear();
 	}
 
 	/**

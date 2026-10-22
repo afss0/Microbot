@@ -512,6 +512,8 @@ public class Rs2Player {
     public static void logout() {
         if (!Microbot.isLoggedIn()) return;
 
+        Microbot.getEventBus().post(new LogoutRequested());
+
         // Make sure jagex acount does not auto login
         Rs2Keyboard.resetEnter();
 

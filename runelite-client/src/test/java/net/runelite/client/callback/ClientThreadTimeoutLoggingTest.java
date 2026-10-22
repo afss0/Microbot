@@ -6,6 +6,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import java.lang.reflect.Field;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import net.runelite.api.Client;
 import org.junit.After;
@@ -61,6 +62,20 @@ public class ClientThreadTimeoutLoggingTest
 		assertEquals(1, count(Level.WARN));
 		ILoggingEvent warning = appender.list.stream().filter(e -> e.getLevel() == Level.WARN).findFirst().get();
 		assertNull(warning.getThrowableProxy());
+	}
+
+	@Test
+	public void timedOutTaskIsCancelledSoALateRunIsSkipped()
+	{
+		gameThread = new Thread(() -> { });
+		AtomicInteger runs = new AtomicInteger();
+
+		Optional<Integer> result = clientThread.runOnClientThreadOptional(runs::incrementAndGet, 20);
+		assertFalse(result.isPresent());
+
+		gameThread = Thread.currentThread();
+		clientThread.invoke();
+		assertEquals(0, runs.get());
 	}
 
 	@Test

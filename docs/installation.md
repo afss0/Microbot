@@ -36,7 +36,7 @@ Replace the official `RuneLite.jar` with the Microbot jar and keep the filename 
 
 ## Reporting A Problem
 
-Open the Microbot side panel (the Community Plugins button), then click **Copy diagnostics** below the version at the bottom. Paste the copied text into your Discord post or GitHub issue.
+Click the bug icon in the client's right-hand toolbar and choose **Copy diagnostics**. Paste the copied text into your Discord post or GitHub issue.
 
 The report lists the Microbot/RuneLite versions, commit, build origin, Java/OS, safe mode, GPU state, walker planner and settings, and loaded external plugin versions. Builds without official release metadata show `Build origin: unknown` or `custom`. It excludes account and player names, chat, credentials/tokens, and file paths.
 
@@ -49,7 +49,7 @@ You do not need to rename or delete `.runelite/microbot-plugins`.
   - **Start in safe mode.** External Hub and sideloaded plugins and the GPU plugin stay off for this one session.
   - **Disable \<plugin\> and start.** This option appears when a plugin was identified. It turns that plugin off in the plugin list and starts with your other plugins.
   - **Copy details** to share in a bug report.
-- **While the client still responds:** click **Safe mode next start** below **Copy diagnostics** in the Microbot side panel, then restart. Click it again to cancel.
+- **While the client still responds:** click the bug icon in the right-hand toolbar and choose **Safe mode next start**, then restart. Choose **Cancel safe mode next start** in the same menu to cancel.
 - **From the command line:** `--safe-mode` turns on safe mode for every start that uses the option. Unlike the one-time options above, it also switches the GPU plugin off in your settings.
 
 The one-time safe mode keeps your plugin files and settings, including GPU, and the following start is normal. A plugin disabled from the prompt keeps its files; turn it back on in the plugin list. Set `-Dmicrobot.recovery.prompt=false` to skip the prompt, or `-Dmicrobot.recovery.promptSeconds=<n>` to change the countdown.

@@ -6,6 +6,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLiteProperties;
+import net.runelite.client.plugins.microbot.alerts.ClientLinkToken;
+import net.runelite.client.plugins.microbot.alerts.DeviceLinkPoll;
+import net.runelite.client.plugins.microbot.alerts.DeviceLinkStart;
 import net.runelite.http.api.RuneLiteAPI;
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -21,6 +24,8 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Class that communicates with the microbot api
@@ -28,15 +33,19 @@ import java.util.UUID;
 @Slf4j
 public class MicrobotApi {
 
+    static final long CANCEL_DEVICE_LINK_TIMEOUT_SECONDS = 2;
+
     private final OkHttpClient client;
     private final Gson gson;
     private final String pluginTelemetryToken;
+    private final ClientLinkToken clientLinkToken;
 
     private final String microbotApiUrl = System.getProperty("microbot.apiUrl", "https://microbot.cloud/api");
     @Inject
-    MicrobotApi(OkHttpClient client, Gson gson) {
+    MicrobotApi(OkHttpClient client, Gson gson, ClientLinkToken clientLinkToken) {
         this.client = client;
         this.gson = gson;
+        this.clientLinkToken = clientLinkToken;
 
         this.pluginTelemetryToken = "zeifkdsjqfiedfb15181==";
     }
@@ -54,7 +63,7 @@ public class MicrobotApi {
      * @throws IOException if the HTTP request fails, the response body is invalid, or the UUID parsing fails.
      */
     public UUID microbotOpen() throws IOException {
-        try (Response response = client.newCall(new Request.Builder().url(microbotApiUrl + "/session").build()).execute()) {
+        try (Response response = client.newCall(linked(new Request.Builder().url(microbotApiUrl + "/session")).build()).execute()) {
             ResponseBody body = response.body();
 
             InputStream in = body.byteStream();
@@ -107,6 +116,36 @@ public class MicrobotApi {
         }
     }
 
+    public void submitClientLog(JsonObject payload)
+    {
+        Request request = new Request.Builder()
+                .url(microbotApiUrl + "/plugintelemetry/client-logs")
+                .header("X-Plugin-Telemetry-Token", pluginTelemetryToken)
+                .post(RequestBody.create(RuneLiteAPI.JSON, gson.toJson(payload)))
+                .build();
+
+        client.newCall(request).enqueue(new Callback()
+        {
+            @Override
+            public void onFailure(Call call, IOException e)
+            {
+                log.debug("Client log upload failed", e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response)
+            {
+                boolean successful = response.isSuccessful();
+                int code = response.code();
+                response.close();
+                if (!successful)
+                {
+                    log.debug("Client log upload rejected: HTTP {}", code);
+                }
+            }
+        });
+    }
+
     public void submitErrors(JsonObject payload, Runnable onRejected)
     {
         Request request = new Request.Builder()
@@ -139,6 +178,104 @@ public class MicrobotApi {
         });
     }
 
+    public void sendAlertEvent(String token, JsonObject payload, Runnable onUnauthorized)
+    {
+        Request request = new Request.Builder()
+                .url(microbotApiUrl + "/alerts/events")
+                .header(ClientLinkToken.HEADER, token)
+                .post(RequestBody.create(RuneLiteAPI.JSON, gson.toJson(payload)))
+                .build();
+
+        client.newCall(request).enqueue(new Callback()
+        {
+            @Override
+            public void onFailure(Call call, IOException e)
+            {
+                log.debug("Alert event upload failed", e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response)
+            {
+                int code = response.code();
+                response.close();
+                if (code == 401)
+                {
+                    onUnauthorized.run();
+                }
+                else if (code >= 300)
+                {
+                    log.debug("Alert event rejected: HTTP {}", code);
+                }
+            }
+        });
+    }
+
+    public DeviceLinkStart startDeviceLink(String label) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("label", label);
+        try (Response response = client.newCall(deviceLinkRequest("/alerts/device-links", body)).execute())
+        {
+            return DeviceLinkStart.parse(gson, response.code(), response.body().string());
+        }
+    }
+
+    public DeviceLinkPoll pollDeviceLink(String deviceCode) throws IOException
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("deviceCode", deviceCode);
+        try (Response response = client.newCall(deviceLinkRequest("/alerts/device-links/token", body)).execute())
+        {
+            return DeviceLinkPoll.parse(gson, response.code(), response.body().string());
+        }
+    }
+
+    public CompletableFuture<Void> cancelDeviceLink(String deviceCode)
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("deviceCode", deviceCode);
+        CompletableFuture<Void> done = new CompletableFuture<>();
+        Call call = client.newCall(deviceLinkRequest("/alerts/device-links/cancel", body));
+        call.timeout().timeout(CANCEL_DEVICE_LINK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        call.enqueue(new Callback()
+        {
+            @Override
+            public void onFailure(Call call, IOException e)
+            {
+                log.debug("Unable to cancel the pending link for this client", e);
+                done.complete(null);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response)
+            {
+                int code = response.code();
+                response.close();
+                if (code >= 300)
+                {
+                    log.debug("Cancelling the pending link for this client was rejected: HTTP {}", code);
+                }
+                done.complete(null);
+            }
+        });
+        return done;
+    }
+
+    private Request deviceLinkRequest(String path, JsonObject body)
+    {
+        return new Request.Builder()
+                .url(microbotApiUrl + path)
+                .post(RequestBody.create(RuneLiteAPI.JSON, gson.toJson(body)))
+                .build();
+    }
+
+    private Request.Builder linked(Request.Builder builder)
+    {
+        clientLinkToken.get().ifPresent(token -> builder.header(ClientLinkToken.HEADER, token));
+        return builder;
+    }
+
     /**
      * Sends a ping request to the microbot API to update the session status.
      *
@@ -156,9 +293,9 @@ public class MicrobotApi {
      * @throws IOException if the HTTP request fails or the response is unsuccessful.
      */
     public void microbotPing(UUID uuid, boolean loggedIn) throws IOException {
-        try (Response response = client.newCall(new Request.Builder().url(microbotApiUrl + "/session?sessionId=" + uuid.toString()
+        try (Response response = client.newCall(linked(new Request.Builder().url(microbotApiUrl + "/session?sessionId=" + uuid.toString()
                 + "&isLoggedIn=" + loggedIn
-                + "&version=" + RuneLiteProperties.getMicrobotVersion()).build()).execute()) {
+                + "&version=" + RuneLiteProperties.getMicrobotVersion())).build()).execute()) {
             if (!response.isSuccessful()) {
                 throw new IOException("Unsuccessful ping");
             }

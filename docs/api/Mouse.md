@@ -31,6 +31,10 @@ The `Mouse` class defines the abstract interface for mouse interactions. It prov
 - **Signature**: `public abstract Mouse click(Point point, NewMenuEntry entry)`
 - **Description**: Clicks at the specified `Point` associated with a `NewMenuEntry`.
 
+### `quickClick`
+- **Signature**: `public Mouse quickClick(Point point, NewMenuEntry entry)`
+- **Description**: Same as `click(Point, NewMenuEntry)` but without the NaturalMouse travel (one move straight to the point, then a 10–25 ms pause before the press) and with a short tap (30–65 ms button hold instead of 55–140 ms). Meant for timing-critical actions such as prayer flicks; `Rs2Prayer` toggles use it automatically. Reach it through `Microbot.doInvokeQuick(entry, rectangle)`.
+
 ### `click`
 - **Signature**: `public abstract Mouse click(Rectangle rectangle)`
 - **Description**: Clicks at a random point within the specified `Rectangle`.

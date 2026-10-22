@@ -60,7 +60,7 @@ import org.slf4j.event.Level;
 import net.runelite.api.coords.WorldArea;
 
 public class QuestScript extends Script {
-    public static double version = 0.3;
+    public static double version = 0.5;
 
     private static final long MISSING_REQUIREMENT_NOTIFY_INTERVAL_MS = 10_000L;
     private static final Map<Integer, Long> lastMissingRequirementNotice = new HashMap<>();
@@ -88,6 +88,8 @@ public class QuestScript extends Script {
     private final Set<Integer> everHeldItemRequirementIds = new HashSet<>();
 
     QuestStep dialogueStartedStep = null;
+
+    private final MultiNpcTargetTracker multiNpcTarget = new MultiNpcTargetTracker();
 
     /**
      * Epoch millis at which the post-dialogue cooldown expires. While
@@ -224,6 +226,7 @@ public class QuestScript extends Script {
                     } else {
                         if (dialogueStartedStep != null) {
                             dialogueCooldownEndsAt = System.currentTimeMillis() + Rs2Random.between(4000, 7000);
+                            multiNpcTarget.release();
                         }
                         dialogueStartedStep = null;
                     }
@@ -1246,6 +1249,7 @@ public class QuestScript extends Script {
 	@Override
 	public void shutdown() {
 		super.shutdown();
+		multiNpcTarget.release();
 		reset();
 	}
 
@@ -1286,12 +1290,9 @@ public class QuestScript extends Script {
         Rs2NpcModel npc = npcs.stream().findFirst().orElse(null);
 
         if (step.isAllowMultipleHighlights()) {
-            npc = npcs.stream()
-                    .filter(x -> !npcsHandled.contains(x.getIndex()))
-                    .findFirst()
-                    .orElseGet(() -> npcs.stream()
-                            .min(Comparator.comparing(x -> Rs2Player.getWorldLocation().distanceTo(x.getWorldLocation())))
-                            .orElse(null));
+            npc = multiNpcTarget.select(step, npcs, Rs2NpcModel::getIndex, npcsHandled,
+                    Comparator.comparing(x -> Rs2Player.getWorldLocation().distanceTo(x.getWorldLocation())),
+                    System.currentTimeMillis());
         }
 
         // canReach() pathfinds through closed doors (the walker opens them en route), so canReach==true
@@ -1337,6 +1338,9 @@ public class QuestScript extends Script {
                 npc.click("");
             } else {
                 npc.click(chooseCorrectNPCOption(step, npc));
+                if (step.isAllowMultipleHighlights()) {
+                    multiNpcTarget.commit(step, npc.getIndex(), System.currentTimeMillis());
+                }
             }
 
             if (step.isAllowMultipleHighlights()) {
@@ -1401,11 +1405,12 @@ public class QuestScript extends Script {
             return false;
         }
 
-        // Walk first when more than one tile away AND the target is either unreachable or not in line of
-        // sight. canReach() can still return true with a closed door between us; routing through the
-        // walker lets it open the door before we try to interact.
+        // Walk first when more than one tile away AND no reachable tile beside the target shares an open edge
+        // with it. The object's own tile is never the question (a boat on water or a door in a wall is never
+        // walkable), and a closed door or a wall between us still makes it unreachable, so the walker gets us
+        // to the right side before we interact.
         if (step.getDefinedPoint().getWorldPoint() != null && Rs2Player.getWorldLocation().distanceTo2D(step.getDefinedPoint().getWorldPoint()) > 1
-                && (object == null || !Rs2Walker.canReach(object.getWorldLocation()) || !hasLineOfSightToObject(object))) {
+                && (object == null || !isInteractableFromReachableTile(step, object))) {
             WorldPoint targetTile = null;
             WorldPoint stepLocation = object == null ? step.getDefinedPoint().getWorldPoint() : object.getWorldLocation();
             int radius = 0;
@@ -1454,6 +1459,18 @@ public class QuestScript extends Script {
         }
 
         return true;
+    }
+
+    private static boolean isInteractableFromReachableTile(ObjectStep step, Rs2TileObjectModel object) {
+        if (object.getTileObjectType() != TileObjectType.GAME) {
+            return object.isReachable();
+        }
+        return step.getObjects().stream()
+                .filter(x -> x instanceof GameObject && x.getHash() == object.getHash())
+                .map(GameObject.class::cast)
+                .findFirst()
+                .map(Rs2Tile::isGameObjectInteractableFromReachableTile)
+                .orElse(false);
     }
 
     private boolean applyDigStep(DigStep step) {
@@ -1577,11 +1594,13 @@ public class QuestScript extends Script {
     private boolean applyDetailedQuestStep(DetailedQuestStep conditionalStep) {
         if (conditionalStep instanceof NpcStep) return false;
 
+        WorldPoint definedPoint = conditionalStep.getDefinedPoint() == null ? null : conditionalStep.getDefinedPoint().getWorldPoint();
+
         if (conditionalStep.getIconItemID() != -1
-                && conditionalStep.getDefinedPoint().getWorldPoint() != null
-                && !conditionalStep.getDefinedPoint().getWorldPoint().toWorldArea().hasLineOfSightTo(Microbot.getClient().getTopLevelWorldView(), Rs2Player.getWorldLocation())) {
-            if (Rs2Tile.areSurroundingTilesWalkable(conditionalStep.getDefinedPoint().getWorldPoint(), 1, 1)) {
-                WorldPoint nearestUnreachableWalkableTile = Rs2Tile.getNearestWalkableTileWithLineOfSight(conditionalStep.getDefinedPoint().getWorldPoint());
+                && definedPoint != null
+                && !definedPoint.toWorldArea().hasLineOfSightTo(Microbot.getClient().getTopLevelWorldView(), Rs2Player.getWorldLocation())) {
+            if (Rs2Tile.areSurroundingTilesWalkable(definedPoint, 1, 1)) {
+                WorldPoint nearestUnreachableWalkableTile = Rs2Tile.getNearestWalkableTileWithLineOfSight(definedPoint);
                 if (nearestUnreachableWalkableTile != null) {
                     return Rs2Walker.walkTo(nearestUnreachableWalkableTile, 0);
                 }
@@ -1608,11 +1627,11 @@ public class QuestScript extends Script {
 			}
 		}
 
-        if (!usingItems && conditionalStep.getDefinedPoint().getWorldPoint() != null && !Rs2Walker.walkTo(conditionalStep.getDefinedPoint().getWorldPoint()))
+        if (!usingItems && definedPoint != null && !Rs2Walker.walkTo(definedPoint))
             return true;
 
-		if (conditionalStep.getIconItemID() != -1 && conditionalStep.getDefinedPoint().getWorldPoint() != null
-				&& conditionalStep.getDefinedPoint().getWorldPoint().toWorldArea().hasLineOfSightTo(Microbot.getClient().getTopLevelWorldView(), Rs2Player.getWorldLocation())) {
+		if (conditionalStep.getIconItemID() != -1 && definedPoint != null
+				&& definedPoint.toWorldArea().hasLineOfSightTo(Microbot.getClient().getTopLevelWorldView(), Rs2Player.getWorldLocation())) {
 			if (conditionalStep.getQuestHelper().getQuest() == QuestHelperQuest.ZOGRE_FLESH_EATERS) {
 				if (conditionalStep.getIconItemID() == 4836) { // strange potion
 					lootGroundItem(ItemID.CUP_OF_TEA_4838, 20);
@@ -1626,6 +1645,9 @@ public class QuestScript extends Script {
     private boolean applyWidgetStep(WidgetStep step) {
         var widgetDetails = step.getWidgetDetails().get(0);
         var widget = Microbot.getClient().getWidget(widgetDetails.groupID, widgetDetails.childID);
+        if (widget == null) {
+            return false;
+        }
 
         if (widgetDetails.childChildID != -1) {
             var tmpWidget = widget.getChild(widgetDetails.childChildID);

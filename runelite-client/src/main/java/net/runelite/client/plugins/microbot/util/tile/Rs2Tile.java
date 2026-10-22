@@ -19,6 +19,7 @@ import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import org.intellij.lang.annotations.MagicConstant;
 
+import java.awt.Rectangle;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -758,6 +759,47 @@ public abstract class Rs2Tile implements Tile {
             if ((flags[nx][ny] & side[2]) == 0 && (flags[x][y] & side[3]) == 0) return true;
         }
 
+        return false;
+    }
+
+    public static boolean isGameObjectInteractableFromReachableTile(GameObject gameObject) {
+        return runClientReadBoolean(() -> isGameObjectInteractableFromReachableTileInternal(gameObject));
+    }
+
+    private static boolean isGameObjectInteractableFromReachableTileInternal(GameObject gameObject) {
+        if (gameObject == null) return false;
+
+        final WorldView wv = Microbot.getClient().getTopLevelWorldView();
+        final Player player = Microbot.getClient().getLocalPlayer();
+        if (wv == null || player == null) return false;
+
+        final WorldView objectWv = gameObject.getWorldView();
+        final WorldView playerWv = player.getWorldView();
+        if (objectWv == null || playerWv == null || !objectWv.isTopLevel() || !playerWv.isTopLevel()) return false;
+        if (gameObject.getPlane() != wv.getPlane()) return false;
+
+        final Point sceneMin = gameObject.getSceneMinLocation();
+        final Point sceneMax = gameObject.getSceneMaxLocation();
+        final LocalPoint playerLocal = player.getLocalLocation();
+        if (sceneMin == null || sceneMax == null || playerLocal == null) return false;
+
+        if (CollisionMap.ignoreCollisionPacked.contains(WorldPointUtil.packWorldPoint(gameObject.getWorldLocation()))) return true;
+
+        final int[][] flags = getFlagsInternal();
+        if (flags == null) return false;
+
+        return canInteractWithFootprintFromReachableTile(flags,
+                reachableFrom(flags, playerLocal.getSceneX(), playerLocal.getSceneY()),
+                sceneMin.getX(), sceneMin.getY(), sceneMax.getX(), sceneMax.getY());
+    }
+
+    static boolean canInteractWithFootprintFromReachableTile(int[][] flags, boolean[][] reachable,
+                                                             int minX, int minY, int maxX, int maxY) {
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                if (canInteractFromReachableTile(flags, reachable, x, y, 0)) return true;
+            }
+        }
         return false;
     }
 
@@ -1718,10 +1760,11 @@ public abstract class Rs2Tile implements Tile {
             return false;
         }
 
-        Point point = Rs2UiHelper.getClickingPoint(Rs2UiHelper.getTileClickbox(tile), true);
+        Rectangle clickbox = Rs2UiHelper.getTileClickbox(tile);
 
-        // If the point is 1,1 then the tile is not on screen and we should return false
-        if (point.getX() == 1 && point.getY() == 1) return false;
+        // A fallback clickbox means the tile is not on screen and we should return false
+        if (Rs2UiHelper.isFallbackRectangle(clickbox)) return false;
+        Point point = Rs2UiHelper.getClickingPoint(clickbox, true);
 
         Microbot.getNaturalMouse().moveTo(point.getX(), point.getY());
         return true;

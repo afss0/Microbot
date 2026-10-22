@@ -26,6 +26,7 @@ import net.runelite.client.plugins.microbot.util.walker.recovery.CantReachTarget
 import org.apache.commons.lang3.tuple.Triple;
 
 import javax.annotation.Nullable;
+import java.awt.Rectangle;
 import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -2119,11 +2120,12 @@ public class Rs2GameObject {
                 Microbot.log("Natural mouse is not enabled, can't hover");
             return false;
         }
-        Point point = Rs2UiHelper.getClickingPoint(Rs2UiHelper.getObjectClickbox(object), true);
-        // if the point is 1,1 then the object is not on screen and we should return false
-        if (point.getX() == 1 && point.getY() == 1) {
+        Rectangle clickbox = Rs2UiHelper.getObjectClickbox(object);
+        // a fallback clickbox means the object is not on screen and we should return false
+        if (Rs2UiHelper.isFallbackRectangle(clickbox)) {
             return false;
         }
+        Point point = Rs2UiHelper.getClickingPoint(clickbox, true);
         Microbot.getNaturalMouse().moveTo(point.getX(), point.getY());
         return true;
     }

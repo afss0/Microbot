@@ -24,6 +24,7 @@
  */
 package net.runelite.client.ui;
 
+import java.awt.Rectangle;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.swing.SwingUtilities;
@@ -56,5 +57,41 @@ public class ClientToolbar
 	{
 		assert SwingUtilities.isEventDispatchThread() : "must be on EDT";
 		clientUI.openPanel(button, true);
+	}
+
+	public Rectangle getNavigationBounds(NavigationButton button)
+	{
+		assert SwingUtilities.isEventDispatchThread() : "must be on EDT";
+		return clientUI.getNavigationBounds(button);
+	}
+
+	public NavigationButton findSidebarNavigation(String tooltip)
+	{
+		assert SwingUtilities.isEventDispatchThread() : "must be on EDT";
+		return clientUI.findSidebarNavigation(tooltip);
+	}
+
+	public Rectangle getSidebarBounds()
+	{
+		assert SwingUtilities.isEventDispatchThread() : "must be on EDT";
+		return clientUI.getSidebarBounds();
+	}
+
+	public Rectangle getSidebarTabsBounds()
+	{
+		assert SwingUtilities.isEventDispatchThread() : "must be on EDT";
+		return clientUI.getSidebarTabsBounds();
+	}
+
+	public boolean isSidebarOpen()
+	{
+		assert SwingUtilities.isEventDispatchThread() : "must be on EDT";
+		return clientUI.isSidebarOpen();
+	}
+
+	public boolean isPanelOpen(NavigationButton button)
+	{
+		assert SwingUtilities.isEventDispatchThread() : "must be on EDT";
+		return clientUI.isPanelOpen(button);
 	}
 }

@@ -3,14 +3,17 @@ package net.runelite.client.plugins.microbot.util.input;
 import net.runelite.api.Client;
 import net.runelite.api.Point;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.mouse.BotEventGuard;
 import net.runelite.client.plugins.microbot.util.mouse.VirtualMouse;
+import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.NaturalMouse;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.awt.Canvas;
 import java.awt.Dimension;
+import java.awt.event.InputEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.lang.reflect.Field;
@@ -18,8 +21,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -31,7 +39,9 @@ public class InputEmissionTest
 	private Client client;
 	private Canvas canvas;
 	private final List<MouseEvent> received = new ArrayList<>();
+	private final List<Long> receivedAt = new ArrayList<>();
 	private final List<Boolean> syntheticDuringDispatch = new ArrayList<>();
+	private final List<Object> targetMenuAtDispatch = new ArrayList<>();
 
 	private Object previousClient;
 	private Object previousNaturalMouse;
@@ -67,6 +77,12 @@ public class InputEmissionTest
 			{
 				record(e);
 			}
+
+			@Override
+			public void mouseDragged(MouseEvent e)
+			{
+				record(e);
+			}
 		});
 
 		client = mock(Client.class);
@@ -81,6 +97,7 @@ public class InputEmissionTest
 		PointerState.reset();
 		// Static, so a prior test left in HUMAN would abort every click here.
 		InputArbiter.resetForTest();
+		AwtEmitter.resetHeldButtonsForTest();
 	}
 
 	@After
@@ -88,6 +105,7 @@ public class InputEmissionTest
 	{
 		swapStatic("client", previousClient);
 		swapStatic("naturalMouse", previousNaturalMouse);
+		Microbot.targetMenu = null;
 		PointerState.reset();
 		InputArbiter.resetForTest();
 		while (BotEventGuard.isSynthetic())
@@ -145,6 +163,127 @@ public class InputEmissionTest
 		{
 			assertEquals(MouseEvent.BUTTON3, event.getButton());
 		}
+	}
+
+	@Test
+	public void theButtonIsHeldDownForAHumanDuration()
+	{
+		PointerState.setFromBot(100, 50);
+
+		new VirtualMouse().click(new Point(100, 50), false);
+
+		long held = receivedAt.get(1) - receivedAt.get(0);
+		assertTrue("held " + held + "ms", held >= VirtualMouse.CLICK_HOLD_MIN_MS - 5);
+	}
+
+	@Test
+	public void aQuickClickSkipsTheTravelButIsStillAHeldTriad() throws Exception
+	{
+		NaturalMouse naturalMouse = mock(NaturalMouse.class);
+		swapStatic("naturalMouse", naturalMouse);
+		PointerState.setFromBot(10, 10);
+
+		new VirtualMouse().quickClick(new Point(100, 50), new NewMenuEntry());
+
+		verify(naturalMouse, never()).moveTo(anyInt(), anyInt());
+		assertEquals(ids(MouseEvent.MOUSE_MOVED, MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_RELEASED, MouseEvent.MOUSE_CLICKED),
+			receivedIds());
+		long settle = receivedAt.get(1) - receivedAt.get(0);
+		assertTrue("settled " + settle + "ms", settle >= VirtualMouse.QUICK_CLICK_SETTLE_MIN_MS - 3);
+		long held = receivedAt.get(2) - receivedAt.get(1);
+		assertTrue("held " + held + "ms", held >= VirtualMouse.QUICK_CLICK_HOLD_MIN_MS - 5);
+	}
+
+	@Test
+	public void theEntryIsArmedOnlyAfterTheSettleSoAHumanClickInItIsNotHijacked()
+	{
+		Microbot.targetMenu = null;
+		PointerState.setFromBot(10, 10);
+		NewMenuEntry entry = new NewMenuEntry();
+
+		new VirtualMouse().quickClick(new Point(100, 50), entry);
+
+		assertEquals(MouseEvent.MOUSE_MOVED, received.get(0).getID());
+		assertNull(targetMenuAtDispatch.get(0));
+		assertSame(entry, targetMenuAtDispatch.get(1));
+	}
+
+	@Test
+	public void aQuickClickAlreadyOnTheTargetSendsNoMove()
+	{
+		PointerState.setFromBot(100, 50);
+
+		new VirtualMouse().quickClick(new Point(100, 50), new NewMenuEntry());
+
+		assertEquals(ids(MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_RELEASED, MouseEvent.MOUSE_CLICKED),
+			receivedIds());
+	}
+
+	@Test
+	public void aNormalEntryClickTravelsThere() throws Exception
+	{
+		NaturalMouse naturalMouse = mock(NaturalMouse.class);
+		swapStatic("naturalMouse", naturalMouse);
+		PointerState.setFromBot(10, 10);
+
+		new VirtualMouse().click(new Point(100, 50), new NewMenuEntry());
+
+		verify(naturalMouse).moveTo(100, 50);
+	}
+
+	@Test
+	public void onlyThePressCarriesItsButtonAsDown()
+	{
+		PointerState.setFromBot(100, 50);
+
+		new VirtualMouse().click(new Point(100, 50), true);
+
+		assertEquals(InputEvent.BUTTON3_DOWN_MASK, received.get(0).getModifiersEx());
+		assertEquals(0, received.get(1).getModifiersEx());
+		assertEquals(0, received.get(2).getModifiersEx());
+		assertEquals(0, AwtEmitter.heldMask());
+	}
+
+	@Test
+	public void aMoveFromOutsideTheGestureIsDroppedWhileAButtonIsHeld()
+	{
+		PointerState.setFromBot(100, 50);
+		AwtEmitter.pressed(100, 50, MouseEvent.BUTTON1);
+		received.clear();
+
+		new VirtualMouse().move(new Point(300, 200));
+
+		assertTrue(received.isEmpty());
+		AwtEmitter.released(100, 50, MouseEvent.BUTTON1);
+		new VirtualMouse().move(new Point(300, 200));
+		assertEquals(ids(MouseEvent.MOUSE_RELEASED, MouseEvent.MOUSE_MOVED), receivedIds());
+	}
+
+	@Test
+	public void aReleaseClearsTheHeldButtonEvenWithoutACanvas()
+	{
+		AwtEmitter.pressed(100, 50, MouseEvent.BUTTON1);
+		when(client.getCanvas()).thenReturn(null);
+
+		AwtEmitter.released(100, 50, MouseEvent.BUTTON1);
+
+		assertEquals(0, AwtEmitter.heldMask());
+	}
+
+	@Test
+	public void motionWithAButtonDownIsADrag()
+	{
+		when(client.getCanvasWidth()).thenReturn(800);
+		when(client.getCanvasHeight()).thenReturn(600);
+		PointerState.setFromBot(100, 50);
+
+		new VirtualMouse().drag(new Point(100, 50), new Point(300, 200));
+
+		assertEquals(ids(MouseEvent.MOUSE_MOVED, MouseEvent.MOUSE_PRESSED, MouseEvent.MOUSE_DRAGGED, MouseEvent.MOUSE_RELEASED),
+			receivedIds());
+		assertEquals(0, received.get(0).getModifiersEx());
+		assertEquals(InputEvent.BUTTON1_DOWN_MASK, received.get(2).getModifiersEx());
+		assertEquals(0, received.get(3).getModifiersEx());
 	}
 
 	@Test
@@ -235,7 +374,9 @@ public class InputEmissionTest
 	private void record(MouseEvent event)
 	{
 		received.add(event);
+		receivedAt.add(System.currentTimeMillis());
 		syntheticDuringDispatch.add(BotEventGuard.isSynthetic());
+		targetMenuAtDispatch.add(Microbot.targetMenu);
 	}
 
 	private List<Integer> receivedIds()

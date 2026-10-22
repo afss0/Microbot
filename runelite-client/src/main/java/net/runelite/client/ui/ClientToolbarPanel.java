@@ -101,6 +101,11 @@ class ClientToolbarPanel extends JPanel
 		return jb;
 	}
 
+	Component get(NavigationButton nb)
+	{
+		return entries.get(nb);
+	}
+
 	void remove(NavigationButton btn)
 	{
 		Component c = entries.remove(btn);

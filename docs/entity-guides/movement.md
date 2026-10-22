@@ -548,3 +548,23 @@ Polygon poly = Perspective.getCanvasTilePoly(client, localPoint);
 **Where this applies:** `Rs2Camera.isTileOnScreen(LocalPoint)`, `Rs2Camera.isTileOnScreen(TileObject)`, and any helper that projects an entity's local point to the canvas.
 
 **Defensive check:** Mock a worldview whose `getTileHeight` throws and assert out-of-scene points return false without calling it, as in `Rs2CameraTileOnScreenTest`.
+
+## 28. A door attempt that ends on the near side is a refusal, not a traversal
+
+Judge a door crossing by the edge's own axis (`Rs2DoorGeometry.crossedDoorAxis`), not by whether the player changed side relative to the door object's tile. A wall door usually sits on the near-side tile of its edge, so walking onto that tile, or onto its row or column, flips the object-relative reading while the player is still in front of the door. Count a cross-nudge that leaves the player stationary on the near-side tile as a refusal too. Keep the walk-scoped strike-out blocks with the outermost walk: a can't-reach recovery walk nested inside it is not a new walk session.
+
+**Why this matters:** During Misthalin Mystery auto-play the route went through locked door 30117. Each open click was read as a traversal because the player stepped from (1634,4839) to (1633,4838), level with the door at (1633,4837). That verdict wiped the door's strikes and hid it as recently opened, the follow-up nudge moved the player onto the near-side tile and was not counted, and `door_recovery_suppressed | reason=nearby-route-door` kept the walk waiting for handlers that would never strike the door out. The strike-outs that did land were lifted again by the nested can't-reach recovery walk the next door click started. The walker looped for about 11 minutes.
+
+**Pattern to follow:**
+
+```java
+// Wrong: object-relative side flip counts the approach as a crossing.
+return movedAcrossInteractedObject(start, end, doorTile) && end.distanceTo2D(toWp) < start.distanceTo2D(toWp);
+
+// Right: on a cardinal edge the player must be at or beyond the far side.
+if (isCardinalEdge(fromWp, toWp) && !Rs2DoorGeometry.crossedDoorAxis(fromWp, toWp, end)) return false;
+```
+
+**Where this applies:** `Rs2WalkerDoors.didTraverseInteractedDoor`, `Rs2WalkerDoors.tryDoorEdgeCrossNudge`, `Rs2Walker.withdrawPreviousWalkScopedBlocks`, and any door verdict that feeds `DoorAttemptLedger` strikes.
+
+**Defensive check:** Replay the loop as pure verdicts against a `DoorAttemptLedger` and assert the edge strikes out within `DOOR_CROSS_FAILURE_STRIKE_LIMIT` cycles, as in `LockedDoorStrikeOutTest`.

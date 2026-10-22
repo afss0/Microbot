@@ -19,7 +19,9 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -67,12 +69,12 @@ public class BankTutorialEventTest
 	}
 
 	@Test
-	public void clientThreadTimeoutIsNotVisible()
+	public void validateWaitsAtMostTheProbeTimeout()
 	{
 		when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
-		when(clientThread.runOnClientThreadOptional(any())).thenReturn(Optional.empty());
 
 		assertFalse(new BankTutorialEvent().validate());
+		verify(clientThread).runOnClientThreadOptional(any(), eq(ClientThreadProbe.VALIDATE_TIMEOUT_MILLIS));
 	}
 
 	@Test
@@ -136,6 +138,8 @@ public class BankTutorialEventTest
 	private void runClientThreadInline() throws Exception
 	{
 		when(clientThread.runOnClientThreadOptional(any())).thenAnswer(invocation ->
+			Optional.ofNullable(((Callable<Object>) invocation.getArgument(0)).call()));
+		when(clientThread.runOnClientThreadOptional(any(), anyLong())).thenAnswer(invocation ->
 			Optional.ofNullable(((Callable<Object>) invocation.getArgument(0)).call()));
 	}
 

@@ -39,7 +39,7 @@ jobs:
       - name: Build Shaded JAR
         run: |
           COMMIT_SHA=$(git rev-parse --short HEAD)
-          ./gradlew :client:shadowJar -Pmicrobot.commit.sha=$COMMIT_SHA -Pmicrobot.build.channel=nightly -Pmicrobot.build.repository=${{ github.repository }}
+          ./gradlew :client:shadowJar :hwid-agent:jar -Pmicrobot.commit.sha=$COMMIT_SHA -Pmicrobot.build.channel=nightly -Pmicrobot.build.repository=${{ github.repository }}
 
       - name: Read microbot.version from Gradle
         id: version
@@ -54,6 +54,7 @@ jobs:
           SRC=$(echo runelite-client/build/libs/client-*-shaded.jar)
           DEST=runelite-client/build/libs/microbot-${{ steps.version.outputs.version }}.jar
           cp "$SRC" "$DEST"
+          cp hwid-agent/build/libs/hwid-agent-*.jar runelite-client/build/libs/
 
       - name: Create Release
         uses: "marvinpinto/action-automatic-releases@latest"
@@ -64,6 +65,7 @@ jobs:
           title: "Nightly Build"
           files: |
             /home/runner/work/Microbot/Microbot/runelite-client/build/libs/microbot-*.jar
+            /home/runner/work/Microbot/Microbot/runelite-client/build/libs/hwid-agent-*.jar
             
 
       - name: Upload Jar to Hetzner
@@ -72,6 +74,6 @@ jobs:
           host: ${{ secrets.PROD_HOST }}
           username: root
           key: ${{ secrets.PROD_SSH_KEY }}
-          source: runelite-client/build/libs/microbot-*.jar
+          source: runelite-client/build/libs/microbot-*.jar,runelite-client/build/libs/hwid-agent-*.jar
           target: /var/www/files/releases/microbot/nightly/
           strip_components: 2

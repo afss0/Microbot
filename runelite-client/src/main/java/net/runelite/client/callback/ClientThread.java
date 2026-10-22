@@ -75,8 +75,12 @@ public class ClientThread
 	 * @return
 	 * @param <T>
 	 */
-	@SneakyThrows
 	public <T> Optional<T> runOnClientThreadOptional(Callable<T> method) {
+		return runOnClientThreadOptional(method, clientThreadTimeoutMillis);
+	}
+
+	@SneakyThrows
+	public <T> Optional<T> runOnClientThreadOptional(Callable<T> method, long timeoutMillis) {
 		if (client.isClientThread()) {
 			try {
 				return Optional.ofNullable(method.call());
@@ -90,15 +94,15 @@ public class ClientThread
 		final FutureTask<T> task = new FutureTask<>(method);
 		invoke(task);
 		try {
-			return Optional.ofNullable(task.get(clientThreadTimeoutMillis, TimeUnit.MILLISECONDS));
+			return Optional.ofNullable(task.get(timeoutMillis, TimeUnit.MILLISECONDS));
 		} catch (InterruptedException | TimeoutException | ExecutionException e) {
 			if (e instanceof InterruptedException) {
 				Thread.currentThread().interrupt();
 				return Optional.empty();
 			}			
-			task.cancel(true);
+			task.cancel(false);
 			if (e instanceof TimeoutException) {
-				logClientThreadTimeout();
+				logClientThreadTimeout(timeoutMillis);
 				return Optional.empty();
 			}
 			if (!Microbot.isDebug()) {
@@ -108,14 +112,14 @@ public class ClientThread
 		}
 	}
 
-	private void logClientThreadTimeout() {
+	private void logClientThreadTimeout(long timeoutMillis) {
 		long now = System.nanoTime();
 		long last = lastTimeoutWarningNanos.get();
 		if ((last == 0 || now - last >= TIMEOUT_WARNING_INTERVAL_NANOS) && lastTimeoutWarningNanos.compareAndSet(last, now)) {
 			log.warn("Client thread did not run task within {}ms (caller thread {}); further timeouts suppressed for {}s",
-				clientThreadTimeoutMillis, Thread.currentThread().getName(), TimeUnit.NANOSECONDS.toSeconds(TIMEOUT_WARNING_INTERVAL_NANOS));
+				timeoutMillis, Thread.currentThread().getName(), TimeUnit.NANOSECONDS.toSeconds(TIMEOUT_WARNING_INTERVAL_NANOS));
 		} else {
-			log.debug("Client thread did not run task within {}ms (caller thread {})", clientThreadTimeoutMillis, Thread.currentThread().getName());
+			log.debug("Client thread did not run task within {}ms (caller thread {})", timeoutMillis, Thread.currentThread().getName());
 		}
 	}
 

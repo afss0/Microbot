@@ -2323,11 +2323,12 @@ public class Rs2Inventory {
                 Microbot.log("Natural mouse is not enabled, can't hover");
             return false;
         }
-        Point point = Rs2UiHelper.getClickingPoint(itemBounds(item), true);
-        // if the point is 1,1 then the object is not on screen and we should return false
-        if (point.getX() == 1 && point.getY() == 1) {
+        Rectangle bounds = itemBounds(item);
+        // a fallback rectangle means the item is not on screen and we should return false
+        if (Rs2UiHelper.isFallbackRectangle(bounds)) {
             return false;
         }
+        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
         Microbot.getNaturalMouse().moveTo(point.getX(), point.getY());
         return true;
     }

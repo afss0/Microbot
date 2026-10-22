@@ -17,8 +17,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * defers through an executor. A dedicated thread would stall every script whenever one gesture
  * waited on a busy client thread.
  *
- * <p>The held-button set exists for drag. A triad is three events in microseconds and a
- * trajectory has nothing to unwind. Keys are not gesture-scoped and live in {@code Rs2Keyboard}.
+ * <p>The held-button set exists for drag and for the hold inside a click; a trajectory has
+ * nothing to unwind. Keys are not gesture-scoped and live in {@code Rs2Keyboard}.
  */
 public final class InputLoop
 {
@@ -48,6 +48,11 @@ public final class InputLoop
 
 	private InputLoop()
 	{
+	}
+
+	public static boolean isInGesture()
+	{
+		return IN_GESTURE.get();
 	}
 
 	public static Result run(Gesture gesture)
@@ -146,8 +151,8 @@ public final class InputLoop
 		public void press(int canvasX, int canvasY, int button)
 		{
 			checkpoint();
-			AwtEmitter.pressed(canvasX, canvasY, button);
 			heldButtons.add(button);
+			AwtEmitter.pressed(canvasX, canvasY, button);
 		}
 
 		public void release(int canvasX, int canvasY, int button)
