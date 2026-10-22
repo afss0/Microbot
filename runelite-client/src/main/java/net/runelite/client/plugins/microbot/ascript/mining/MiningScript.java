@@ -33,6 +33,7 @@ import net.runelite.client.plugins.microbot.util.security.Login;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
 import java.awt.Rectangle;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -444,6 +445,12 @@ public class MiningScript implements AModule {
                 return;
             }
             if (Rs2Inventory.isFull()) {
+                if (countProduct(ore) == 0) {
+                    // Full of something else: dropSlice would wait on a count that can never
+                    // shrink and stop the module with "mining drop did not land".
+                    fail("inventory is full but holds no " + ore.getDisplayName());
+                    return;
+                }
                 dropping = true;
                 dropSlice(ore);
                 return;
@@ -488,7 +495,7 @@ public class MiningScript implements AModule {
                 && !Rs2Equipment.isWearing(ItemID.JEWL_BRACELET_OF_CLAY)
                 && Rs2Inventory.hasItem(ItemID.JEWL_BRACELET_OF_CLAY)) {
             if (Rs2Bank.isOpen()) return; // wait for the orchestrator to close the bank
-            Rs2ItemModel bracelet = Rs2Inventory.get(ItemID.JEWL_BRACELET_OF_CLAY);
+            Rs2ItemModel bracelet = AScriptPick.pick(ItemID.JEWL_BRACELET_OF_CLAY);
             Rectangle bounds = bracelet == null ? null : Rs2Inventory.itemBounds(bracelet);
             if (bounds == null) {
                 fail("no clickable bracelet slot");
@@ -656,9 +663,10 @@ public class MiningScript implements AModule {
     private void runGemDepositCycle(AScriptConfig config) {
         Microbot.status = "MINING — depositing at the gem mine";
         if (!Rs2DepositBox.isOpen() && !Rs2DepositBox.openDepositBox()) {
-            return; // retry next tick
+            fail("gem deposit box did not open");
+            return;
         }
-        Rs2ItemModel openBag = Rs2Inventory.get(ItemID.GEM_BAG_OPEN);
+        Rs2ItemModel openBag = AScriptPick.pick(ItemID.GEM_BAG_OPEN);
         if (openBag != null) {
             Rectangle bounds = Rs2Inventory.itemBounds(openBag);
             if (bounds != null) {
@@ -671,8 +679,10 @@ public class MiningScript implements AModule {
                 }
             }
         }
-        if (!Rs2DepositBox.depositAllExcept(ItemID.GEM_BAG_OPEN)) {
-            log.warn("[Mining] gem deposit box deposit failed");
+        // Keep the bag AND every pickaxe id: the deposit box would otherwise take a held
+        // pickaxe and the next mining tick would have no tool.
+        if (!Rs2DepositBox.depositAllExcept(gemDepositKeepIds())) {
+            fail("gem deposit box deposit failed");
             return;
         }
         Rs2DepositBox.closeDepositBox();
@@ -682,11 +692,22 @@ public class MiningScript implements AModule {
         postBatchBreak(config);
     }
 
-    /** [BASALT] True at Weiss with a full inventory in Bank mode (the noting trip is due). */
+    /** [BASALT] True at Weiss with a full inventory in Bank mode AND unnoted basalt to note. */
     private boolean atBasaltNoteTrip(AScriptConfig config) {
         return config.miningAction() == MiningAction.BANK
                 && currentOre(config) == MiningOre.BASALT
-                && Rs2Inventory.isFull();
+                && Rs2Inventory.isFull()
+                && hasUnnotedBasalt();
+    }
+
+    /**
+     * [BASALT] True when the inventory holds at least one UNNOTED basalt. A full inventory
+     * of something else must not enter the noting trip: noteBasalt() has nothing to use on
+     * Snowflake and would return silently on every tick.
+     */
+    private static boolean hasUnnotedBasalt() {
+        return Rs2Inventory.getList(i -> i.getId() == MiningOre.BASALT.getProductIds()[0])
+                .stream().anyMatch(i -> !i.isNoted());
     }
 
     /**
@@ -705,7 +726,7 @@ public class MiningScript implements AModule {
             travelTo(SNOWFLAKE_SPOT);
             return;
         }
-        Rs2ItemModel basalt = Rs2Inventory.get(MiningOre.BASALT.getProductIds()[0]);
+        Rs2ItemModel basalt = AScriptPick.pick(MiningOre.BASALT.getProductIds()[0]);
         if (basalt == null) {
             return; // nothing to note (dropped by hand?) — retry next tick
         }
@@ -725,10 +746,15 @@ public class MiningScript implements AModule {
         travelTo(anchor);
     }
 
-    /** [BASALT] True when every basalt held is in banknote form. */
+    /**
+     * [BASALT] True when every basalt held is in banknote form. A noted item carries the
+     * NOTED id (the unnoted one moves to {@code getUnNotedId()}), so filtering on the
+     * unnoted id alone found nothing and the confirmation never fired.
+     */
     private static boolean basaltNoted() {
+        int unnotedId = MiningOre.BASALT.getProductIds()[0];
         List<Rs2ItemModel> basalt = Rs2Inventory.getList(
-                i -> i.getId() == MiningOre.BASALT.getProductIds()[0]);
+                i -> i.getId() == unnotedId || i.getUnNotedId() == unnotedId);
         return !basalt.isEmpty() && basalt.stream().allMatch(Rs2ItemModel::isNoted);
     }
 
@@ -741,6 +767,9 @@ public class MiningScript implements AModule {
     private void dropSlice(MiningOre ore) {
         Microbot.status = "MINING — dropping " + ore.getDisplayName();
         int before = countProduct(ore);
+        if (before == 0) {
+            return; // nothing to drop — the caller's batch-end check owns this state
+        }
         int slice = Math.min(before, Rs2Random.fancyNormalSample(5, 9));
         List<Rs2ItemModel> candidates = Rs2Inventory.getList(i -> ore.isProduct(i.getId()));
         boolean firstDraw = true;
@@ -857,6 +886,18 @@ public class MiningScript implements AModule {
             }
         }
         return best;
+    }
+
+    /**
+     * Ids the gem-mine deposit box must never take: the open bag and every pickaxe id.
+     */
+    private static Integer[] gemDepositKeepIds() {
+        List<Integer> keep = new ArrayList<>();
+        keep.add(ItemID.GEM_BAG_OPEN);
+        for (Pickaxe p : Pickaxe.values()) {
+            keep.add(p.getItemId());
+        }
+        return keep.toArray(new Integer[0]);
     }
 
     /**
