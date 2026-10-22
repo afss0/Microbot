@@ -100,9 +100,19 @@ public class DismissNpcEvent implements BlockingEvent {
     }
 
     private Rs2NpcModel getRandomEventNpc() {
-        var oldModel = Rs2Npc.getRandomEventNPC();
+        // validate() runs on the blocking-event scheduler, not the client tick: every
+        // read here touches client state and must run on the client thread.
+        var oldModel = Microbot.getClientThread()
+                .runOnClientThreadOptional(Rs2Npc::getRandomEventNPC)
+                .orElse(null);
         if (oldModel == null) return null;
-        return Microbot.getRs2NpcCache().query().where(n -> n.getNpc().equals(oldModel.getRuneliteNpc())).nearest();
+        var rawNpc = Microbot.getClientThread()
+                .runOnClientThreadOptional(oldModel::getRuneliteNpc)
+                .orElse(null);
+        if (rawNpc == null) return null; // cache model without a raw NPC yet
+        return Microbot.getRs2NpcCache().query()
+                .where(n -> rawNpc.equals(n.getNpc()))
+                .nearestOnClientThread();
     }
 
     /** Number of XP lamps in the inventory — the wait compares before/after counts. */
@@ -126,7 +136,13 @@ public class DismissNpcEvent implements BlockingEvent {
      * Bounded: a stubborn NPC ends the wait at the timeout.
      */
     private void awaitNpcUnfocus() {
-        Global.sleepUntil(() -> getRandomEventNpc() == null, 5000);
+        if (!Global.sleepUntil(() -> getRandomEventNpc() == null, 5000)) {
+            // A Genie that lingers would otherwise be re-driven on every scheduler pass:
+            // back off for the same window used after repeated dismiss failures.
+            giveUpUntil = System.currentTimeMillis() + DISMISS_GIVE_UP_MS;
+            log.info("Event NPC still present after 5 s — ignoring random events for {} ms",
+                    DISMISS_GIVE_UP_MS);
+        }
     }
 
     @Override
@@ -145,7 +161,9 @@ public class DismissNpcEvent implements BlockingEvent {
             resetEventState();
             return false;
         }
-        return npc.hasLineOfSight();
+        return Microbot.getClientThread()
+                .runOnClientThreadOptional(npc::hasLineOfSight)
+                .orElse(false);
     }
 
     /** Clears every per-event field; called once the event NPC is gone. */
