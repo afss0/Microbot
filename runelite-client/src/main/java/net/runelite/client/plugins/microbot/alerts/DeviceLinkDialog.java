@@ -72,6 +72,11 @@ public class DeviceLinkDialog
 		return "<html>" + html.replace("\n", "<br>") + "</html>";
 	}
 
+	static Runnable actionFor(Map<String, Runnable> actions, Object value)
+	{
+		return value == null ? null : actions.get(value);
+	}
+
 	private static JRichTextPane withLink(String message, String url)
 	{
 		JRichTextPane pane = new JRichTextPane();
@@ -95,7 +100,7 @@ public class DeviceLinkDialog
 		{
 			pane.addPropertyChangeListener(JOptionPane.VALUE_PROPERTY, event ->
 			{
-				Runnable action = actions.get(event.getNewValue());
+				Runnable action = actionFor(actions, event.getNewValue());
 				if (action != null)
 				{
 					action.run();

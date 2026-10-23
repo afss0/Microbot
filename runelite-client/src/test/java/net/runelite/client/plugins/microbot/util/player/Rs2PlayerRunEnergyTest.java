@@ -178,6 +178,50 @@ public class Rs2PlayerRunEnergyTest {
     }
 
     @Test
+    public void autoRunOptionOffBlocksEnablingEvenWithEnergy() {
+        boolean previous = Microbot.enableAutoRunOn;
+        try {
+            Microbot.enableAutoRunOn = false;
+            when(client.getEnergy()).thenReturn(10000);
+            assertFalse(Rs2Player.toggleRunEnergy(true));
+            verifyNoInteractions(mouse, orb);
+            verify(client, never()).getWidget(anyInt());
+        } finally {
+            Microbot.enableAutoRunOn = previous;
+        }
+    }
+
+    @Test
+    public void autoRunOptionOffStillAllowsDisabling() {
+        boolean previous = Microbot.enableAutoRunOn;
+        try {
+            Microbot.enableAutoRunOn = false;
+            when(client.getVarpValue(173)).thenReturn(1);
+            doAnswer(i -> { when(client.getVarpValue(173)).thenReturn(0); return mouse; })
+                    .when(mouse).click(any(Point.class));
+            assertTrue(Rs2Player.toggleRunEnergy(false));
+            verify(mouse).click(new Point(560, 120));
+        } finally {
+            Microbot.enableAutoRunOn = previous;
+        }
+    }
+
+    @Test
+    public void autoRunOptionOnStillAllowsEnabling() {
+        boolean previous = Microbot.enableAutoRunOn;
+        try {
+            Microbot.enableAutoRunOn = true;
+            when(client.getEnergy()).thenReturn(1001);
+            doAnswer(i -> { when(client.getVarpValue(173)).thenReturn(1); return mouse; })
+                    .when(mouse).click(any(Point.class));
+            assertTrue(Rs2Player.toggleRunEnergy(true));
+            verify(mouse).click(new Point(560, 120));
+        } finally {
+            Microbot.enableAutoRunOn = previous;
+        }
+    }
+
+    @Test
     public void loggedOutDoesNotSucceedOrClick() {
         when(client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
         assertFalse(Rs2Player.toggleRunEnergy(false));

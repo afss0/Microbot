@@ -39,7 +39,8 @@ import net.runelite.client.util.ImageUtil;
 	name = "Jagex Auth",
 	description = "Jagex Account integration",
 	developerPlugin = true,
-	hidden = true
+	hidden = true,
+	enabledByDefault = false
 )
 @Slf4j
 public class JagexAuthPlugin extends Plugin

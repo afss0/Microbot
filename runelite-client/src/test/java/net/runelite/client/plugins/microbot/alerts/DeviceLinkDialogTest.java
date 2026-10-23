@@ -1,7 +1,10 @@
 package net.runelite.client.plugins.microbot.alerts;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import java.util.Map;
 import org.junit.Test;
 
 public class DeviceLinkDialogTest
@@ -30,5 +33,22 @@ public class DeviceLinkDialogTest
 	public void escapesTheMessage()
 	{
 		assertEquals("<html>&lt;b&gt;hi&lt;/b&gt;</html>", DeviceLinkDialog.toHtml("<b>hi</b>", null));
+	}
+
+	@Test
+	public void closingTheWindowWithoutAValueRunsNoAction()
+	{
+		Runnable cancel = () -> {};
+
+		assertNull(DeviceLinkDialog.actionFor(Map.of("Cancel linking", cancel), null));
+	}
+
+	@Test
+	public void returnsTheActionForTheChosenOption()
+	{
+		Runnable relink = () -> {};
+
+		assertSame(relink, DeviceLinkDialog.actionFor(Map.of("Link to another account", relink), "Link to another account"));
+		assertNull(DeviceLinkDialog.actionFor(Map.of("Link to another account", relink), "Close"));
 	}
 }

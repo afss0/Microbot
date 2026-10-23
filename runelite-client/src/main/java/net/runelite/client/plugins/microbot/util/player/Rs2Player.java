@@ -428,6 +428,7 @@ public class Rs2Player {
      *         that would require a mouse gesture. Call again from the normal script loop.
      */
     public static boolean toggleRunEnergy(boolean toggle) {
+        if (toggle && !Microbot.enableAutoRunOn) return false;
         if (Thread.currentThread().isInterrupted() || !RUN_TOGGLE_LOCK.tryLock()) return false;
         try {
             Boolean satisfied = Microbot.getClientThread().runOnClientThreadOptional(() ->
