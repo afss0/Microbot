@@ -337,6 +337,55 @@ public final class AScriptClick {
         return new Target(target.clickbox(), false, pick == RowPick.DISPATCHED);
     }
 
+    /**
+     * Press a non-default inventory option ("Drop", "Eat", ...) through the real option
+     * menu: right-click the item's bounds, wait for the (frozen) menu, and press the row
+     * whose option matches. Client mouse only — no fabricated menu entry, no injection.
+     * <p>
+     * This is the recipe for actions the item's default left-click does NOT perform: raw
+     * fish, ore and logs default to "Use", so a plain {@code click(itemBounds)} selects the
+     * item instead of dropping it (live 2026-10-24: the sliced droppers used every item).
+     * <p>
+     * The effect stays with the caller (count drop / animation), like the other recipes.
+     *
+     * @param item   the inventory item to act on
+     * @param option the exact option to pick, case-insensitive (e.g. {@code "Drop"})
+     * @return true when the row was pressed and the menu closed on it
+     */
+    public static boolean clickItemOption(Rs2ItemModel item, String option) {
+        if (item == null || option == null || option.isBlank()) {
+            log.warn("[AScriptClick] no item/option to pick — not clicking");
+            return false;
+        }
+        ensureInventoryVisible();
+        Rectangle bounds = Rs2Inventory.itemBounds(item);
+        if (bounds == null) {
+            return false;
+        }
+        // One resolve: getClickingPoint randomizes on every call and the right-click must
+        // land on the exact point the menu was built for.
+        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
+        String name = item.getName();
+        int itemId = item.getId();
+        Predicate<MenuEntry> isOurs = entry -> {
+            if (entry == null || entry.getOption() == null || !option.equalsIgnoreCase(entry.getOption())) {
+                return false;
+            }
+            if (entry.getItemId() == itemId) {
+                return true;
+            }
+            String target = entry.getTarget() == null ? "" : Rs2UiHelper.stripTags(entry.getTarget());
+            return name != null && target.toLowerCase().contains(name.toLowerCase());
+        };
+        RowPick pick = pressViaMenuRow(point, isOurs, MENU_CLOSED_IS_ENOUGH);
+        if (pick == RowPick.MENU_STUCK) {
+            log.error("[AScriptClick] the option menu would not close — leaving it open for a human");
+        } else if (pick == RowPick.FAILED) {
+            log.warn("[AScriptClick] the open menu never exposed the \"{}\" row — not pressing", option);
+        }
+        return pick == RowPick.DISPATCHED;
+    }
+
     // ── Item-on-X recipe ───────────────────────────────────
 
     /**
