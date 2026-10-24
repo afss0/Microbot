@@ -671,7 +671,7 @@ final class Rs2WalkerTransports {
                         if (!Rs2PathApi.isSpiritTreeTravelEnabled()) {
                             log.debug("[Walker] skip spirit tree transport — setting is off");
                             noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.SPIRIT_TREE_TRAVEL_DISABLED);
-                            continue;
+                            break;
                         }
                         if (attemptObserved(transport, () -> handleSpiritTree(transport))) {
                             sleepUntil(() -> !Rs2Player.isAnimating());
@@ -955,6 +955,7 @@ final class Rs2WalkerTransports {
                         return false;
                     }
                     noteRefusal(TransportDispatchTrace.Refusal.OBJECT_MISSING);
+                    break;
                 }
             }
         }
