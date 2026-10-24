@@ -311,11 +311,13 @@ Used during merges to verify nothing is lost.
   - Merge check: `grep "specialAttackAxeIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/Axe.java | head -1`
   - Merge check: `grep "FISHING_ROD_ID" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/barbarianvillagefisher/BarbarianVillageFisherScript.java | head -1`
   - Merge check: `grep "DRAGON_PICKAXE_PRETTY" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/motherloadmine/Pickaxe.java | head -1`
-- **Inventory drops pick the real Drop option (Oct 2026):**
-  - The sliced droppers (BVF, Barbarian Fishing, Mining, Motherload Mine, Woodcutting) clicked the item rectangle with a raw client-mouse click. A raw click dispatches the item's **default** left-click action, which is `Use` for raw fish, ore and logs: the live report (2026-10-24) was every item being used instead of dropped, and the module's count-drop verification then stopped it. The Woodcutting comment that asserted "logs carry Drop as default" was wrong.
-  - Fix: new `AScriptClick.clickItemOption(item, "Drop")` — the non-default-op recipe already used for actors: right-click the item bounds, wait for the (frozen) open menu, press the `Drop` row with a physical click. Client mouse only; `targetMenu` / `doInvoke` / `NewMenuEntry` stay banned for module actions, so this never fabricates a menu. The five sliced droppers and the Motherload Mine hammer cleanup use it.
-  - Merge check: `grep "clickItemOption" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
-  - Merge check: `grep -c "clickItemOption" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/barbarianvillagefisher/BarbarianVillageFisherScript.java`
+- **Inventory drops install the Drop entry as the left-click (Oct 2026):**
+  - A raw left click on an inventory slot dispatches the item's **default** action — `Use` for raw fish, ore and logs — so the sliced droppers used every item instead of dropping it (live report 2026-10-24), and the count-drop verification stopped the module.
+  - Fix, in the aScript plugin only (no shared Microbot API change): `AScriptClick.dropAtSlot(slot, itemId)` builds the item's own `Drop` entry (`CC_OP`, identifier = 1-based action index, param1 = the open inventory container), installs it on the client menu for the duration of the click so the left click resolves to `Drop`, and clears the menu afterwards. One click per drop, no open menu.
+  - `AScriptPick.dropRoute(itemId)` precomputes the route: the slots holding that item right now, shuffled once (Fisher-Yates), so a pass never draws a slot twice; `dropAtSlot` re-reads the slot and skips one already emptied — one pass clears the bag.
+  - Modules: BVF, Barbarian Fishing, Mining, Motherload Mine (gems + hammer cleanup), Woodcutting.
+  - Merge check: `grep "dropAtSlot" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
+  - Merge check: `grep -c "dropRoute" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptPick.java`
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.

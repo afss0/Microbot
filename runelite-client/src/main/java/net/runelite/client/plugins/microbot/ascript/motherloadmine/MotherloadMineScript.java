@@ -621,12 +621,12 @@ public class MotherloadMineScript implements AModule {
         }
 
         // Drop hammer if we picked it up from the crate (not if equipped Imcando).
-        // Client-mouse recipe (right-click -> Drop): a plain click would "Use" the hammer,
-        // and Rs2Inventory.drop() is a menu-entry injection, banned for module actions.
+        // dropAtSlot installs the hammer's Drop entry as the left-click entry: a plain click
+        // would "Use" it, and Rs2Inventory.drop() is a menu-entry injection.
         if (pickedUpHammer && !Rs2Equipment.isWearing("hammer") && AScriptBank.hasUnnotedItem("hammer")) {
             Rs2ItemModel hammer = AScriptPick.pick("hammer");
-            if (hammer != null && !AScriptClick.clickItemOption(hammer, "Drop")) {
-                log.warn("[MotherloadMineScript] hammer drop did not dispatch");
+            if (hammer != null && !AScriptClick.dropAtSlot(hammer.getSlot(), hammer.getId())) {
+                log.warn("[MotherloadMineScript] hammer drop did not land");
             }
             pickedUpHammer = false;
         }
@@ -661,21 +661,15 @@ public class MotherloadMineScript implements AModule {
     private boolean dropGems() {
         Microbot.status = "DROPPING GEMS";
         int before = countGems();
-        // Drop-target decisions (AScriptPick.nextDropTarget) over the gem instances the old
-        // dropAll(ids) walked in slot order: uniform first draw, then a weather-scaled roll
-        // between another uniform draw and one of the 2-4 slots nearest the cursor.
-        // clickItemOption carries the Drop menu entry: a plain click sends the default action
-        // ("Use" on uncut gems), which selected the gem instead of dropping it.
-        List<Rs2ItemModel> candidates = Rs2Inventory.getList(
-                item -> GEM_IDS.stream().anyMatch(gemId -> gemId == item.getId()));
-        boolean firstDraw = true;
-        while (!candidates.isEmpty()) {
-            Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
-                    firstDraw ? null : Microbot.getMouse().getMousePosition());
-            firstDraw = false;
-            if (item == null) break;
-            candidates.remove(item);
-            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
+        // Precomputed route over the slots holding a catalogued gem, shuffled once: no slot is
+        // drawn twice and dropAtSlot skips a slot whose item is gone. It also installs the
+        // gem's Drop entry as the left-click entry (uncut gems default to "Use").
+        for (int slot : AScriptPick.dropRoute(
+                item -> GEM_IDS.stream().anyMatch(gemId -> gemId == item.getId()))) {
+            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+            if (item == null) continue;
+            if (GEM_IDS.stream().noneMatch(gemId -> gemId == item.getId())) continue;
+            AScriptClick.dropAtSlot(slot, item.getId());
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }
         // The old shape was fire-and-forget: the drops were never verified, so a failed
