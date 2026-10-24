@@ -5,13 +5,6 @@ import net.runelite.api.Actor;
 import net.runelite.api.Client;
 import net.runelite.api.GameObject;
 import net.runelite.api.MenuAction;
-import net.runelite.api.widgets.ComponentID;
-import net.runelite.api.widgets.Widget;
-import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
-import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
-import net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange;
-import net.runelite.client.plugins.microbot.util.shop.Rs2Shop;
-import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.NPC;
 import net.runelite.api.Player;
@@ -345,17 +338,24 @@ public final class AScriptClick {
     }
 
 
-    // ── Drop recipe ────────────────────────────────────────────────
+    // ── Drop recipe (menu-entry-swapper mechanics) ─────────────────
+
+    /** Pending drop swap: the client menu's PostMenuSort moves this item's Drop row to the top. */
+    private static volatile int dropSwapSlot = -1;
+    private static volatile int dropSwapItemId = -1;
 
     /**
-     * Drop one inventory item by swapping its menu entry: the item's own Drop entry is
-     * installed as the only entry, so the left click that follows dispatches Drop instead of
-     * the item's default action ("Use" for raw fish, ore and logs — a plain click used to
-     * select the item instead of dropping it).
+     * Drop one inventory item the way RuneLite's Menu Entry Swapper does: the client builds the
+     * item's real menu entries on hover, and {@link #onPostMenuSort()} reorders them so the
+     * item's own {@code Drop} row is the top (left-click) entry. The press then dispatches that
+     * real entry — no fabricated menu entry, no injection, no open menu.
      * <p>
-     * One click per drop, no open menu, no shared-API change: this lives in the aScript plugin
-     * because it touches the client menu directly. The entry stays installed until the press
-     * has been processed, then the menu is cleared so it cannot dispatch on a later click.
+     * A raw click would dispatch the default action ("Use" for raw fish, ore and logs), which
+     * selected the item instead of dropping it; the right-click recipe failed live because the
+     * open menu rarely exposed the Drop row at 7 fps.
+     * <p>
+     * The swap stays armed (and is re-applied on every menu rebuild, as MES does) until the
+     * press has been processed, so a movement inside the click cannot resolve to "Use".
      *
      * @param slot   inventory slot (0-27)
      * @param itemId item expected in the slot; an empty or different slot is a no-op
@@ -371,20 +371,21 @@ public final class AScriptClick {
         if (bounds == null) {
             return false;
         }
-        int container = inventoryMenuContainer();
-        NewMenuEntry entry = buildDropEntry(container, slot, item);
-        if (entry == null) {
-            return false;
-        }
         Point point = Rs2UiHelper.getClickingPoint(bounds, true);
-        Microbot.targetMenu = entry;
+        dropSwapSlot = slot;
+        dropSwapItemId = itemId;
         boolean dropped = false;
         try {
-            installMenu(entry);
+            // Hover first: the client builds the real menu for this slot, PostMenuSort reorders
+            // it, and only then does the press mean "Drop".
+            Microbot.getMouse().move(point);
+            if (!sleepUntil(() -> isDropOnTop(slot), Rs2Random.logNormalBounded(400, 800))) {
+                log.warn("[AScriptClick] the Drop row never reached the top of the menu");
+                return false;
+            }
             Microbot.getMouse().click(point);
-            // The slot clears on the next client frame or two (7 fps in the sandboxes). The
-            // entry stays installed until the press is processed: the client applies the menu
-            // on its frame, not inside the AWT click.
+            // The slot clears on the next client frame or two (7 fps in the sandboxes). The swap
+            // stays armed until then so any rebuild during the press re-applies it.
             long deadline = System.currentTimeMillis() + 800;
             while (System.currentTimeMillis() < deadline) {
                 if (Rs2Inventory.getIdForSlot(slot) != itemId) {
@@ -399,80 +400,65 @@ public final class AScriptClick {
                 }
             }
         } finally {
-            Microbot.targetMenu = null;
-            // Never leave the fabricated Drop entry behind: a stale single-entry menu would
-            // dispatch it on whatever the next click hovers.
-            installMenu(null);
+            dropSwapSlot = -1;
+            dropSwapItemId = -1;
         }
         return dropped;
     }
 
-    /** The item's Drop entry, built from the inventory widget's own action list. */
-    private static NewMenuEntry buildDropEntry(int container, int slot, Rs2ItemModel item) {
+    /**
+     * MES-style swap, called from the plugin on every menu sort: put the requested item's real
+     * {@code Drop} entry on top of the client menu. Skipped while the menu is open — the open
+     * menu is not rebuilt, so swapping there would reorder it under the player's mouse.
+     */
+    public static void onPostMenuSort() {
+        int slot = dropSwapSlot;
+        int itemId = dropSwapItemId;
+        if (itemId < 0) {
+            return;
+        }
+        Client client = Microbot.getClient();
+        if (client.isMenuOpen()) {
+            return;
+        }
+        MenuEntry[] entries = client.getMenuEntries();
+        int own = -1;
+        for (int i = 0; i < entries.length; i++) {
+            MenuEntry entry = entries[i];
+            if (entry == null || entry.getOption() == null || !"Drop".equalsIgnoreCase(entry.getOption())) {
+                continue;
+            }
+            if (entry.getParam0() != slot) {
+                continue;
+            }
+            if (entry.getItemId() != -1 && entry.getItemId() != itemId) {
+                continue;
+            }
+            own = i;
+            break;
+        }
+        // The client stores the top entry last; moving ours there makes it the left click.
+        if (own < 0 || own == entries.length - 1) {
+            return;
+        }
+        MenuEntry top = entries[own];
+        System.arraycopy(entries, own + 1, entries, own, entries.length - 1 - own);
+        entries[entries.length - 1] = top;
+        client.getMenu().setMenuEntries(entries);
+    }
+
+    /** True when the client menu's top entry is the Drop row of {@code slot}. */
+    private static boolean isDropOnTop(int slot) {
         return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            Widget widget = Rs2Widget.getWidget(container);
-            if (widget == null || widget.getChildren() == null) {
-                return null;
+            MenuEntry[] entries = Microbot.getClient().getMenuEntries();
+            if (entries.length == 0) {
+                return false;
             }
-            Widget child = null;
-            for (Widget candidate : widget.getChildren()) {
-                if (candidate != null && candidate.getIndex() == slot) {
-                    child = candidate;
-                    break;
-                }
-            }
-            String[] actions = child != null && child.getActions() != null
-                    ? child.getActions()
-                    : item.getInventoryActions();
-            int index = -1;
-            for (int i = 0; i < actions.length; i++) {
-                String action = Rs2UiHelper.stripTags(actions[i] == null ? "" : actions[i]);
-                if (action != null && action.trim().equalsIgnoreCase("Drop")) {
-                    index = i;
-                    break;
-                }
-            }
-            if (index < 0) {
-                return null;
-            }
-            return new NewMenuEntry()
-                    .option("Drop")
-                    .param0(slot)
-                    .param1(container)
-                    .opcode(MenuAction.CC_OP.getId())
-                    .identifier(index + 1)
-                    .itemId(item.getId())
-                    .target(item.getName());
-        }).orElse(null);
-    }
-
-    /** param1 of the inventory item container for the interface that is open right now. */
-    private static int inventoryMenuContainer() {
-        if (Rs2Bank.isOpen()) {
-            return ComponentID.BANK_INVENTORY_ITEM_CONTAINER;
-        }
-        boolean depositBoxOpen = !Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            Widget deposit = Rs2Widget.getWidget(ComponentID.DEPOSIT_BOX_INVENTORY_ITEM_CONTAINER);
-            return deposit == null || deposit.isHidden();
+            MenuEntry top = entries[entries.length - 1];
+            return top != null && top.getOption() != null
+                    && "Drop".equalsIgnoreCase(top.getOption())
+                    && top.getParam0() == slot;
         }).orElse(false);
-        if (depositBoxOpen) {
-            return ComponentID.DEPOSIT_BOX_INVENTORY_ITEM_CONTAINER;
-        }
-        if (Rs2GrandExchange.isOpen()) {
-            return ComponentID.GRAND_EXCHANGE_INVENTORY_INVENTORY_ITEM_CONTAINER;
-        }
-        if (Rs2Shop.isOpen()) {
-            return 19726336;
-        }
-        return ComponentID.INVENTORY_CONTAINER;
-    }
-
-    /** Install (or clear with {@code null}) the client menu entries, on the client thread. */
-    private static void installMenu(MenuEntry entry) {
-        Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            Microbot.getClient().getMenu().setMenuEntries(entry == null ? new MenuEntry[0] : new MenuEntry[]{entry});
-            return null;
-        });
     }
 
     // ── Item-on-X recipe ───────────────────────────────────────────

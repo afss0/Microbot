@@ -1,12 +1,15 @@
 package net.runelite.client.plugins.microbot.ascript;
 
+import com.google.common.eventbus.Subscribe;
 import com.google.inject.Provides;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.events.PostMenuSort;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.DismissNpcEvent;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
 import net.runelite.client.plugins.microbot.ascript.eventdismiss.UseLampEvent;
@@ -40,6 +43,15 @@ public class AScriptPlugin extends Plugin {
 
     private DismissNpcEvent dismissNpcEvent;
     private UseLampEvent useLampEvent;
+
+    /**
+     * Menu Entry Swapper mechanics for the drop recipe: while a drop swap is pending,
+     * reorder the real menu entries so the item's Drop row is the left click.
+     */
+    @Subscribe
+    public void onPostMenuSort(PostMenuSort event) {
+        AScriptClick.onPostMenuSort();
+    }
 
     @Provides
     AScriptConfig provideConfig(ConfigManager configManager) {
