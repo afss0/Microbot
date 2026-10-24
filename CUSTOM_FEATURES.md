@@ -36,6 +36,12 @@ Used during merges to verify nothing is lost.
 - **What:** Removed programmatic `toggleRunEnergy(true)` calls. In-game auto-run settings handle this; re-enabling it programmatically is a detectable automation marker. Only stamina potion usage remains.
 - **Comment:** "Run toggle intentionally NOT done here — the in-game settings already handle auto-run, and re-enabling it programmatically is a detectable automation marker."
 
+### HWID spoofing off by default
+- **Files:** `MicrobotConfig.java`
+- **What:** `spoofDeviceId()` defaults to `false`. The upstream switch and the `hwid-agent` stay in the tree, but the fork never publishes `microbot.hwid.spoof=true` on its own. Identity handling is external: each Microbot sandbox container gets its own machine-id/product_uuid/MAC, and the agent is deliberately not attached there.
+- **Why:** Without the agent attached, the upstream default only produces "Spoof device ID is on, but the HWID agent is not attached" warnings at every login.
+- **Merge check:** `grep -A3 "default boolean spoofDeviceId" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotConfig.java | grep "return false"`
+
 ## Agent Server
 
 ### Remote Access (bindAllInterfaces)

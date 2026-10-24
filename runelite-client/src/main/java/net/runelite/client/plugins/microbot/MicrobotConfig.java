@@ -71,7 +71,10 @@ public interface MicrobotConfig extends Config
 	)
 	default boolean spoofDeviceId()
 	{
-		return true;
+		// Fork policy: identity/anti-fingerprinting is handled outside the client
+		// (per-profile sandbox containers). Keep the upstream switch available but
+		// never enable spoofing by default — without the agent it only logs warnings.
+		return false;
 	}
 
 	@ConfigSection(
