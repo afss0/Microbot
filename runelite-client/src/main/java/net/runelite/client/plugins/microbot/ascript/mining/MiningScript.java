@@ -772,15 +772,14 @@ public class MiningScript implements AModule {
             return; // nothing to drop — the caller's batch-end check owns this state
         }
         int slice = Math.min(before, Rs2Random.fancyNormalSample(5, 9));
-        List<Rs2ItemModel> candidates = Rs2Inventory.getList(i -> ore.isProduct(i.getId()));
-        boolean firstDraw = true;
-        while (slice > 0 && !candidates.isEmpty()) {
-            Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
-                    firstDraw ? null : Microbot.getMouse().getMousePosition());
-            firstDraw = false;
-            if (item == null) break;
-            candidates.remove(item);
-            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
+        // Precomputed route over the slots holding this ore's product, shuffled once: no slot
+        // is drawn twice and dropAtSlot skips a slot whose item is gone. It also installs the
+        // item's Drop entry as the left-click entry (ore defaults to "Use").
+        for (int slot : AScriptPick.dropRoute(i -> ore.isProduct(i.getId()))) {
+            if (slice <= 0) break;
+            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+            if (item == null || !ore.isProduct(item.getId())) continue;
+            if (!AScriptClick.dropAtSlot(slot, item.getId())) continue;
             slice--;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }

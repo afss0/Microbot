@@ -473,23 +473,17 @@ public class BarbarianVillageFisherScript implements AModule {
 
     private void doDropping(AScriptConfig config) {
         Microbot.status = "DROPPING";
-        // Drop-target decisions (AScriptPick.nextDropTarget) over the instances the old
-        // dropAllExcept(STANDARD) walked in slot order: uniform first draw, then a
-        // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
-        // cursor. Client-mouse clicks that carry the item's Drop menu entry (clickItemOption):
-        // a plain click(bounds) sends the default action, which is "Use" for raw fish, so the
-        // item was selected instead of dropped.
+        // One pass over the precomputed route: the slots that hold a droppable fish right
+        // now, shuffled once (AScriptPick.dropRoute). dropAtSlot installs the item's Drop
+        // entry as the left-click entry, so the click dispatches Drop (a raw click sent the
+        // default "Use" and selected the fish), and a slot emptied since the route was built
+        // is skipped there instead of clicked.
         // Only the fish the module itself handles: "everything but rod/bait" would also click
         // a lamp, food or a teleport that happens to sit in the inventory.
-        List<Rs2ItemModel> candidates = Rs2Inventory.getList(item -> isDroppable(item.getId()));
-        boolean firstDraw = true;
-        while (!candidates.isEmpty()) {
-            Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
-                    firstDraw ? null : Microbot.getMouse().getMousePosition());
-            firstDraw = false;
-            if (item == null) break;
-            candidates.remove(item);
-            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
+        for (int slot : AScriptPick.dropRoute(i -> isDroppable(i.getId()))) {
+            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+            if (item == null || !isDroppable(item.getId())) continue;
+            AScriptClick.dropAtSlot(slot, item.getId());
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }
         boolean dropped = sleepUntil(() -> countDroppableItems() == 0,
