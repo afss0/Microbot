@@ -13,6 +13,7 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -396,17 +397,16 @@ public class BarbarianFishingScript implements AModule {
         int clicked = 0;
         // Drop-target decisions (AScriptPick.nextDropTarget): uniform first draw, then a
         // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
-        // cursor. Bounds resolve immediately before each click; the clicked instance is pruned.
+        // cursor. clickItemOption carries the Drop menu entry: a plain click sends the default
+        // action ("Use" for raw fish), which selected the fish instead of dropping it.
         boolean firstDraw = true;
         while (clicked < slice && !droppables.isEmpty()) {
             Rs2ItemModel item = AScriptPick.nextDropTarget(droppables,
                     firstDraw ? null : Microbot.getMouse().getMousePosition());
             firstDraw = false;
             if (item == null) break;
-            Rectangle bounds = Rs2Inventory.itemBounds(item);
             droppables.remove(item);
-            if (bounds == null) continue;
-            Microbot.getMouse().click(bounds);
+            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
             clicked++;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }

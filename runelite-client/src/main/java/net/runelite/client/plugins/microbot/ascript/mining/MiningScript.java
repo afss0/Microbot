@@ -760,9 +760,10 @@ public class MiningScript implements AModule {
 
     /**
      * Drop a rolled slice of the mined product per tick (the fisher's sliced-drop
-     * pattern): one inline whole-inventory drop would hold the tick 10+ s. Bounds
-     * resolve immediately before each click; the slice verifies its count drop and a
-     * zero-progress slice counts a strike. Only the mined product is dropped.
+     * pattern): one inline whole-inventory drop would hold the tick 10+ s. The slice
+     * verifies its count drop and a zero-progress slice counts a strike. Only the mined
+     * product is dropped. A plain click sends the DEFAULT action (ore is "Use"), so each
+     * click carries the Drop menu entry (clickItemOption).
      */
     private void dropSlice(MiningOre ore) {
         Microbot.status = "MINING — dropping " + ore.getDisplayName();
@@ -778,10 +779,8 @@ public class MiningScript implements AModule {
                     firstDraw ? null : Microbot.getMouse().getMousePosition());
             firstDraw = false;
             if (item == null) break;
-            Rectangle bounds = Rs2Inventory.itemBounds(item);
             candidates.remove(item);
-            if (bounds == null) continue;
-            Microbot.getMouse().click(bounds);
+            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
             slice--;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }
