@@ -392,4 +392,12 @@ grep "default MiningOre miningOre" runelite-client/src/main/java/net/runelite/cl
 grep "public static int freeSlots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptBank.java | head -1
 grep "AScriptBank.freeSlots" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/crafting/CraftingScript.java | head -1
 grep "AScriptBank.bankQuantity" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingScript.java | head -1
+# upstream wiring that a rebase once dropped with --theirs (2026-10-23)
+# Run `:client:compileTestJava` too: these losses compile clean in production and only show up there.
+grep "clientAlertReporter.start" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java | head -1
+grep "tour.install(navButton)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java | head -1
+grep "hwidSpoofCheck.loggedIn" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java | head -1
+grep "Microbot.inputSelector = new InputSelector" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java | head -1
+grep "withdrawPreviousWalkScopedBlocks" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "QUICK_CLICK_SETTLE_MIN_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/VirtualMouse.java | head -1
 ```
