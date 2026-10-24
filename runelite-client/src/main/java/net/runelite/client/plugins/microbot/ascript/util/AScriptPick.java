@@ -96,6 +96,41 @@ public final class AScriptPick {
 
     // ── Documented opt-outs ────────────────────────────────────────
 
+    // ── Drop route ─────────────────────────────────────────────────
+
+    /**
+     * Precomputed drop route for one item id: every slot that holds it right now, in one
+     * uniform shuffle (Fisher-Yates). Built once per drop pass so the order carries no slot
+     * pattern and no slot is drawn twice — the old per-click pick could re-land on a slot
+     * that an earlier drop had already emptied, stretching the pass.
+     *
+     * <p>Callers walk the route and hand each slot to
+     * {@link Rs2Inventory#dropAtSlot(int, int)}: it re-reads the slot first, so a slot whose
+     * item is gone is skipped instead of clicked, and one pass clears the inventory.</p>
+     *
+     * @param itemId the item to route
+     * @return shuffled slot indices; empty when the item is not in the inventory
+     */
+    public static int[] dropRoute(int itemId) {
+        return dropRoute(item -> item.getId() == itemId);
+    }
+
+    /** {@link #dropRoute(int)} for a caller-supplied item filter (e.g. a set of ids). */
+    public static int[] dropRoute(Predicate<Rs2ItemModel> filter) {
+        List<Rs2ItemModel> items = Rs2Inventory.getList(filter);
+        int[] slots = new int[items.size()];
+        for (int i = 0; i < slots.length; i++) {
+            slots[i] = items.get(i).getSlot();
+        }
+        for (int i = slots.length - 1; i > 0; i--) {
+            int j = Rs2Random.between(0, i + 1);
+            int swap = slots[i];
+            slots[i] = slots[j];
+            slots[j] = swap;
+        }
+        return slots;
+    }
+
     /**
      * The lowest matching slot — the deterministic behaviour {@link Rs2Inventory#get} has.
      * Opt-out for a site where the FIRST occurrence is load-bearing; give the reason at the
