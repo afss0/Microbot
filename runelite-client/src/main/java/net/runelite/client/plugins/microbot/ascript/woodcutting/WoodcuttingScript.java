@@ -487,11 +487,10 @@ public class WoodcuttingScript implements AModule {
 
     /**
      * Drop a rolled slice of the target logs per tick (the fisher's sliced-drop pattern):
-     * one inline whole-inventory drop would hold the tick 10+ s. Bounds resolve immediately
-     * before each click; the slice verifies its count drop and a zero-progress slice counts
-     * a strike. Only the target log is dropped — everything else is kept. Logs (like the
-     * fisher's fish) carry "Drop" as their left-click default (wiki options verified
-     * 2026-10-15), so a plain client-mouse click drops them — no menu injection.
+     * one inline whole-inventory drop would hold the tick 10+ s. The slice verifies its count
+     * drop and a zero-progress slice counts a strike. Only the target log is dropped —
+     * everything else is kept. A plain click sends the item's DEFAULT action, which is "Use"
+     * for logs, so each click carries the Drop menu entry (clickItemOption) instead.
      */
     private void dropSlice(int logId) {
         Microbot.status = "WOODCUTTING — dropping logs";
@@ -508,10 +507,8 @@ public class WoodcuttingScript implements AModule {
                     firstDraw ? null : Microbot.getMouse().getMousePosition());
             firstDraw = false;
             if (item == null) break;
-            Rectangle bounds = Rs2Inventory.itemBounds(item);
             candidates.remove(item);
-            if (bounds == null) continue;
-            Microbot.getMouse().click(bounds);
+            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
             slice--;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }

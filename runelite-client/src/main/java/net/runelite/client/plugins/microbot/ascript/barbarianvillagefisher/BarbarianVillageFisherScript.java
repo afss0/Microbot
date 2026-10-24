@@ -476,7 +476,9 @@ public class BarbarianVillageFisherScript implements AModule {
         // Drop-target decisions (AScriptPick.nextDropTarget) over the instances the old
         // dropAllExcept(STANDARD) walked in slot order: uniform first draw, then a
         // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
-        // cursor. Client-mouse clicks — the shared dropAll* helper dispatched by injection.
+        // cursor. Client-mouse clicks that carry the item's Drop menu entry (clickItemOption):
+        // a plain click(bounds) sends the default action, which is "Use" for raw fish, so the
+        // item was selected instead of dropped.
         // Only the fish the module itself handles: "everything but rod/bait" would also click
         // a lamp, food or a teleport that happens to sit in the inventory.
         List<Rs2ItemModel> candidates = Rs2Inventory.getList(item -> isDroppable(item.getId()));
@@ -486,10 +488,8 @@ public class BarbarianVillageFisherScript implements AModule {
                     firstDraw ? null : Microbot.getMouse().getMousePosition());
             firstDraw = false;
             if (item == null) break;
-            Rectangle bounds = Rs2Inventory.itemBounds(item);
             candidates.remove(item);
-            if (bounds == null) continue;
-            Microbot.getMouse().click(bounds);
+            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }
         boolean dropped = sleepUntil(() -> countDroppableItems() == 0,

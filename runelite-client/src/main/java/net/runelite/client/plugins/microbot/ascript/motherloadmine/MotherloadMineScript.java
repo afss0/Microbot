@@ -620,9 +620,14 @@ public class MotherloadMineScript implements AModule {
             return false;
         }
 
-        // Drop hammer if we picked it up from the crate (not if equipped Imcando)
+        // Drop hammer if we picked it up from the crate (not if equipped Imcando).
+        // Client-mouse recipe (right-click -> Drop): a plain click would "Use" the hammer,
+        // and Rs2Inventory.drop() is a menu-entry injection, banned for module actions.
         if (pickedUpHammer && !Rs2Equipment.isWearing("hammer") && AScriptBank.hasUnnotedItem("hammer")) {
-            Rs2Inventory.drop("hammer");
+            Rs2ItemModel hammer = AScriptPick.pick("hammer");
+            if (hammer != null && !AScriptClick.clickItemOption(hammer, "Drop")) {
+                log.warn("[MotherloadMineScript] hammer drop did not dispatch");
+            }
             pickedUpHammer = false;
         }
 
@@ -659,6 +664,8 @@ public class MotherloadMineScript implements AModule {
         // Drop-target decisions (AScriptPick.nextDropTarget) over the gem instances the old
         // dropAll(ids) walked in slot order: uniform first draw, then a weather-scaled roll
         // between another uniform draw and one of the 2-4 slots nearest the cursor.
+        // clickItemOption carries the Drop menu entry: a plain click sends the default action
+        // ("Use" on uncut gems), which selected the gem instead of dropping it.
         List<Rs2ItemModel> candidates = Rs2Inventory.getList(
                 item -> GEM_IDS.stream().anyMatch(gemId -> gemId == item.getId()));
         boolean firstDraw = true;
@@ -667,10 +674,8 @@ public class MotherloadMineScript implements AModule {
                     firstDraw ? null : Microbot.getMouse().getMousePosition());
             firstDraw = false;
             if (item == null) break;
-            Rectangle bounds = Rs2Inventory.itemBounds(item);
             candidates.remove(item);
-            if (bounds == null) continue;
-            Microbot.getMouse().click(bounds);
+            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }
         // The old shape was fire-and-forget: the drops were never verified, so a failed
