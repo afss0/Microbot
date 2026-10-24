@@ -395,18 +395,15 @@ public class BarbarianFishingScript implements AModule {
         int before = countDroppables();
         int slice = Rs2Random.fancyNormalSample(DROP_SLICE_MIN, DROP_SLICE_MAX);
         int clicked = 0;
-        // Drop-target decisions (AScriptPick.nextDropTarget): uniform first draw, then a
-        // weather-scaled roll between another uniform draw and one of the 2-4 slots nearest the
-        // cursor. clickItemOption carries the Drop menu entry: a plain click sends the default
-        // action ("Use" for raw fish), which selected the fish instead of dropping it.
-        boolean firstDraw = true;
-        while (clicked < slice && !droppables.isEmpty()) {
-            Rs2ItemModel item = AScriptPick.nextDropTarget(droppables,
-                    firstDraw ? null : Microbot.getMouse().getMousePosition());
-            firstDraw = false;
-            if (item == null) break;
-            droppables.remove(item);
-            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
+        // One pass over the precomputed route: the slots that hold a droppable fish right
+        // now, shuffled once. No slot is drawn twice, and dropAtSlot re-reads the slot (a
+        // slot emptied by an earlier drop is skipped) and installs the item's Drop entry —
+        // a raw click sent the default "Use" and selected the fish instead of dropping it.
+        for (int slot : AScriptPick.dropRoute(BarbarianFishingScript::isDroppable)) {
+            if (clicked >= slice) break;
+            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+            if (item == null || !isDroppable(item)) continue;
+            if (!AScriptClick.dropAtSlot(slot, item.getId())) continue;
             clicked++;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }

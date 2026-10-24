@@ -5,6 +5,13 @@ import net.runelite.api.Actor;
 import net.runelite.api.Client;
 import net.runelite.api.GameObject;
 import net.runelite.api.MenuAction;
+import net.runelite.api.widgets.ComponentID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
+import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange;
+import net.runelite.client.plugins.microbot.util.shop.Rs2Shop;
+import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.NPC;
 import net.runelite.api.Player;
@@ -337,56 +344,138 @@ public final class AScriptClick {
         return new Target(target.clickbox(), false, pick == RowPick.DISPATCHED);
     }
 
+
+    // ── Drop recipe ────────────────────────────────────────────────
+
     /**
-     * Press a non-default inventory option ("Drop", "Eat", ...) through the real option
-     * menu: right-click the item's bounds, wait for the (frozen) menu, and press the row
-     * whose option matches. Client mouse only — no fabricated menu entry, no injection.
+     * Drop one inventory item by swapping its menu entry: the item's own Drop entry is
+     * installed as the only entry, so the left click that follows dispatches Drop instead of
+     * the item's default action ("Use" for raw fish, ore and logs — a plain click used to
+     * select the item instead of dropping it).
      * <p>
-     * This is the recipe for actions the item's default left-click does NOT perform: raw
-     * fish, ore and logs default to "Use", so a plain {@code click(itemBounds)} selects the
-     * item instead of dropping it (live 2026-10-24: the sliced droppers used every item).
-     * <p>
-     * The effect stays with the caller (count drop / animation), like the other recipes.
+     * One click per drop, no open menu, no shared-API change: this lives in the aScript plugin
+     * because it touches the client menu directly. The entry stays installed until the press
+     * has been processed, then the menu is cleared so it cannot dispatch on a later click.
      *
-     * @param item   the inventory item to act on
-     * @param option the exact option to pick, case-insensitive (e.g. {@code "Drop"})
-     * @return true when the row was pressed and the menu closed on it
+     * @param slot   inventory slot (0-27)
+     * @param itemId item expected in the slot; an empty or different slot is a no-op
+     * @return true when the slot no longer holds the item
      */
-    public static boolean clickItemOption(Rs2ItemModel item, String option) {
-        if (item == null || option == null || option.isBlank()) {
-            log.warn("[AScriptClick] no item/option to pick — not clicking");
+    public static boolean dropAtSlot(int slot, int itemId) {
+        ensureInventoryVisible();
+        Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+        if (item == null || item.getId() != itemId) {
             return false;
         }
-        ensureInventoryVisible();
         Rectangle bounds = Rs2Inventory.itemBounds(item);
         if (bounds == null) {
             return false;
         }
-        // One resolve: getClickingPoint randomizes on every call and the right-click must
-        // land on the exact point the menu was built for.
-        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
-        String name = item.getName();
-        int itemId = item.getId();
-        Predicate<MenuEntry> isOurs = entry -> {
-            if (entry == null || entry.getOption() == null || !option.equalsIgnoreCase(entry.getOption())) {
-                return false;
-            }
-            if (entry.getItemId() == itemId) {
-                return true;
-            }
-            String target = entry.getTarget() == null ? "" : Rs2UiHelper.stripTags(entry.getTarget());
-            return name != null && target.toLowerCase().contains(name.toLowerCase());
-        };
-        RowPick pick = pressViaMenuRow(point, isOurs, MENU_CLOSED_IS_ENOUGH);
-        if (pick == RowPick.MENU_STUCK) {
-            log.error("[AScriptClick] the option menu would not close — leaving it open for a human");
-        } else if (pick == RowPick.FAILED) {
-            log.warn("[AScriptClick] the open menu never exposed the \"{}\" row — not pressing", option);
+        int container = inventoryMenuContainer();
+        NewMenuEntry entry = buildDropEntry(container, slot, item);
+        if (entry == null) {
+            return false;
         }
-        return pick == RowPick.DISPATCHED;
+        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
+        Microbot.targetMenu = entry;
+        boolean dropped = false;
+        try {
+            installMenu(entry);
+            Microbot.getMouse().click(point);
+            // The slot clears on the next client frame or two (7 fps in the sandboxes). The
+            // entry stays installed until the press is processed: the client applies the menu
+            // on its frame, not inside the AWT click.
+            long deadline = System.currentTimeMillis() + 800;
+            while (System.currentTimeMillis() < deadline) {
+                if (Rs2Inventory.getIdForSlot(slot) != itemId) {
+                    dropped = true;
+                    break;
+                }
+                try {
+                    Thread.sleep(60);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        } finally {
+            Microbot.targetMenu = null;
+            // Never leave the fabricated Drop entry behind: a stale single-entry menu would
+            // dispatch it on whatever the next click hovers.
+            installMenu(null);
+        }
+        return dropped;
     }
 
-    // ── Item-on-X recipe ───────────────────────────────────
+    /** The item's Drop entry, built from the inventory widget's own action list. */
+    private static NewMenuEntry buildDropEntry(int container, int slot, Rs2ItemModel item) {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget widget = Rs2Widget.getWidget(container);
+            if (widget == null || widget.getChildren() == null) {
+                return null;
+            }
+            Widget child = null;
+            for (Widget candidate : widget.getChildren()) {
+                if (candidate != null && candidate.getIndex() == slot) {
+                    child = candidate;
+                    break;
+                }
+            }
+            String[] actions = child != null && child.getActions() != null
+                    ? child.getActions()
+                    : item.getInventoryActions();
+            int index = -1;
+            for (int i = 0; i < actions.length; i++) {
+                String action = Rs2UiHelper.stripTags(actions[i] == null ? "" : actions[i]);
+                if (action != null && action.trim().equalsIgnoreCase("Drop")) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0) {
+                return null;
+            }
+            return new NewMenuEntry()
+                    .option("Drop")
+                    .param0(slot)
+                    .param1(container)
+                    .opcode(MenuAction.CC_OP.getId())
+                    .identifier(index + 1)
+                    .itemId(item.getId())
+                    .target(item.getName());
+        }).orElse(null);
+    }
+
+    /** param1 of the inventory item container for the interface that is open right now. */
+    private static int inventoryMenuContainer() {
+        if (Rs2Bank.isOpen()) {
+            return ComponentID.BANK_INVENTORY_ITEM_CONTAINER;
+        }
+        boolean depositBoxOpen = !Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget deposit = Rs2Widget.getWidget(ComponentID.DEPOSIT_BOX_INVENTORY_ITEM_CONTAINER);
+            return deposit == null || deposit.isHidden();
+        }).orElse(false);
+        if (depositBoxOpen) {
+            return ComponentID.DEPOSIT_BOX_INVENTORY_ITEM_CONTAINER;
+        }
+        if (Rs2GrandExchange.isOpen()) {
+            return ComponentID.GRAND_EXCHANGE_INVENTORY_INVENTORY_ITEM_CONTAINER;
+        }
+        if (Rs2Shop.isOpen()) {
+            return 19726336;
+        }
+        return ComponentID.INVENTORY_CONTAINER;
+    }
+
+    /** Install (or clear with {@code null}) the client menu entries, on the client thread. */
+    private static void installMenu(MenuEntry entry) {
+        Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Microbot.getClient().getMenu().setMenuEntries(entry == null ? new MenuEntry[0] : new MenuEntry[]{entry});
+            return null;
+        });
+    }
+
+    // ── Item-on-X recipe ───────────────────────────────────────────
 
     /**
      * Item-on-object recipe (client mouse, no injection): select {@code item} with a

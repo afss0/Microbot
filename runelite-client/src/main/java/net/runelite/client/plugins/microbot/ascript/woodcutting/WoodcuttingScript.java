@@ -489,26 +489,21 @@ public class WoodcuttingScript implements AModule {
      * Drop a rolled slice of the target logs per tick (the fisher's sliced-drop pattern):
      * one inline whole-inventory drop would hold the tick 10+ s. The slice verifies its count
      * drop and a zero-progress slice counts a strike. Only the target log is dropped —
-     * everything else is kept. A plain click sends the item's DEFAULT action, which is "Use"
-     * for logs, so each click carries the Drop menu entry (clickItemOption) instead.
+     * everything else is kept. Each click carries the log's Drop entry (dropAtSlot): a plain
+     * click sends the DEFAULT action, which is "Use" for logs.
      */
     private void dropSlice(int logId) {
         Microbot.status = "WOODCUTTING — dropping logs";
         int before = Rs2Inventory.itemQuantity(logId);
         int slice = Math.min(before, Rs2Random.fancyNormalSample(5, 9));
-        // Drop-target decisions (AScriptPick.nextDropTarget): the batch's first draw is uniform —
-        // never the lowest slot — then a weather-scaled roll between another uniform draw and one
-        // of the 2-4 slots nearest the cursor (the "sweep the neighbours, then jump" rhythm).
-        // Bounds resolve immediately before each click; the clicked instance is pruned.
-        List<Rs2ItemModel> candidates = Rs2Inventory.getList(i -> i.getId() == logId);
-        boolean firstDraw = true;
-        while (slice > 0 && !candidates.isEmpty()) {
-            Rs2ItemModel item = AScriptPick.nextDropTarget(candidates,
-                    firstDraw ? null : Microbot.getMouse().getMousePosition());
-            firstDraw = false;
-            if (item == null) break;
-            candidates.remove(item);
-            if (!AScriptClick.clickItemOption(item, "Drop")) continue;
+        // Precomputed route over the slots holding the target log, shuffled once: no slot is
+        // drawn twice and dropAtSlot skips a slot whose item is gone. It also installs the
+        // item's Drop entry as the left-click entry (logs default to "Use").
+        for (int slot : AScriptPick.dropRoute(logId)) {
+            if (slice <= 0) break;
+            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+            if (item == null || item.getId() != logId) continue;
+            if (!AScriptClick.dropAtSlot(slot, item.getId())) continue;
             slice--;
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
         }
