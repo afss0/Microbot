@@ -24,6 +24,13 @@ import static net.runelite.client.plugins.microbot.util.Global.sleep;
 
 @Slf4j
 public class VirtualMouse extends Mouse {
+    public static final int CLICK_HOLD_MIN_MS = 55;
+    public static final int CLICK_HOLD_MAX_MS = 140;
+    public static final int QUICK_CLICK_HOLD_MIN_MS = 30;
+    public static final int QUICK_CLICK_HOLD_MAX_MS = 65;
+    public static final int QUICK_CLICK_SETTLE_MIN_MS = 10;
+    public static final int QUICK_CLICK_SETTLE_MAX_MS = 25;
+
     private final ScheduledExecutorService scheduledExecutorService;
 
     /**
@@ -53,14 +60,25 @@ public class VirtualMouse extends Mouse {
     }
 
     private void handleClick(InputLoop.Emit emit, Point point, boolean rightClick) {
+        handleClick(emit, point, rightClick, false, () -> { });
+    }
+
+    private void handleClick(InputLoop.Emit emit, Point point, boolean rightClick, boolean quick, Runnable beforePress) {
         int button = rightClick ? MouseEvent.BUTTON3 : MouseEvent.BUTTON1;
         // A human clicking where the pointer already is sends no fresh MOVED, so emit one only
         // when it is not there, which happens when NaturalMouse was skipped. No ENTERED/EXITED:
         // no human click sends those, and the EXITED wrote (-1,-1) into the tracked position.
         if (!PointerState.isAt(point.getX(), point.getY())) {
             emit.move(point.getX(), point.getY());
+            if (quick) {
+                sleep(Rs2Random.logNormalBounded(QUICK_CLICK_SETTLE_MIN_MS, QUICK_CLICK_SETTLE_MAX_MS));
+            }
         }
+        beforePress.run();
         emit.press(point.getX(), point.getY(), button);
+        sleep(quick
+                ? Rs2Random.logNormalBounded(QUICK_CLICK_HOLD_MIN_MS, QUICK_CLICK_HOLD_MAX_MS)
+                : Rs2Random.logNormalBounded(CLICK_HOLD_MIN_MS, CLICK_HOLD_MAX_MS));
         emit.release(point.getX(), point.getY(), button);
         emit.click(point.getX(), point.getY(), button);
         setLastClick(point);
@@ -150,6 +168,15 @@ public class VirtualMouse extends Mouse {
 
 
     public Mouse click(Point point, boolean rightClick, NewMenuEntry entry) {
+        return click(point, rightClick, entry, false);
+    }
+
+    @Override
+    public Mouse quickClick(Point point, NewMenuEntry entry) {
+        return click(point, false, entry, true);
+    }
+
+    private Mouse click(Point point, boolean rightClick, NewMenuEntry entry, boolean quick) {
         if (point == null) return this;
 
         mouseSyncOnStart();
@@ -159,7 +186,7 @@ public class VirtualMouse extends Mouse {
             try {
                 InputLoop.run(emit -> {
                     Point newPoint = point;
-                    if (shouldMoveNaturally(point)) {
+                    if (!quick && shouldMoveNaturally(point)) {
                         Microbot.naturalMouse.moveTo(point.getX(), point.getY());
 
                         if (Rs2UiHelper.hasActor(entry)) {
@@ -183,12 +210,11 @@ public class VirtualMouse extends Mouse {
                     // above), so an entry click carries the same misclick model as a plain point
                     // click; the pointer walks to the missed point, as a human's would.
                     Point clickPoint = weatherAdjustedClickPoint(newPoint);
-                    if (clickPoint != newPoint && shouldMoveNaturally(newPoint)) {
+                    if (!quick && clickPoint != newPoint && shouldMoveNaturally(newPoint)) {
                         Microbot.naturalMouse.moveTo(clickPoint.getX(), clickPoint.getY());
                     }
 
-                    Microbot.targetMenu = entry;
-                    handleClick(emit, clickPoint, rightClick);
+                    handleClick(emit, clickPoint, rightClick, quick, () -> Microbot.targetMenu = entry);
                 });
             } finally {
                 interactionInProgress = false;
@@ -243,6 +269,9 @@ public class VirtualMouse extends Mouse {
      */
     public Mouse move(Point point) {
         if (InputArbiter.isHuman()) {
+            return this;
+        }
+        if (AwtEmitter.heldMask() != 0 && !InputLoop.isInGesture()) {
             return this;
         }
         boolean standalone = !interactionInProgress;
