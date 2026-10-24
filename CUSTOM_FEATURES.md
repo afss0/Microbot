@@ -311,6 +311,11 @@ Used during merges to verify nothing is lost.
   - Merge check: `grep "specialAttackAxeIds" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/woodcutting/Axe.java | head -1`
   - Merge check: `grep "FISHING_ROD_ID" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/barbarianvillagefisher/BarbarianVillageFisherScript.java | head -1`
   - Merge check: `grep "DRAGON_PICKAXE_PRETTY" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/motherloadmine/Pickaxe.java | head -1`
+- **Inventory drops pick the real Drop option (Oct 2026):**
+  - The sliced droppers (BVF, Barbarian Fishing, Mining, Motherload Mine, Woodcutting) clicked the item rectangle with a raw client-mouse click. A raw click dispatches the item's **default** left-click action, which is `Use` for raw fish, ore and logs: the live report (2026-10-24) was every item being used instead of dropped, and the module's count-drop verification then stopped it. The Woodcutting comment that asserted "logs carry Drop as default" was wrong.
+  - Fix: new `AScriptClick.clickItemOption(item, "Drop")` — the non-default-op recipe already used for actors: right-click the item bounds, wait for the (frozen) open menu, press the `Drop` row with a physical click. Client mouse only; `targetMenu` / `doInvoke` / `NewMenuEntry` stay banned for module actions, so this never fabricates a menu. The five sliced droppers and the Motherload Mine hammer cleanup use it.
+  - Merge check: `grep "clickItemOption" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
+  - Merge check: `grep -c "clickItemOption" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/barbarianvillagefisher/BarbarianVillageFisherScript.java`
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
