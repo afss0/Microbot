@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript;
 
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
 import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingScript;
+import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
 import net.runelite.client.plugins.microbot.ascript.mining.MiningScript;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingScript;
@@ -39,6 +40,8 @@ public class ModuleSelectionTest {
                 new MotherloadMineScript().validateSelection(selection(ScriptType.MOTHERLOAD_MINE)));
         assertEquals("no crafting activity selected",
                 new CraftingScript().validateSelection(selection(ScriptType.CRAFTING)));
+        assertEquals("no fletching activity selected",
+                new FletchingScript().validateSelection(selection(ScriptType.FLETCHING)));
     }
 
     @Test
@@ -48,5 +51,6 @@ public class ModuleSelectionTest {
         assertNull(new WoodcuttingScript().validateSelection(selection(ScriptType.MINING)));
         assertNull(new MotherloadMineScript().validateSelection(selection(ScriptType.WOODCUTTING)));
         assertNull(new CraftingScript().validateSelection(selection(ScriptType.FIREMAKING)));
+        assertNull(new FletchingScript().validateSelection(selection(ScriptType.MINING)));
     }
 }

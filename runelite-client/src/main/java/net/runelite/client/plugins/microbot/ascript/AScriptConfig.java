@@ -26,9 +26,6 @@ import net.runelite.client.plugins.microbot.ascript.mining.MiningOre;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MLMMiningSpotList;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingAction;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingTree;
-import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingArrow;
-import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingBolt;
-import net.runelite.client.plugins.microbot.util.skills.fletching.data.FletchingDart;
 
 @ConfigGroup(AScriptConfig.GROUP)
 public interface AScriptConfig extends Config {
@@ -246,8 +243,8 @@ public interface AScriptConfig extends Config {
             position = 2,
             section = fletchingSection
     )
-    default FletchingDart fletchingDartType() {
-        return FletchingDart.BRONZE;
+    default FletchingDartType fletchingDartType() {
+        return FletchingDartType.BRONZE;
     }
 
     @ConfigItem(
@@ -257,8 +254,8 @@ public interface AScriptConfig extends Config {
             position = 3,
             section = fletchingSection
     )
-    default FletchingBolt fletchingBoltType() {
-        return FletchingBolt.BRONZE;
+    default FletchingBoltType fletchingBoltType() {
+        return FletchingBoltType.BRONZE;
     }
 
     @ConfigItem(
@@ -268,19 +265,63 @@ public interface AScriptConfig extends Config {
             position = 4,
             section = fletchingSection
     )
-    default FletchingArrow fletchingArrowType() {
-        return FletchingArrow.BRONZE;
+    default FletchingArrowType fletchingArrowType() {
+        return FletchingArrowType.BRONZE;
     }
 
     @ConfigItem(
             keyName = "fletchingBowType",
             name = "Bow Type",
-            description = "Choose the type of bow to string",
+            description = "Bow used by the String Bows and Carve Bows (u) activities",
             position = 5,
             section = fletchingSection
     )
     default FletchingBowType fletchingBowType() {
         return FletchingBowType.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingBoltTipType",
+            name = "Gem-tipped Bolt Type",
+            description = "Base bolts + gem tips to combine (Dragon bolts accept any gem except amethyst)",
+            position = 6,
+            section = fletchingSection
+    )
+    default FletchingBoltTipType fletchingBoltTipType() {
+        return FletchingBoltTipType.OPAL;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingShaftType",
+            name = "Arrow Shaft Log Type",
+            description = "Log type used by the Arrow Shafts activity",
+            position = 7,
+            section = fletchingSection
+    )
+    default FletchingShaftType fletchingShaftType() {
+        return FletchingShaftType.LOGS;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingStockType",
+            name = "Crossbow Stock Type",
+            description = "Crossbow stock to carve from logs",
+            position = 8,
+            section = fletchingSection
+    )
+    default FletchingStockType fletchingStockType() {
+        return FletchingStockType.WOODEN;
+    }
+
+    @ConfigItem(
+            keyName = "fletchingShieldType",
+            name = "Shield Type",
+            description = "Shield to carve from logs (each shield consumes 2 logs)",
+            position = 9,
+            section = fletchingSection
+    )
+    default FletchingShieldType fletchingShieldType() {
+        return FletchingShieldType.OAK;
     }
 
     // ── Motherload Mine ────────────────────────────────────────
