@@ -31,6 +31,7 @@ public abstract class AgentHandler implements HttpHandler {
 
 	private static volatile Supplier<String> tokenSupplier = () -> null;
 	private static volatile boolean allowRemoteAccess = false;
+	private static final ThreadLocal<String> requestBody = new ThreadLocal<>();
 
 	protected final Gson gson;
 
@@ -76,6 +77,7 @@ public abstract class AgentHandler implements HttpHandler {
 			}
 		}
 
+		long started = System.nanoTime();
 		try {
 			handleRequest(exchange);
 		} catch (BadRequestException e) {
@@ -88,6 +90,12 @@ public abstract class AgentHandler implements HttpHandler {
 			}
 			log.error("Error handling {}", exchange.getRequestURI(), e);
 			sendErrorResponse(exchange, 500, "Internal server error: " + e.getMessage());
+		} finally {
+			if (AgentTrace.isEnabled()) {
+				AgentTrace.record(exchange.getRequestMethod(), exchange.getRequestURI().toString(),
+						exchange.getResponseCode(), (System.nanoTime() - started) / 1_000_000, requestBody.get());
+			}
+			requestBody.remove();
 		}
 	}
 
@@ -227,6 +235,7 @@ public abstract class AgentHandler implements HttpHandler {
 			throw new BadRequestException("Request body too large");
 		}
 		String body = new String(bodyBytes, StandardCharsets.UTF_8);
+		requestBody.set(body);
 		Map<String, Object> parsed;
 		try {
 			parsed = gson.fromJson(body, LinkedHashMap.class);
