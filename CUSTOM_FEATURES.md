@@ -413,4 +413,11 @@ grep "hwidSpoofCheck.loggedIn" runelite-client/src/main/java/net/runelite/client
 grep "Microbot.inputSelector = new InputSelector" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java | head -1
 grep "withdrawPreviousWalkScopedBlocks" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
 grep "QUICK_CLICK_SETTLE_MIN_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/mouse/VirtualMouse.java | head -1
+# upstream helpers a rebase dropped (2026-10-24): walker auto-run + agent trace
+# Rs2WalkerMovement/Rs2WalkerDoors call these; without them the post-rebase gate fails.
+grep "static boolean walkFastCanvasWithAutoRun" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "static void requestAutoRun" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
+grep "KEY_TRACE" runelite-client/src/main/java/net/runelite/client/plugins/microbot/agentserver/AgentServerConfig.java | head -1
+grep "AgentTrace.isEnabled" runelite-client/src/main/java/net/runelite/client/plugins/microbot/agentserver/handler/AgentHandler.java | head -1
+grep "object is no longer in a loaded world view" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1
 ```

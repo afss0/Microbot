@@ -563,7 +563,9 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 		String user = System.getProperty("user.name");
 		if (user != null && user.length() >= 3)
 		{
-			text = text.replace(user, "[user]");
+			// Whole-token only: a bare String.replace turned "username" into "[user]name" on
+			// machines whose OS account is literally "user" (the sandbox user).
+			text = text.replaceAll("(?<![A-Za-z0-9_.-])" + java.util.regex.Pattern.quote(user) + "(?![A-Za-z0-9_.-])", "[user]");
 		}
 		StringBuilder out = new StringBuilder();
 		for (String line : text.split("\n", -1))
