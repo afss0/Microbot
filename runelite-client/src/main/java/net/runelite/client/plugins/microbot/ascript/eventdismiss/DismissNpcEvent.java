@@ -443,11 +443,12 @@ public class DismissNpcEvent implements BlockingEvent {
         // npcComposition.getActions(), and RuneLite's RandomEventPlugin matches the
         // same string against MenuAction.NPC_FIRST_OPTION..FIFTH_OPTION entries. It
         // is never the left-click default (the wiki infoboxes list it second, after
-        // "Talk-to"), so a plain left-click could never reach it — pick our row out
-        // of the open option menu instead. A click that did not happen leaves the NPC
-        // here, so there is nothing to wait for; the caller retries on a later pass.
+        // "Talk-to"), so a plain left-click could never reach it — the verified actor
+        // recipe presses our row out of the open option menu instead. A click that did
+        // not happen leaves the NPC here, so there is nothing to wait for; the caller
+        // retries on a later pass.
         Microbot.status = "Dismiss " + npc.getName();
-        if (!AScriptClick.clickActorOp(npc.getNpc(), "Dismiss").clicked()) {
+        if (!AScriptClick.clickActor(npc.getNpc(), "Dismiss").clicked()) {
             return false;
         }
         return Global.sleepUntil(() -> getRandomEventNpc() == null);

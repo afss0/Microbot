@@ -352,16 +352,15 @@ public class CannonballSmelterScript implements AModule {
                 fail("furnace not found (" + choice + ")");
                 return;
             }
-            // The shared house object recipe (AScriptClick): camera first, then the
-            // furnace's real clickbox, waiting a not-yet-rendered hull out behind the
-            // module's render budget. A canvas-sized clickbox means getObjectClickbox
-            // fell back: the object is in the scene but not actually rendered yet (the
-            // render-distance / fog boundary), and a click would scatter over the
-            // terrain ("Walk here" — the menu-entry override is not a substitute for a
-            // real hull). Never click blindly. The budget is deliberately generous and
-            // is NOT the action-failure counter — a render race is not a module failure,
-            // so it must not spend lives.
-            AScriptClick.Target target = AScriptClick.resolveObject(furnace, RENDER_WAIT_STEPS);
+            // The shared house object recipe (AScriptClick), now dispatch-verified: camera
+            // first, then the furnace's real clickbox with a bounded render wait, and the
+            // "Smelt" row confirmed in the hover (plain click) or the open menu (row press).
+            // A canvas-sized clickbox means getObjectClickbox fell back: the object is in the
+            // scene but not actually rendered yet (the render-distance / fog boundary), and a
+            // click would scatter over the terrain ("Walk here"). Never click blindly. The
+            // render budget is deliberately generous and is NOT the action-failure counter — a
+            // render race is not a module failure, so it must not spend lives.
+            AScriptClick.Target target = AScriptClick.clickObject(furnace, "Smelt", RENDER_WAIT_STEPS);
             if (target.cameraTurned()) {
                 return; // retry next tick — not a failure
             }
@@ -379,8 +378,13 @@ public class CannonballSmelterScript implements AModule {
                 return;
             }
             renderMisses = 0;
+            if (!target.clicked()) {
+                // Hover/menu failure (row not ranked, menu stuck, cursor lost) — the smelt
+                // interface wait below would otherwise report a false "did not open" start.
+                fail("Smelt was not dispatched (" + target.miss() + ")");
+                return;
+            }
             Microbot.status = "SMELTING — approaching furnace";
-            furnace.click("Smelt");
 
             if (!sleepUntil(() -> Rs2Widget.getWidget(SMELT_INTERFACE_WIDGET) != null,
                     Rs2Random.logNormalBounded(5000, 8000, weatherMultiplier))) {
