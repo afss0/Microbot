@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.*;
 import net.runelite.api.Point;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.coords.WorldArea;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
@@ -132,6 +133,82 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
         }
 
         return WorldPoint.fromScene(wv, sceneMin.getX(), sceneMin.getY(), wv.getPlane());
+    }
+
+    /** World-tile location read on the client thread (upstream API used by the object queries). */
+    public WorldPoint getRuneLiteWorldLocation() {
+        return Microbot.getClientThread().invoke(() -> tileObject.getWorldLocation());
+    }
+
+    public int sizeX() {
+        if (!(tileObject instanceof GameObject)) {
+            return 1;
+        }
+        GameObject gameObject = (GameObject) tileObject;
+        Integer size = Microbot.getClientThread().invoke(() -> gameObject.sizeX());
+        return size != null ? size : 1;
+    }
+
+    public int sizeY() {
+        if (!(tileObject instanceof GameObject)) {
+            return 1;
+        }
+        GameObject gameObject = (GameObject) tileObject;
+        Integer size = Microbot.getClientThread().invoke(() -> gameObject.sizeY());
+        return size != null ? size : 1;
+    }
+
+    public @Nullable WorldArea getWorldArea() {
+        WorldPoint southWest = getWorldLocation();
+        if (southWest == null) {
+            return null;
+        }
+        return new WorldArea(southWest, sizeX(), sizeY());
+    }
+
+    public boolean occupies(WorldPoint point) {
+        if (point == null) {
+            return false;
+        }
+        WorldPoint southWest = getWorldLocation();
+        if (southWest == null || southWest.getPlane() != point.getPlane()) {
+            return false;
+        }
+        int dx = point.getX() - southWest.getX();
+        int dy = point.getY() - southWest.getY();
+        return dx >= 0 && dx < sizeX() && dy >= 0 && dy < sizeY();
+    }
+
+    public boolean hasAction(String action) {
+        return matchesAction(action, true);
+    }
+
+    public boolean hasActionContaining(String action) {
+        return matchesAction(action, false);
+    }
+
+    private boolean matchesAction(String action, boolean exact) {
+        if (action == null || action.isEmpty()) {
+            return false;
+        }
+        String[] actions = Microbot.getClientThread().invoke(() -> {
+            ObjectComposition composition = getVisibleObjectComposition();
+            return composition != null ? composition.getActions() : null;
+        });
+        if (actions == null) {
+            return false;
+        }
+        String needle = action.toLowerCase();
+        for (String candidate : actions) {
+            if (candidate == null) {
+                continue;
+            }
+            String stripped = Rs2UiHelper.stripColTags(candidate);
+            if (exact ? stripped.equalsIgnoreCase(action) : stripped.toLowerCase().contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public String getName() {
