@@ -11,8 +11,8 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -348,6 +348,12 @@ public class WoodcuttingScript implements AModule {
                 return;
             }
             if (Rs2Inventory.isFull()) {
+                if (Rs2Inventory.itemQuantity(logId) == 0) {
+                    // Full of something else: a drop slice would wait on a count that can never
+                    // shrink and stop the module with "log drop did not land" (Mining's guard).
+                    fail("inventory is full but holds no " + treeChoice.getLogName());
+                    return;
+                }
                 dropping = true;
                 dropSlice(logId);
                 return;
@@ -486,31 +492,17 @@ public class WoodcuttingScript implements AModule {
     // ── Internal helpers ──────────────────────────────────
 
     /**
-     * Drop a rolled slice of the target logs per tick (the fisher's sliced-drop pattern):
-     * one inline whole-inventory drop would hold the tick 10+ s. The slice verifies its count
-     * drop and a zero-progress slice counts a strike. Only the target log is dropped —
-     * everything else is kept. Each click carries the log's Drop entry (dropAtSlot): a plain
-     * click sends the DEFAULT action, which is "Use" for logs.
+     * One sliced drop pass over the target logs ({@link AScriptDrop}): a rolled 5–9 slots per
+     * tick with log-normal pacing and a count verification. The shared helper owns the route,
+     * the slice and the verify; this module's {@code dropping} latch owns "keep going until the
+     * log count is 0" and the batch-end break.
      */
     private void dropSlice(int logId) {
-        Microbot.status = "WOODCUTTING — dropping logs";
-        int before = Rs2Inventory.itemQuantity(logId);
-        int slice = Math.min(before, Rs2Random.fancyNormalSample(5, 9));
-        // Precomputed route over the slots holding the target log, shuffled once: no slot is
-        // drawn twice and dropAtSlot skips a slot whose item is gone. It also installs the
-        // item's Drop entry as the left-click entry (logs default to "Use").
-        for (int slot : AScriptPick.dropRoute(logId)) {
-            if (slice <= 0) break;
-            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
-            if (item == null || item.getId() != logId) continue;
-            if (!AScriptClick.dropAtSlot(slot, item.getId())) continue;
-            slice--;
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
-        }
-        if (!sleepUntil(() -> Rs2Inventory.itemQuantity(logId) < before,
-                Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier))) {
+        AScriptDrop.Result result = AScriptDrop.drop(
+                item -> item.getId() == logId, "WOODCUTTING — dropping logs", weatherMultiplier);
+        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
             fail("log drop did not land");
-        } else {
+        } else if (result.getOutcome() == AScriptDrop.Outcome.DROPPED) {
             consecutiveFailures = 0;
         }
     }

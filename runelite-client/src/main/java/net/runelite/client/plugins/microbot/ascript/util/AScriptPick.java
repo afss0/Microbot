@@ -105,7 +105,7 @@ public final class AScriptPick {
      * that an earlier drop had already emptied, stretching the pass.
      *
      * <p>Callers walk the route and hand each slot to
-     * {@link Rs2Inventory#dropAtSlot(int, int)}: it re-reads the slot first, so a slot whose
+     * {@link AScriptClick#dropAtSlot(int, int)}: it re-reads the slot first, so a slot whose
      * item is gone is skipped instead of clicked, and one pass clears the inventory.</p>
      *
      * @param itemId the item to route

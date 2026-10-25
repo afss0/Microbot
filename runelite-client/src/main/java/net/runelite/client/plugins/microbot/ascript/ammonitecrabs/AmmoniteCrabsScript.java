@@ -1,7 +1,6 @@
 package net.runelite.client.plugins.microbot.ascript.ammonitecrabs;
 
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.NpcID;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -17,16 +16,13 @@ import net.runelite.client.plugins.microbot.api.tileitem.models.Rs2TileItemModel
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
-import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
-import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.security.Login;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
-import java.awt.Rectangle;
 import java.util.List;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -494,28 +490,20 @@ public class AmmoniteCrabsScript implements AModule {
                 .nearestOnClientThread();
         if (spore == null) return;
 
-        final LocalPoint local = Microbot.getClientThread().invoke(() -> spore.getLocalLocation());
-        if (local == null) return;
-        if (!Rs2Camera.isTileOnScreen(local)) {
-            // See attackCrab: the camera turn only takes effect off the client thread.
-            Rs2Camera.turnTo(local);
-            return;
-        }
-
-        // See attackCrab: canvas size is read off the client-thread lambda to keep
-        // Client#getCanvasWidth/Height out of the guardrail's inferred list.
-        final int canvasWidth = Microbot.getClient().getCanvasWidth();
-        final int canvasHeight = Microbot.getClient().getCanvasHeight();
-        // Rs2UiHelper.getTileClickbox() wraps the Perspective canvas mapping; a direct
-        // Perspective#getCanvasTilePoly call here would register it with the
-        // ClientThreadGuardrailTest inference and flag unrelated callers.
-        Rectangle clickArea = Microbot.getClientThread().invoke(() -> Rs2UiHelper.getTileClickbox(spore.getTile()));
-        if (clickArea == null || clickArea.width <= 0 || clickArea.height <= 0
-                || clickArea.width >= canvasWidth - 2 || clickArea.height >= canvasHeight - 2) return;
-
+        // The shared ground-item recipe (AScriptClick): camera first, the tile's real
+        // clickbox (canvas fallback rejected), then the "Take" row verified in the hover
+        // (plain click) or the open menu (row press). The hand-rolled click this replaces
+        // pressed the tile rectangle without checking what ranked on top of the hover.
         Microbot.status = "LOOTING SPORES";
         int before = Rs2Inventory.count("Seaweed spore");
-        Microbot.getMouse().click(clickArea);
+        AScriptClick.Target target = AScriptClick.clickGroundItem(spore.getTileItem(), spore.getTile());
+        if (target.cameraTurned()) {
+            return; // the turn is the whole action — retry next tick without spending the cooldown
+        }
+        if (!target.clicked()) {
+            lastSporeAttemptMs = System.currentTimeMillis();
+            return;
+        }
         boolean picked = sleepUntil(() -> Rs2Inventory.count("Seaweed spore") > before,
                 Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
         if (!picked) {
