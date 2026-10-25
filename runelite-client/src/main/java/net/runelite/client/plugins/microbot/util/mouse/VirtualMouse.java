@@ -19,6 +19,7 @@ import java.awt.event.MouseEvent;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleep;
 
@@ -34,11 +35,12 @@ public class VirtualMouse extends Mouse {
     private final ScheduledExecutorService scheduledExecutorService;
 
     /**
-     * When true, a top-level click or drag is in progress. Prevents
-     * internal NaturalMouse intermediate moves from triggering
-     * MouseSync start/end independently.
+     * Nesting depth for top-level gestures. A click's NaturalMouse path calls
+     * {@link #move(Point)} internally; those must not open/close a MouseSync
+     * interaction. An AtomicInteger (not a boolean) keeps overlapping gestures
+     * from ending the outermost interaction while another is still running.
      */
-    private volatile boolean interactionInProgress = false;
+    private final AtomicInteger interactionDepth = new AtomicInteger();
 
     @Inject
     public VirtualMouse() {
@@ -98,16 +100,32 @@ public class VirtualMouse extends Mouse {
 
     private void mouseSyncOnStart() {
         MouseSyncPlugin p = getMouseSync();
-        if (p != null && p.isInputDisabled()) {
-            // Already in a bot interaction (e.g. recursive call) — don't re-enter
+        if (p == null || p.getState() == MouseSyncPlugin.State.BOT_ACTIVE) {
+            // Already in a bot interaction (e.g. recursive call) — don't re-enter.
+            // GRACE_PERIOD is deliberately NOT skipped: a new gesture must restart
+            // the countdown, otherwise the previous timer can fire mid-gesture.
             return;
         }
-        if (p != null) p.onBotInteractionStart();
+        p.onBotInteractionStart();
     }
 
     private void mouseSyncOnEnd() {
         MouseSyncPlugin p = getMouseSync();
         if (p != null) p.onBotInteractionEnd();
+    }
+
+    /** Opens the outermost gesture; nested calls only bump the depth. */
+    private void enterInteraction() {
+        if (interactionDepth.getAndIncrement() == 0) {
+            mouseSyncOnStart();
+        }
+    }
+
+    /** Closes this gesture; only the last one out hands control back to MouseSync. */
+    private void exitInteraction() {
+        if (interactionDepth.decrementAndGet() == 0) {
+            mouseSyncOnEnd();
+        }
     }
 
     // ── Click methods ──────────────────────────────────────────────────
@@ -146,8 +164,7 @@ public class VirtualMouse extends Mouse {
         // Weather-based click error — slight offset in bad conditions
         final Point clickPoint = weatherAdjustedClickPoint(point);
 
-        mouseSyncOnStart();
-        interactionInProgress = true;
+        enterInteraction();
 
         runGesture(() -> {
             try {
@@ -158,8 +175,7 @@ public class VirtualMouse extends Mouse {
                     handleClick(emit, clickPoint, rightClick);
                 });
             } finally {
-                interactionInProgress = false;
-                mouseSyncOnEnd();
+                exitInteraction();
             }
         });
 
@@ -179,8 +195,7 @@ public class VirtualMouse extends Mouse {
     private Mouse click(Point point, boolean rightClick, NewMenuEntry entry, boolean quick) {
         if (point == null) return this;
 
-        mouseSyncOnStart();
-        interactionInProgress = true;
+        enterInteraction();
 
         runGesture(() -> {
             try {
@@ -217,8 +232,7 @@ public class VirtualMouse extends Mouse {
                     handleClick(emit, clickPoint, rightClick, quick, () -> Microbot.targetMenu = entry);
                 });
             } finally {
-                interactionInProgress = false;
-                mouseSyncOnEnd();
+                exitInteraction();
             }
         });
 
@@ -261,11 +275,10 @@ public class VirtualMouse extends Mouse {
     // ── Move methods ───────────────────────────────────────────────────
 
     /**
-     * Only trigger MouseSync for standalone moves (scripts calling move
-     * directly). Moves that happen inside a NaturalMouse path during a
-     * click are internal and guarded by {@link #interactionInProgress}.
-     * NaturalMouse steps through here, so the {@link InputArbiter} check
-     * also stops a trajectory mid-curve.
+     * Every move joins the current gesture, or opens one when called standalone.
+     * Moves inside a NaturalMouse path during a click are nested and do not
+     * open/close MouseSync independently. NaturalMouse steps through here, so
+     * the {@link InputArbiter} check also stops a trajectory mid-curve.
      */
     public Mouse move(Point point) {
         if (InputArbiter.isHuman()) {
@@ -274,13 +287,12 @@ public class VirtualMouse extends Mouse {
         if (AwtEmitter.heldMask() != 0 && !InputLoop.isInGesture()) {
             return this;
         }
-        boolean standalone = !interactionInProgress;
-        if (standalone) mouseSyncOnStart();
+        enterInteraction();
         try {
             recordTrailPoint(point);
             AwtEmitter.moved(point.getX(), point.getY());
         } finally {
-            if (standalone) mouseSyncOnEnd();
+            exitInteraction();
         }
         return this;
     }
@@ -311,12 +323,19 @@ public class VirtualMouse extends Mouse {
     private Mouse scroll(Point point, int wheelRotation, int unitsToScroll) {
         if (point == null) return this;
 
-        runGesture(() -> InputLoop.run(emit -> {
-            emit.move(point.getX(), point.getY());
-            recordTrailPoint(point);
-            sleep(Rs2Random.logNormalBounded(40, 100));
-            emit.wheel(point.getX(), point.getY(), wheelRotation, unitsToScroll);
-        }));
+        enterInteraction();
+        runGesture(() -> {
+            try {
+                InputLoop.run(emit -> {
+                    emit.move(point.getX(), point.getY());
+                    recordTrailPoint(point);
+                    sleep(Rs2Random.logNormalBounded(40, 100));
+                    emit.wheel(point.getX(), point.getY(), wheelRotation, unitsToScroll);
+                });
+            } finally {
+                exitInteraction();
+            }
+        });
 
         return this;
     }
@@ -356,8 +375,7 @@ public class VirtualMouse extends Mouse {
     public Mouse drag(Point startPoint, Point endPoint) {
         if (startPoint == null || endPoint == null) return this;
 
-        mouseSyncOnStart();
-        interactionInProgress = true;
+        enterInteraction();
         runGesture(() -> {
             try {
                 InputLoop.run(emit -> {
@@ -370,8 +388,7 @@ public class VirtualMouse extends Mouse {
                     emit.release(endPoint.getX(), endPoint.getY(), MouseEvent.BUTTON1);
                 });
             } finally {
-                interactionInProgress = false;
-                mouseSyncOnEnd();
+                exitInteraction();
             }
         });
 
