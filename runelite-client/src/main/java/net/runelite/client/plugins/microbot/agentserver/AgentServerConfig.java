@@ -11,6 +11,7 @@ public interface AgentServerConfig extends Config {
 	String GROUP = "agentServer";
 	String KEY_TOKEN = "authToken";
 	String KEY_PORT = "port";
+	String KEY_TRACE = "traceRequests";
 
 	@ConfigItem(
 			keyName = "bindAllInterfaces",
@@ -82,5 +83,15 @@ public interface AgentServerConfig extends Config {
 	)
 	default BindMode bindMode() {
 		return BindMode.TCP;
+	}
+
+	@ConfigItem(
+			keyName = KEY_TRACE,
+			name = "Trace requests",
+			description = "Append every agent request (method, path, status, duration, request body) to ~/.runelite/agent-trace.jsonl. Rotates at 5 MB.",
+			position = 6
+	)
+	default boolean traceRequests() {
+		return false;
 	}
 }
