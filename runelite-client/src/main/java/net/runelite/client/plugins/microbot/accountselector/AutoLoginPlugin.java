@@ -15,6 +15,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ScriptStarted;
 import net.runelite.client.plugins.microbot.breakhandler.BreakHandlerScript;
+import net.runelite.client.plugins.microbot.breakhandler.breakhandlerv2.BreakHandlerV2Script;
 import net.runelite.client.plugins.microbot.util.mouse.VirtualMouse;
 
 import javax.inject.Inject;
@@ -34,6 +35,9 @@ public class AutoLoginPlugin extends Plugin {
 
     @Inject
     AutoLoginConfig autoLoginConfig;
+
+    @Inject
+    TerminalLogoutHold terminalLogoutHold;
     @Provides
     AutoLoginConfig provideConfig(ConfigManager configManager) {
         return configManager.getConfig(AutoLoginConfig.class);
@@ -42,6 +46,7 @@ public class AutoLoginPlugin extends Plugin {
     @Override
     protected void startUp() throws AWTException {
 		Microbot.pauseAllScripts.compareAndSet(true, false);
+        terminalLogoutHold.release();
         accountSelectorScript.run(autoLoginConfig);
     }
 
@@ -68,7 +73,9 @@ public class AutoLoginPlugin extends Plugin {
     @Subscribe
     public void onScriptStarted(ScriptStarted event) {
         // Existing loops do not emit this event each tick. A new gameplay run opts back in.
-        if (event.getScript() instanceof AutoLoginScript || event.getScript() instanceof BreakHandlerScript) return;
+        if (event.getScript() instanceof AutoLoginScript
+                || event.getScript() instanceof BreakHandlerScript
+                || event.getScript() instanceof BreakHandlerV2Script) return;
         accountSelectorScript.resumeAutoLogin();
     }
 

@@ -365,14 +365,41 @@ List<Rs2TileObjectModel> rocks = tileObjectCache.query()
     .toList();
 ```
 
+**Tile-object filters:**
+```java
+tileObjectCache.query().ofType(TileObjectType.WALL)        // game, wall, ground or decorative objects only
+tileObjectCache.query().withAction("Bank")                 // has an action named exactly "Bank" (case-insensitive)
+tileObjectCache.query().withActionContains("Chop")         // has an action containing "Chop"
+tileObjectCache.query().at(new WorldPoint(3185, 3436, 0))  // any object whose footprint covers that tile
+```
+
+`withAction`, `withActionContains` and `at` read each object's composition or size, so treat them like name filters: finish the query with an `*OnClientThread()` terminal.
+
 **Rs2TileObjectModel Methods:**
 ```java
 obj.getName()              // "Tree"
 obj.getId()                // Object ID
-obj.getWorldLocation()     // WorldPoint
+obj.getWorldLocation()     // south-west tile of the object
+obj.getWorldArea()         // the whole footprint
+obj.sizeX(), obj.sizeY()   // footprint size, 1x1 for walls, ground and decorative objects
+obj.occupies(point)        // true when the footprint covers the tile
+obj.hasAction("Open")      // exact action match, colour tags stripped
+obj.hasActionContaining("Chop")
+obj.getTileObject()        // the underlying RuneLite GameObject, WallObject, ...
+obj.getRuneLiteWorldLocation() // the tile RuneLite reports (the centre tile for multi-tile objects)
+obj.isReachable()          // a tile beside the object can be walked to
+obj.hasLineOfSight()       // from the player; hasLineOfSight(point) from any tile
+obj.canWalkTo(25)          // a reachable tile within 25 steps is next to the object
+obj.hover()                // move the natural mouse over the object
+Rs2TileObjectModel.compositionOf(id) // object definition, impostor resolved
 obj.click("Chop down")     // Interact with object
 obj.click("Mine")          // Interact with a specific action
 ```
+
+**How interaction behaves:**
+- `obj.click(...)` recovers from "I can't reach that!": when the previous interaction failed that way, it walks beside the object first, then clicks. After a few failed attempts it pauses scripts and tells the player.
+- `obj.click(...)` walks toward the object and returns `false` when it is more than 51 tiles away.
+- `query().interact(...)` picks the nearest *reachable* match. When nothing matching is reachable (for example the object is behind a closed door), it clicks the nearest match and lets the recovery above open the way. The target is picked on the client thread, so name and action filters are safe before `interact`.
 
 ---
 
@@ -886,6 +913,30 @@ Rs2TileObjectModel nearest = tileObjectCache.query()
     .withId(1234)
     .nearest();
 ```
+
+| `Rs2GameObject` | Query API |
+|---|---|
+| `getGameObject(id)` / `findObjectById(id)` | `query().withId(id).nearest()` |
+| `getGameObjects(...)`, `getWallObjects(...)`, `getGroundObjects(...)`, `getDecorativeObjects(...)` | `query().ofType(TileObjectType.GAME)` (or `WALL`, `GROUND`, `DECORATIVE`) |
+| `getGameObject(name, true)` | `query().withName(name).nearestOnClientThread()` |
+| `getGameObject(name)` / `get(name)` (partial match) | `query().withNameContains(name).nearestOnClientThread()` |
+| `findObjectByLocation(point)` / `findGameObjectByLocation(point)` | `query().at(point).firstOnClientThread()` |
+| `hasAction(object, action)` | `model.hasActionContaining(action)` (the old default is a partial match) |
+| `hasAction(composition, action)` | `model.hasAction(action)` |
+| `findObjectByImposter(id, action)` | `query().withId(id).withAction(action).firstOnClientThread()` |
+| `interact(id)` / `interact(name, action)` | `query().withId(id).interact()` / `query().withNameContains(name).interact(action)` |
+| `interact(tileObject, action)` / `clickObject(tileObject, action)` | `new Rs2TileObjectModel(tileObject).click(action)` |
+| `findObjectComposition(id)` / `convertToObjectComposition(id)` / `getObjectComposition(id)` | `Rs2TileObjectModel.compositionOf(id)` |
+| `convertToObjectComposition(id, true)` | `Rs2TileObjectModel.compositionOf(id, true)` |
+| `isReachable(gameObject)` / `canReach(object.getWorldLocation(), ...)` | `model.isReachable()` |
+| `canReach(tile)` for a tile that isn't an object | `Rs2Tile.isTileReachable(tile)` |
+| `hasLineOfSight(object)` / `hasLineOfSight(point, object)` | `model.hasLineOfSight()` / `model.hasLineOfSight(point)` |
+| `canWalkTo(object, distance)` | `model.canWalkTo(distance)` |
+| `hoverOverObject(object)` | `model.hover()` |
+| `getWorldArea(gameObject)` | `model.getWorldArea()` |
+| `findBank()` / `findDepositBox()` / `findGrandExchangeBooth()` | `Rs2BankObjects.findBank()` / `findDepositBox()` / `findGrandExchangeBooth()` |
+
+Locations differ for objects bigger than one tile: the old API reports RuneLite's centre tile, the model reports the south-west tile. Use `at(point)` or `occupies(point)` rather than comparing `getWorldLocation()` with a hardcoded tile.
 
 ### Step-by-Step Migration
 

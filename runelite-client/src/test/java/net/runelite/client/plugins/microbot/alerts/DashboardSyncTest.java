@@ -21,34 +21,36 @@ public class DashboardSyncTest
 	private static final String REQUEST = "6f1c7a8e-1a2b-4c3d-9e8f-0123456789ab";
 
 	@Test
-	public void payloadCarriesTheSessionScreenshotSettingAndState()
+	public void payloadCarriesTheSessionSettingsAndState()
 	{
 		JsonObject state = new JsonObject();
 		state.addProperty("status", "LOGGED_IN");
 
-		JsonObject payload = DashboardSync.payload(SESSION, false, state);
+		JsonObject payload = DashboardSync.payload(SESSION, false, true, state);
 
 		assertEquals(SESSION.toString(), payload.get("sessionId").getAsString());
 		assertFalse(payload.get("screenshotsAllowed").getAsBoolean());
+		assertTrue(payload.get("controlAllowed").getAsBoolean());
 		assertEquals("LOGGED_IN", payload.getAsJsonObject("gameState").get("status").getAsString());
 	}
 
 	@Test
-	public void screenshotRequestsAreReadFromTheCommands()
+	public void commandsAreReadInOrderWithTheirTypes()
 	{
-		String body = "{\"commands\":[{\"id\":\"" + REQUEST + "\",\"type\":\"screenshot\"},{\"id\":\"" + REQUEST + "\",\"type\":\"unknown\"}]}";
+		String body = "{\"commands\":[{\"id\":\"" + REQUEST + "\",\"type\":\"screenshot\"},{\"id\":\"" + REQUEST + "\",\"type\":\"stop_scripts\"}]}";
 
-		assertEquals(List.of(REQUEST), DashboardSync.screenshotRequests(new Gson(), body));
+		assertEquals(List.of(new DashboardSync.Command(REQUEST, "screenshot"), new DashboardSync.Command(REQUEST, "stop_scripts")),
+			DashboardSync.commands(new Gson(), body));
 	}
 
 	@Test
 	public void unreadableResponsesHaveNoCommands()
 	{
 		Gson gson = new Gson();
-		assertTrue(DashboardSync.screenshotRequests(gson, "").isEmpty());
-		assertTrue(DashboardSync.screenshotRequests(gson, "not json").isEmpty());
-		assertTrue(DashboardSync.screenshotRequests(gson, "{\"commands\":[{\"type\":\"screenshot\"}]}").isEmpty());
-		assertTrue(DashboardSync.screenshotRequests(gson, "{\"commands\":[{\"id\":\"../../etc\",\"type\":\"screenshot\"}]}").isEmpty());
+		assertTrue(DashboardSync.commands(gson, "").isEmpty());
+		assertTrue(DashboardSync.commands(gson, "not json").isEmpty());
+		assertTrue(DashboardSync.commands(gson, "{\"commands\":[{\"type\":\"screenshot\"}]}").isEmpty());
+		assertTrue(DashboardSync.commands(gson, "{\"commands\":[{\"id\":\"../../etc\",\"type\":\"screenshot\"}]}").isEmpty());
 	}
 
 	@Test

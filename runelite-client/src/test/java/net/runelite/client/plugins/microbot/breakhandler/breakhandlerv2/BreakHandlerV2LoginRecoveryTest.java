@@ -1,12 +1,16 @@
 package net.runelite.client.plugins.microbot.breakhandler.breakhandlerv2;
 
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.config.ConfigProfile;
 import net.runelite.client.game.WorldService;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
+import net.runelite.client.plugins.microbot.accountselector.AutoLoginSuppressionRequest;
+import net.runelite.client.plugins.microbot.accountselector.TerminalLogoutHold;
 import net.runelite.client.plugins.microbot.breakhandler.BreakPreparation;
 import net.runelite.client.plugins.microbot.util.antiban.enums.PlaySchedule;
 import net.runelite.client.plugins.microbot.util.discord.Rs2Discord;
@@ -175,6 +179,57 @@ public class BreakHandlerV2LoginRecoveryTest {
         assertTrue(nextAttempt.isAfter(Instant.now().plusSeconds(80)));
         assertTrue(nextAttempt.isBefore(Instant.now().plusSeconds(91)));
         assertEquals(BreakHandlerV2State.LOGIN_REQUESTED, BreakHandlerV2State.getCurrentState());
+    }
+
+    @Test
+    public void terminalLogoutHoldsTheLoginUntilTheAccountLogsInByHand() throws Exception {
+        setField("activeProfile", profile());
+        TerminalLogoutHold hold = new TerminalLogoutHold();
+        hold.onAutoLoginSuppressionRequest(new AutoLoginSuppressionRequest());
+        hold.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+        setField("terminalLogoutHold", hold);
+        BreakHandlerV2State.setState(BreakHandlerV2State.LOGIN_REQUESTED);
+
+        invoke("handleLoginRequested");
+        invoke("handleLoginRequested");
+
+        loginManager.verify(() -> LoginManager.login(anyString(), anyString(), anyInt()), never());
+        assertEquals(BreakHandlerV2State.LOGIN_REQUESTED, BreakHandlerV2State.getCurrentState());
+        assertEquals(0, getField("loginRetryCount"));
+
+        hold.onGameStateChanged(gameState(GameState.LOGGED_IN));
+        assertFalse(hold.isActive());
+        loggedIn = true;
+        invoke("handleLoginRequested");
+
+        assertEquals(BreakHandlerV2State.BREAK_ENDING, BreakHandlerV2State.getCurrentState());
+    }
+
+    @Test
+    public void terminalLogoutIsNotTreatedAsADisconnect() throws Exception {
+        TerminalLogoutHold hold = new TerminalLogoutHold();
+        hold.onAutoLoginSuppressionRequest(new AutoLoginSuppressionRequest());
+        hold.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+        setField("terminalLogoutHold", hold);
+        setField("nextBreakTime", Instant.now().plus(Duration.ofMinutes(30)));
+        when(client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+        BreakHandlerV2State.setState(BreakHandlerV2State.WAITING_FOR_BREAK);
+
+        invoke("detectUnexpectedLogout");
+
+        assertEquals(BreakHandlerV2State.WAITING_FOR_BREAK, BreakHandlerV2State.getCurrentState());
+        assertFalse((Boolean) getField("resumingAfterDisconnect"));
+
+        hold.release();
+        invoke("detectUnexpectedLogout");
+
+        assertEquals(BreakHandlerV2State.LOGIN_REQUESTED, BreakHandlerV2State.getCurrentState());
+    }
+
+    private static GameStateChanged gameState(GameState state) {
+        GameStateChanged event = new GameStateChanged();
+        event.setGameState(state);
+        return event;
     }
 
     @Test

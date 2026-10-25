@@ -20,6 +20,7 @@ import java.awt.*;
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
 
+@Deprecated(since = "2.6.43 - Use net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel instead", forRemoval = true)
 public class Rs2TileObjectModel implements TileObject {
 
     public Rs2TileObjectModel(GameObject gameObject) {

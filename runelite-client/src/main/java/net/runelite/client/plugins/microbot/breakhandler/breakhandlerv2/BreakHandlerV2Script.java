@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.GameState;
 import net.runelite.client.config.ConfigProfile;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.accountselector.TerminalLogoutHold;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.breakhandler.BreakHandlerScript;
 import net.runelite.client.plugins.microbot.breakhandler.BreakHandlerTickGuard;
@@ -19,6 +20,7 @@ import net.runelite.client.ui.ClientUI;
 import net.runelite.http.api.worlds.WorldRegion;
 import net.runelite.client.plugins.Plugin;
 
+import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.awt.Color;
 import java.time.Duration;
@@ -34,6 +36,9 @@ import java.util.concurrent.TimeUnit;
 @Singleton
 @Slf4j
 public class BreakHandlerV2Script extends Script {
+    @Inject
+    TerminalLogoutHold terminalLogoutHold = new TerminalLogoutHold();
+    private boolean holdingForManualLogin = false;
     private static final long LOCK_DEFERRAL_LOG_INTERVAL_MS = 30_000L;
     private static final long TICK_STOP_TIMEOUT_MS = 2000L;
 
@@ -99,7 +104,7 @@ public class BreakHandlerV2Script extends Script {
     private static final int MAX_SAFETY_CHECK_ATTEMPTS = 60;
     private static final int SAFETY_CHECK_DELAY_MS = 5000; // 5 seconds between checks
 
-    public static String version = "2.0.12";
+    public static String version = "2.0.13";
     private boolean restoredPauseNeedsPreparation;
     private final BreakHandlerTickGuard tickGuard = new BreakHandlerTickGuard();
 
@@ -489,6 +494,7 @@ public class BreakHandlerV2Script extends Script {
         // Check if already logged in
         if (Microbot.isLoggedIn()) {
             log.info("[BreakHandlerV2] Already logged in");
+            holdingForManualLogin = false;
             transitionToState(BreakHandlerV2State.BREAK_ENDING);
             return;
         }
@@ -497,6 +503,15 @@ public class BreakHandlerV2Script extends Script {
             endBreakWithoutLogin();
             return;
         }
+
+        if (terminalLogoutHold.isActive()) {
+            if (!holdingForManualLogin) {
+                log.info("[BreakHandlerV2] Not logging back in: the account was logged out on purpose. Log in by hand to continue.");
+                holdingForManualLogin = true;
+            }
+            return;
+        }
+        holdingForManualLogin = false;
 
         if (waitForLoginLockout()) {
             return;
@@ -743,7 +758,7 @@ public class BreakHandlerV2Script extends Script {
         boolean genuinelyLoggedOut = gameState == GameState.LOGIN_SCREEN || gameState == GameState.CONNECTION_LOST;
 
         // Check if player is logged out unexpectedly
-        if (genuinelyLoggedOut && !unexpectedLogoutDetected) {
+        if (genuinelyLoggedOut && !unexpectedLogoutDetected && !terminalLogoutHold.isActive()) {
             long secondsUntilBreak = Instant.now().until(nextBreakTime, ChronoUnit.SECONDS);
 
             if (secondsUntilBreak > 0) {

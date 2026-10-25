@@ -427,6 +427,19 @@ public class MicrobotApi {
         client.newCall(request).enqueue(logOnly("Dashboard screenshot failure report"));
     }
 
+    public void reportCommandResult(String token, String commandId, boolean succeeded, String reason)
+    {
+        JsonObject body = new JsonObject();
+        body.addProperty("succeeded", succeeded);
+        body.addProperty("reason", reason);
+        Request request = new Request.Builder()
+                .url(microbotApiUrl + "/alerts/commands/" + commandId + "/result")
+                .header(ClientLinkToken.HEADER, token)
+                .post(RequestBody.create(RuneLiteAPI.JSON, gson.toJson(body)))
+                .build();
+        client.newCall(request).enqueue(logOnly("Dashboard command result report"));
+    }
+
     private static Callback logOnly(String what)
     {
         return new Callback()

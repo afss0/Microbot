@@ -21,6 +21,7 @@ import net.runelite.client.events.OverlayMenuClicked;
 import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.microbot.accountselector.TerminalLogoutHold;
 import net.runelite.client.plugins.microbot.alerts.ClientAlertReporter;
 import net.runelite.client.plugins.microbot.alerts.DashboardSync;
 import net.runelite.client.plugins.microbot.alerts.DeviceLinkFlow;
@@ -161,6 +162,9 @@ public class MicrobotPlugin extends Plugin
 	private DashboardSync dashboardSync;
 
 	@Inject
+	private TerminalLogoutHold terminalLogoutHold;
+
+	@Inject
 	private DeviceLinkFlow deviceLinkFlow;
 
 	@Inject
@@ -204,6 +208,7 @@ public class MicrobotPlugin extends Plugin
 		clientAlertReporter.start();
 		dashboardSync.start();
 		eventBus.register(deviceLinkFlow);
+		eventBus.register(terminalLogoutHold);
 
 		// Initialize the cached configuration in GameChatAppender
 		GameChatAppender.updateConfiguration(
@@ -281,6 +286,7 @@ public class MicrobotPlugin extends Plugin
 		clientAlertReporter.stop();
 		dashboardSync.stop();
 		eventBus.unregister(deviceLinkFlow);
+		eventBus.unregister(terminalLogoutHold);
 		deviceLinkFlow.stop();
 		microbotVersionChecker.shutdown();
 	}

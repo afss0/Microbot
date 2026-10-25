@@ -39,6 +39,19 @@ public class ScriptStopReasonTest
 	}
 
 	@Test
+	public void stopFromTheDashboardIsTheDashboard()
+	{
+		StackTraceElement[] stack = {
+			frame("net.runelite.client.plugins.PluginManager", "stopPlugin"),
+			frame("net.runelite.client.plugins.microbot.Microbot", "togglePlugin"),
+			frame("net.runelite.client.plugins.microbot.alerts.DashboardControl", "stopRunningScripts"),
+			frame("java.awt.EventQueue", "dispatchEvent")
+		};
+		assertEquals(ScriptStopReason.DASHBOARD, ScriptStopReason.detect(stack, false));
+		assertEquals(ScriptStopReason.DASHBOARD, ScriptStopReason.detect(stack, true));
+	}
+
+	@Test
 	public void stopShortlyAfterAnErrorIsAnError()
 	{
 		assertEquals(ScriptStopReason.ERROR, ScriptStopReason.detect(SCRIPT_STOP, true));

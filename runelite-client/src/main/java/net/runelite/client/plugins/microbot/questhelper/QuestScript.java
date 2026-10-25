@@ -482,12 +482,35 @@ public class QuestScript extends Script {
 
 		if (!toBuy.isEmpty()) {
 			int freeSlots = Rs2GrandExchange.getAvailableSlotsCount();
-			if (freeSlots < toBuy.size()) {
+			if (freeSlots <= 0) {
 				Rs2Bank.closeBank();
-				stopQuesterWithReason(String.format(
-						"Not enough free Grand Exchange slots for missing quest items (need %d, have %d)",
-						toBuy.size(), freeSlots));
+				if (Rs2GrandExchange.hasBoughtOffer()) {
+					Microbot.status = "Quest helper: collecting finished Grand Exchange offers";
+					Rs2GrandExchange.walkToGrandExchange();
+					Rs2GrandExchange.openExchange();
+					sleepUntil(Rs2GrandExchange::isOpen, 15_000);
+					if (Rs2GrandExchange.isOpen()) {
+						collectPurchasedItemsViaBank(missing);
+						if (Rs2GrandExchange.getAvailableSlotsCount() <= 0) {
+							stopQuesterWithReason(
+									"Could not collect finished Grand Exchange offers (bank full?). Collect them manually and restart.");
+						}
+					}
+					return true;
+				}
+				stopQuesterWithReason(
+						"No free Grand Exchange slots for missing quest items. Free a slot and restart.");
 				return true;
+			}
+			int missingCount = toBuy.size();
+			if (trimToGrandExchangeSlots(toBuy, freeSlots)) {
+				Microbot.log(String.format(
+						"Quest helper: %d missing quest items but only %d free Grand Exchange slots; buying %d now and the rest afterwards",
+						missingCount, freeSlots, toBuy.size()), Level.INFO);
+				totalBuyCost = 0L;
+				for (ItemRequirement ir : toBuy) {
+					totalBuyCost += (long) offerPrices.get(ir) * buyQuantities.get(ir);
+				}
 			}
 		}
 
@@ -1554,6 +1577,14 @@ public class QuestScript extends Script {
 
 	private String chooseCorrectItemOption(QuestStep step, int itemId) {
 		return chooseItemAction(step.getText(), Rs2Inventory.get(itemId).getInventoryActions());
+	}
+
+	static boolean trimToGrandExchangeSlots(List<?> toBuy, int freeSlots) {
+		if (toBuy.size() <= freeSlots) {
+			return false;
+		}
+		toBuy.subList(Math.max(0, freeSlots), toBuy.size()).clear();
+		return true;
 	}
 
 	static String chooseItemAction(List<String> stepText, String[] actions) {

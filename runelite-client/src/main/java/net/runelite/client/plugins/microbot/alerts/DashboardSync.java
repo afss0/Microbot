@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
@@ -57,6 +58,7 @@ public class DashboardSync
 	private final ClientThread clientThread;
 	private final ItemManager itemManager;
 	private final DrawManager drawManager;
+	private final DashboardControl dashboardControl;
 	private final ScheduledExecutorService executor;
 	private final Gson gson;
 	private final XpTracker xpTracker = new XpTracker();
@@ -68,7 +70,8 @@ public class DashboardSync
 
 	@Inject
 	DashboardSync(MicrobotApi microbotApi, ClientLinkToken clientLinkToken, ClientSessionManager clientSessionManager, MicrobotConfig config,
-		Client client, ClientThread clientThread, ItemManager itemManager, DrawManager drawManager, ScheduledExecutorService executor, Gson gson)
+		Client client, ClientThread clientThread, ItemManager itemManager, DrawManager drawManager, DashboardControl dashboardControl,
+		ScheduledExecutorService executor, Gson gson)
 	{
 		this.microbotApi = microbotApi;
 		this.clientLinkToken = clientLinkToken;
@@ -78,6 +81,7 @@ public class DashboardSync
 		this.clientThread = clientThread;
 		this.itemManager = itemManager;
 		this.drawManager = drawManager;
+		this.dashboardControl = dashboardControl;
 		this.executor = executor;
 		this.gson = gson;
 	}
@@ -132,7 +136,7 @@ public class DashboardSync
 				{
 					log.debug("Unable to read the game state for the dashboard", error);
 				}
-				send(token.get(), payload(sessionId, config.allowDashboardScreenshots(), error == null ? state : null));
+				send(token.get(), payload(sessionId, config.allowDashboardScreenshots(), config.allowDashboardControl(), error == null ? state : null));
 			}, executor);
 	}
 
@@ -216,11 +220,14 @@ public class DashboardSync
 			return;
 		}
 		failures = 0;
-		List<String> requests = screenshotRequests(gson, body);
-		if (!requests.isEmpty())
-		{
-			takeScreenshot(token, requests.get(0));
-		}
+		List<Command> commands = commands(gson, body);
+		commands.stream()
+			.filter(command -> SCREENSHOT.equals(command.getType()))
+			.findFirst()
+			.ifPresent(command -> takeScreenshot(token, command.getId()));
+		commands.stream()
+			.filter(command -> !SCREENSHOT.equals(command.getType()))
+			.forEach(command -> dashboardControl.run(token, command.getId(), command.getType()));
 		schedule(NEXT_SYNC_MS);
 	}
 
@@ -292,40 +299,45 @@ public class DashboardSync
 		});
 	}
 
-	static JsonObject payload(UUID sessionId, boolean screenshotsAllowed, JsonObject gameState)
+	static JsonObject payload(UUID sessionId, boolean screenshotsAllowed, boolean controlAllowed, JsonObject gameState)
 	{
 		JsonObject payload = new JsonObject();
 		payload.addProperty("sessionId", sessionId.toString());
 		payload.addProperty("screenshotsAllowed", screenshotsAllowed);
+		payload.addProperty("controlAllowed", controlAllowed);
 		payload.add("gameState", gameState);
 		return payload;
 	}
 
-	static List<String> screenshotRequests(Gson gson, String body)
+	static List<Command> commands(Gson gson, String body)
 	{
-		List<String> ids = new ArrayList<>();
+		List<Command> commands = new ArrayList<>();
 		try
 		{
 			JsonObject json = gson.fromJson(body, JsonObject.class);
-			JsonArray commands = json == null ? null : json.getAsJsonArray("commands");
-			if (commands == null)
+			JsonArray entries = json == null ? null : json.getAsJsonArray("commands");
+			if (entries == null)
 			{
-				return ids;
+				return commands;
 			}
-			for (JsonElement element : commands)
+			for (JsonElement element : entries)
 			{
 				JsonObject command = element.getAsJsonObject();
-				if (SCREENSHOT.equals(command.get("type").getAsString()))
-				{
-					ids.add(UUID.fromString(command.get("id").getAsString()).toString());
-				}
+				commands.add(new Command(UUID.fromString(command.get("id").getAsString()).toString(), command.get("type").getAsString()));
 			}
 		}
 		catch (JsonParseException | IllegalStateException | IllegalArgumentException | NullPointerException | ClassCastException e)
 		{
 			log.debug("Ignoring an unreadable dashboard sync response", e);
 		}
-		return ids;
+		return commands;
+	}
+
+	@Value
+	static class Command
+	{
+		String id;
+		String type;
 	}
 
 	static long backoff(int failures)

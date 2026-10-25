@@ -314,6 +314,19 @@ public interface MicrobotConfig extends Config
 		return true;
 	}
 
+	String keyAllowDashboardControl = "allowDashboardControl";
+	@ConfigItem(
+		keyName = keyAllowDashboardControl,
+		name = "Allow dashboard control",
+		description = "Let the Microbot dashboard stop your scripts or log this client out when it is linked to your account",
+		position = 11,
+		section = generalSection
+	)
+	default boolean allowDashboardControl()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "World hop limit",
 		description = "Pace world hops so the per-IP login limit (\"Too many login attempts\") is never reached",

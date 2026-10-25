@@ -47,6 +47,10 @@ public interface IEntityQueryable<Q extends IEntityQueryable<Q, E>, E extends IE
 
     E nearestOnClientThread(WorldPoint anchor, int maxDistance);
 
+    E nearestReachableOnClientThread();
+
+    E nearestReachableOnClientThread(int maxDistance);
+
     List<E> toListOnClientThread();
 
     boolean interact();

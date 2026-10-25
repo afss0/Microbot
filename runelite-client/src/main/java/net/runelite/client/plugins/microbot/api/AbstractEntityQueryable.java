@@ -277,6 +277,14 @@ public abstract class AbstractEntityQueryable<
         return Microbot.getClientThread().invoke(() -> nearest(anchor, maxDistance));
     }
 
+    public E nearestReachableOnClientThread() {
+        return Microbot.getClientThread().invoke(() -> nearestReachable());
+    }
+
+    public E nearestReachableOnClientThread(int maxDistance) {
+        return Microbot.getClientThread().invoke(() -> nearestReachable(maxDistance));
+    }
+
     public List<E> toListOnClientThread() {
         return Microbot.getClientThread().invoke(() -> toList());
     }

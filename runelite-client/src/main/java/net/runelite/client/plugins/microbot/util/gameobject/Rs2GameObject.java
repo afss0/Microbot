@@ -5,25 +5,18 @@ import net.runelite.api.*;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldArea;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.api.gameval.ItemID;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.api.tileobject.Rs2BankObjects;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.api.playerstate.Rs2PlayerStateCache;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
-import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
-import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.coords.Rs2LocalPoint;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldArea;
-import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
-import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
-import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
-import net.runelite.client.plugins.microbot.util.walker.recovery.CantReachTargetRecovery;
-import org.apache.commons.lang3.tuple.Triple;
 
 import javax.annotation.Nullable;
 import java.awt.Rectangle;
@@ -36,7 +29,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
 /**
  * TODO: This class should be cleaned up, less methods by passing filters instead of multiple parameters
@@ -45,62 +37,20 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 public class Rs2GameObject {
 	private static final Map<String, List<Integer>> NAME_TO_IDS_CACHE = new ConcurrentHashMap<>();
 
-	/**
-	 * Extracts all {@link GameObject}s located on a given {@link Tile}.
-	 *
-	 * @see Tile#getGameObjects()
-	 * @param tile the tile from which to extract game objects
-	 * @return a {@link List} of {@link GameObject} instances on the tile (never null)
-	 */
-	private static final Function<Tile, Collection<? extends GameObject>> GAMEOBJECT_EXTRACTOR =
-		tile -> Arrays.asList(tile.getGameObjects());
+	private static final Function<TileObject, GameObject> GAMEOBJECT_EXTRACTOR =
+		o -> o instanceof GameObject ? (GameObject) o : null;
 
-	/**
-	 * Extracts the {@link GroundObject} located on a given {@link Tile}.
-	 *
-	 * @see Tile#getGroundObject()
-	 * @param tile the tile from which to extract the ground object
-	 * @return a singleton {@link List} containing the {@link GroundObject},
-	 *         or a list with a single null element if none is present
-	 */
-	private static final Function<Tile, Collection<? extends GroundObject>> GROUNDOBJECT_EXTRACTOR =
-		tile -> Collections.singletonList(tile.getGroundObject());
+	private static final Function<TileObject, GroundObject> GROUNDOBJECT_EXTRACTOR =
+		o -> o instanceof GroundObject ? (GroundObject) o : null;
 
-	/**
-	 * Extracts the {@link DecorativeObject} located on a given {@link Tile}.
-	 *
-	 * @see Tile#getDecorativeObject()
-	 * @param tile the tile from which to extract the decorative object
-	 * @return a singleton {@link List} containing the {@link DecorativeObject},
-	 *         or a list with a single null element if none is present
-	 */
-	private static final Function<Tile, Collection<? extends DecorativeObject>> DECORATIVEOBJECT_EXTRACTOR =
-		tile -> Collections.singletonList(tile.getDecorativeObject());
+	private static final Function<TileObject, DecorativeObject> DECORATIVEOBJECT_EXTRACTOR =
+		o -> o instanceof DecorativeObject ? (DecorativeObject) o : null;
 
-	/**
-	 * Extracts the {@link WallObject} located on a given {@link Tile}.
-	 *
-	 * @see Tile#getWallObject()
-	 * @param tile the tile from which to extract the wall object
-	 * @return a singleton {@link List} containing the {@link WallObject},
-	 *         or a list with a single null element if none is present
-	 */
-	private static final Function<Tile, Collection<? extends WallObject>> WALLOBJECT_EXTRACTOR =
-		tile -> Collections.singletonList(tile.getWallObject());
+	private static final Function<TileObject, WallObject> WALLOBJECT_EXTRACTOR =
+		o -> o instanceof WallObject ? (WallObject) o : null;
 
-	/**
-	 * Extracts all types of {@link TileObject} (decorative, ground, wall) from a given {@link Tile}.
-	 *
-	 * @param tile the tile from which to extract all tile objects
-	 * @return a {@link List} containing the {@link DecorativeObject}, {@link GroundObject},
-	 *         and {@link WallObject} (some entries may be null if that object is not present)
-	 */
-	private static final Function<Tile, Collection<? extends TileObject>> TILEOBJECT_EXTRACTOR =
-		tile -> Arrays.asList(
-			tile.getDecorativeObject(),
-			tile.getGroundObject(),
-			tile.getWallObject()
-		);
+	private static final Function<TileObject, TileObject> TILEOBJECT_EXTRACTOR =
+		o -> o instanceof GameObject ? null : o;
 
 
     public static boolean interact(WorldPoint worldPoint) {
@@ -398,30 +348,9 @@ public class Rs2GameObject {
 
     public static GameObject findBank(int maxSearchRadius) {
         Predicate<GameObject> bankableFilter = gameObject -> {
-            WorldPoint loc = gameObject.getWorldLocation();
-
-            //cooks guild (exception)
-            if ((loc.equals(new WorldPoint(3147, 3449, 0)) || loc.equals(new WorldPoint(3148, 3449, 0))) && !BankLocation.COOKS_GUILD.hasRequirements()) {
+            if (!Rs2BankObjects.isUsableBank(gameObject.getWorldLocation())) {
                 return false;
             }
-
-            //farming guild (exception)
-            //At the farming guild there’s 2 banks, one in the southern half of the guild and one northern part of the guild which requires a certain higher farming level to enter
-            if ((loc.equals(new WorldPoint(1248, 3759, 0)) || loc.equals(new WorldPoint(1249, 3759, 0))) && !Rs2Player.getSkillRequirement(Skill.FARMING, 85, true)) {
-                return false;
-            }
-
-			// Lunar Isle (exception)
-			// There is a bank booth @ Lunar Isle that is only accessible when Dream Mentor is completed
-			if (loc.equals(new WorldPoint(2099, 3920, 0)) && Rs2Player.getQuestState(Quest.DREAM_MENTOR) != QuestState.FINISHED) {
-				return false;
-			}
-
-			// Lunar Isle (additional exception to not use these banks if no seal of passage)
-			if ((loc.equals(new WorldPoint(2098, 3920, 0)) || loc.equals(new WorldPoint(2097, 3920, 0))) &&
-				!(Rs2Inventory.hasItem(ItemID.LUNAR_SEAL_OF_PASSAGE) || Rs2Equipment.isWearing(ItemID.LUNAR_SEAL_OF_PASSAGE))) {
-				return false;
-			}
 
             ObjectComposition comp = convertToObjectComposition(gameObject);
             if (comp == null) return false;
@@ -1537,65 +1466,33 @@ public class Rs2GameObject {
     }
 
     // private methods
-    private static <T extends TileObject> Stream<T> getSceneObjects(Function<Tile, Collection<? extends T>> extractor) {
-        var triple = Microbot.getClientThread().invoke(() -> {
+    private static <T extends TileObject> Stream<T> getSceneObjects(Function<TileObject, ? extends T> extractor) {
+        List<T> objects = Microbot.getClientThread().invoke(() -> {
             Player player = Microbot.getClient().getLocalPlayer();
-            if (player == null || player.getWorldView() == null) {
-                return Triple.of(null, null, 0);
+            WorldView playerWorldView = player != null ? player.getWorldView() : null;
+            if (playerWorldView == null) {
+                return Collections.<T>emptyList();
             }
-
-            Scene scene = player.getWorldView().getScene();
-
-            Tile[][][] tiles = scene.getTiles();
-            if (tiles == null) {
-                return Triple.of(null, null, 0);
-            }
-
-            int z = player.getWorldView().getPlane();
-
-            return Triple.of(scene, tiles, z);
-        });
-
-        var result = new ArrayList<T>();
-        Tile[][][] tiles = (Tile[][][]) triple.getMiddle();
-        int z = triple.getRight();
-        if (tiles == null) {
-            return result.stream();
-        }
-
-        int sizeX = tiles[z].length;
-        int sizeY = sizeX > 0 ? tiles[z][0].length : 0;
-
-        for (int x = 0; x < sizeX; x++) {
-            for (int y = 0; y < sizeY; y++) {
-                for (int h = 0; h <= z; h++) {
-                    Tile tile = tiles[h][x][y];
-                    if (tile == null) continue;
-
-                    Collection<? extends T> objs = extractor.apply(tile);
-                    if (objs != null) {
-                        for (T obj : objs) {
-                            if (obj == null) continue;
-
-                            if (obj instanceof GameObject) {
-                                GameObject gameObject = (GameObject) obj;
-                                if (gameObject.getSceneMinLocation().equals(tile.getSceneLocation())) {
-                                    result.add(obj);
-                                }
-                            } else {
-                                if (obj.getLocalLocation().equals(tile.getLocalLocation())) {
-                                    result.add(obj);
-                                }
-                            }
-                        }
-                    }
+            int worldViewId = playerWorldView.getId();
+            List<T> found = new ArrayList<>();
+            Iterator<Rs2TileObjectModel> models = Microbot.getRs2TileObjectCache().getStream().iterator();
+            while (models.hasNext()) {
+                Rs2TileObjectModel model = models.next();
+                WorldView worldView = model.getWorldView();
+                if (worldView == null || worldView.getId() != worldViewId) {
+                    continue;
+                }
+                T object = extractor.apply(model.getTileObject());
+                if (object != null) {
+                    found.add(object);
                 }
             }
-        }
-        return result.stream();
+            return found;
+        });
+        return objects != null ? objects.stream() : Stream.empty();
     }
 
-    private static <T extends TileObject> List<T> getSceneObjects(Function<Tile, Collection<? extends T>> extractor, Predicate<T> predicate, LocalPoint anchorLocal, int distance) {
+    private static <T extends TileObject> List<T> getSceneObjects(Function<TileObject, ? extends T> extractor, Predicate<T> predicate, LocalPoint anchorLocal, int distance) {
         if (distance > Rs2LocalPoint.worldToLocalDistance(Constants.SCENE_SIZE)) {
             distance = Rs2LocalPoint.worldToLocalDistance(Constants.SCENE_SIZE);
         }
@@ -1607,7 +1504,7 @@ public class Rs2GameObject {
                 .collect(Collectors.toList());
     }
 
-    private static <T extends TileObject> T getSceneObject(Function<Tile, Collection<? extends T>> extractor, Predicate<T> predicate, LocalPoint anchorLocal, int distance) {
+    private static <T extends TileObject> T getSceneObject(Function<TileObject, ? extends T> extractor, Predicate<T> predicate, LocalPoint anchorLocal, int distance) {
         return getSceneObjects(extractor, predicate, anchorLocal, distance)
                 .stream()
                 .findFirst()
@@ -1788,185 +1685,7 @@ public class Rs2GameObject {
 
     public static boolean clickObject(TileObject object, String action) {
         if (object == null) return false;
-        WorldView objectWorldView = object.getWorldView();
-        if (objectWorldView == null) {
-            Microbot.log("Failed to interact with object " + object.getId() + " - object is no longer in a loaded world view");
-            return false;
-        }
-        if (CantReachTargetRecovery.shouldStart(
-                Microbot.isCantReachTargetDetectionEnabled, Microbot.cantReachTarget)) {
-            // The game said "I can't reach that!" on the previous interaction — something solid sits
-            // between us and the target, most often a shut door. The walker is the only recovery
-            // that opens doors; its arrival check requires a standable tile BESIDE an unwalkable
-            // target, which is exactly the reachability proof a follow-up click needs. LOS is
-            // deliberately not consulted: solid objects fail line-of-sight from everywhere
-            // (docs/entity-guides), which is how the old opt-in checkCanReach path deadlocked.
-            if (CantReachTargetRecovery.retryExhausted(
-                    Microbot.cantReachTargetRetries, Rs2Random.between(3, 5))) {
-                Microbot.pauseAllScripts.compareAndSet(false, true);
-                Microbot.showMessage("Your bot tried to interact with an object for "
-                        + Microbot.cantReachTargetRetries + " times but failed. Please take a look at what is happening.");
-                return false;
-            }
-            WorldPoint objectLocation = object.getWorldLocation();
-            if (objectLocation == null) return false;
-            Microbot.cantReachTargetRetries++;
-            Microbot.log("[Interact] can't-reach recovery: walking to object " + object.getId()
-                    + " at " + objectLocation + " (attempt " + Microbot.cantReachTargetRetries + ")");
-            if (CantReachTargetRecovery.walkTo(objectLocation, 2)) {
-                Microbot.pauseAllScripts.compareAndSet(true, false);
-                Microbot.cantReachTarget = false;
-                Microbot.cantReachTargetRetries = 0;
-                // fall through and click from beside it
-            } else {
-                return false;
-            }
-        }
-        // Use LocalPoint-based distance when the object is in the current scene (e.g. inside a
-        // POH instance, where Rs2Player.getWorldLocation() returns the overworld-template tile
-        // and distanceTo() against an instance world point yields Integer.MAX_VALUE, falsely
-        // triggering the "not close enough" path).
-        LocalPoint playerLocal = Microbot.getClient().getLocalPlayer() != null
-                ? Microbot.getClient().getLocalPlayer().getLocalLocation() : null;
-        LocalPoint objectLocal = object.getLocalLocation();
-        boolean tooFar;
-        if (playerLocal != null && objectLocal != null && objectLocal.isInScene()) {
-            int dx = playerLocal.getSceneX() - objectLocal.getSceneX();
-            int dy = playerLocal.getSceneY() - objectLocal.getSceneY();
-            tooFar = Math.max(Math.abs(dx), Math.abs(dy)) > 51;
-        } else {
-            WorldPoint playerWorld = Rs2Player.getWorldLocation();
-            WorldPoint objectWorld = object.getWorldLocation();
-            if (playerWorld == null || objectWorld == null) return false;
-            tooFar = playerWorld.distanceTo(objectWorld) > 51;
-        }
-        if (tooFar) {
-            Microbot.log("Object with id " + object.getId() + " is not close enough to interact with. Walking to the object....");
-            Rs2Walker.walkTo(object.getWorldLocation());
-            return false;
-        }
-
-        try {
-
-            int param0;
-            int param1;
-            MenuAction menuAction = MenuAction.WALK;
-
-            ObjectComposition objComp = convertToObjectComposition(object);
-            if (objComp == null) return false;
-
-            Microbot.status = action + " " + objComp.getName();
-
-            if (object instanceof GameObject) {
-                GameObject obj = (GameObject) object;
-                if (obj.sizeX() > 1) {
-                    param0 = obj.getLocalLocation().getSceneX() - obj.sizeX() / 2;
-                } else {
-                    param0 = obj.getLocalLocation().getSceneX();
-                }
-
-                if (obj.sizeY() > 1) {
-                    param1 = obj.getLocalLocation().getSceneY() - obj.sizeY() / 2;
-                } else {
-                    param1 = obj.getLocalLocation().getSceneY();
-                }
-            } else {
-                // Default objects like walls, groundobjects, decorationobjects etc...
-                param0 = object.getLocalLocation().getSceneX();
-                param1 = object.getLocalLocation().getSceneY();
-            }
-
-            int index = 0;
-            if (action != null) {
-                String[] actions;
-                if (objComp.getImpostorIds() != null && objComp.getImpostor() != null) {
-                    actions = objComp.getImpostor().getActions();
-                } else {
-                    actions = objComp.getActions();
-                }
-
-                for (int i = 0; i < actions.length; i++) {
-                    if (actions[i] == null) continue;
-                    if (action.equalsIgnoreCase(Rs2UiHelper.stripColTags(actions[i]))) {
-                        index = i;
-                        break;
-                    }
-                }
-
-                if (index == actions.length)
-                    index = 0;
-            }
-
-            if (index == -1) {
-                Microbot.log("Failed to interact with object " + object.getId() + " " + action);
-            }
-
-
-            if (Microbot.getClient().isWidgetSelected()) {
-                menuAction = MenuAction.WIDGET_TARGET_ON_GAME_OBJECT;
-            } else if (index == 0) {
-                menuAction = MenuAction.GAME_OBJECT_FIRST_OPTION;
-            } else if (index == 1) {
-                menuAction = MenuAction.GAME_OBJECT_SECOND_OPTION;
-            } else if (index == 2) {
-                menuAction = MenuAction.GAME_OBJECT_THIRD_OPTION;
-            } else if (index == 3) {
-                menuAction = MenuAction.GAME_OBJECT_FOURTH_OPTION;
-            } else if (index == 4) {
-                menuAction = MenuAction.GAME_OBJECT_FIFTH_OPTION;
-            }
-
-            if (!Rs2Camera.isTileOnScreen(object.getLocalLocation())) {
-                Rs2Camera.turnTo(object);
-            }
-
-            // both hands must be free before using MINECART
-            if (objComp.getName().toLowerCase().contains("train cart")) {
-                Rs2Equipment.unEquip(EquipmentInventorySlot.WEAPON);
-                Rs2Equipment.unEquip(EquipmentInventorySlot.SHIELD);
-                sleepUntil(() -> Rs2Equipment.get(EquipmentInventorySlot.WEAPON) == null && Rs2Equipment.get(EquipmentInventorySlot.SHIELD) == null);
-            }
-
-/*            if (object.getWorldView().getId() != -1) {
-                param0 = 3;
-                param1 = 4;
-            }*/
-
-            int worldViewId = WorldView.TOPLEVEL;
-
-            if (!objectWorldView.isTopLevel()) {
-                var worldView =Microbot.getClientThread().invoke(() ->  Microbot.getClient().getLocalPlayer().getWorldView());
-                if (worldView == null) {
-                    worldViewId = Microbot.getClient().getTopLevelWorldView().getId();
-                } else {
-                    worldViewId = worldView
-                            .getId();
-                }
-
-            }
-
-
-            Microbot.doInvoke(new NewMenuEntry()
-                    .param0(param0)
-                    .param1(param1)
-                    .opcode(menuAction.getId())
-                    .identifier(object.getId())
-                    .itemId(-1)
-                    .option(action)
-                    .target(objComp.getName())
-                    .gameObject(object)
-                    .worldViewId(worldViewId)
-                    ,
-                Rs2UiHelper.getObjectClickbox(object));
-// MenuEntryImpl(getOption=Use, getTarget=Barrier, getIdentifier=43700, getType=GAME_OBJECT_THIRD_OPTION, getParam0=53, getParam1=51, getItemId=-1, isForceLeftClick=true, getWorldViewId=-1, isDeprioritized=false)
-            //Rs2Reflection.invokeMenu(param0, param1, menuAction.getId(), object.getId(),-1, "", "", -1, -1);
-
-        } catch (Exception ex) {
-            Microbot.log("Failed to interact with object " + ex.getMessage());
-            return false;
-        }
-
-        return true;
+        return new Rs2TileObjectModel(object).click(action);
     }
 
     public static boolean hasLineOfSight(TileObject tileObject) {

@@ -51,7 +51,8 @@ import static org.junit.Assert.fail;
  * {@code nearest()}, {@code first()}, or {@code toList()} on an
  * {@link net.runelite.client.plugins.microbot.api.IEntityQueryable}
  * in a method that also uses a <strong>name-based filter</strong>
- * ({@code withName}, {@code withNameContains}, {@code withNames}).
+ * ({@code withName}, {@code withNameContains}, {@code withNames},
+ * {@code withAction}, {@code withActionContains}).
  *
  * <h2>Why only name-based filters?</h2>
  * Name-based filters call {@code getName()} on every entity in the stream.
@@ -88,7 +89,8 @@ public class QueryableTerminalGuardrailTest
 	);
 
 	private static final Set<String> NAME_BASED_FILTERS = Set.of(
-		"withName", "withNameContains", "withNames"
+		"withName", "withNameContains", "withNames",
+		"withAction", "withActionContains"
 	);
 
 	private static final Set<String> UNSAFE_TERMINAL_NAMES = Set.of(
