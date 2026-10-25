@@ -186,19 +186,19 @@ public class BarbarianFishingScript implements AModule {
     public boolean isBankMissingMaterials(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
         if (!needsBank(config)) return false;
-        // True only when missing from BOTH inventory and bank. hasBankItem is the
-        // retrying variant (the bank mirror can be stale right after the open).
-        if (!Rs2Inventory.hasItem(ItemID.BARBARIAN_ROD) && !Rs2Bank.hasBankItem(ItemID.BARBARIAN_ROD, 1)) return true;
-        if (!Rs2Inventory.hasItem(ItemID.FEATHER) && !Rs2Bank.hasBankItem(ItemID.FEATHER, 1)) return true;
+        // Missing only when neither unnoted/noted inventory nor bank can supply it. A noted
+        // rod is bankable; feathers are stackable and therefore cannot be noted at all.
+        if (!AScriptBank.bankableAtLeast(ItemID.BARBARIAN_ROD, 1)) return true;
+        if (!AScriptBank.bankableAtLeast(ItemID.FEATHER, 1)) return true;
         return false;
     }
 
     @Override
     public String describeMissing(AScriptConfig config) {
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(ItemID.BARBARIAN_ROD) && !Rs2Bank.hasBankItem(ItemID.BARBARIAN_ROD, 1))
+        if (!AScriptBank.bankableAtLeast(ItemID.BARBARIAN_ROD, 1))
             sb.append("no barbarian rod (not in bank)");
-        if (!Rs2Inventory.hasItem(ItemID.FEATHER) && !Rs2Bank.hasBankItem(ItemID.FEATHER, 1)) {
+        if (!AScriptBank.bankableAtLeast(ItemID.FEATHER, 1)) {
             if (sb.length() > 0) sb.append(", ");
             sb.append("no feathers (not in bank)");
         }
