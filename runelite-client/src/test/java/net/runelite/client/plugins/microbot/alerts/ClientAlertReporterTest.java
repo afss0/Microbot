@@ -12,6 +12,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.NPC;
+import net.runelite.api.Player;
+import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.ClientSessionManager;
 import net.runelite.client.eventbus.EventBus;
@@ -38,6 +41,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -71,6 +75,7 @@ public class ClientAlertReporterTest
 	private ClientSessionManager sessions;
 	private PluginManager pluginManager;
 	private ScheduledExecutorService executor;
+	private Client client;
 	private ClientAlertReporter reporter;
 
 	@Before
@@ -88,7 +93,7 @@ public class ClientAlertReporterTest
 		when(pluginManager.isPluginActive(builtIn)).thenReturn(true);
 		MicrobotPluginManager microbotPluginManager = mock(MicrobotPluginManager.class);
 		when(microbotPluginManager.getInstalledPluginVersion(anyString())).thenReturn(Optional.empty());
-		Client client = mock(Client.class);
+		client = mock(Client.class);
 		when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
 		executor = mock(ScheduledExecutorService.class);
 		doAnswer(invocation ->
@@ -420,6 +425,108 @@ public class ClientAlertReporterTest
 		assertFalse(ClientAlertReporter.isScript(new BuiltInPlugin()));
 		assertNull(ClientAlertReporter.attribute(
 			new ClientAlertReporter.ScriptError(0, "other.Logger", List.of(), "x"), List.of(script)));
+	}
+
+	@Test
+	public void deathOfTheLocalPlayerReportsDied()
+	{
+		Player player = mock(Player.class);
+		when(client.getLocalPlayer()).thenReturn(player);
+		reporter.onActorDeath(new ActorDeath(mock(NPC.class)));
+		reporter.onActorDeath(new ActorDeath(mock(Player.class)));
+		verify(api, never()).sendAlertEvent(any(), any(), any());
+
+		reporter.onActorDeath(new ActorDeath(player));
+
+		JsonObject event = sentOfType(AlertEvent.DIED).get(0);
+		assertEquals(1, event.getAsJsonArray("runningScripts").size());
+		assertEquals(1, sent().size());
+	}
+
+	@Test
+	public void theDisabledAccountLoginScreenReportsBannedOncePerLogin()
+	{
+		runScheduledTasksRightAway();
+		when(client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+		when(client.getLoginIndex()).thenReturn(ClientAlertReporter.BANNED_LOGIN_INDEX);
+
+		reporter.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+		reporter.onGameStateChanged(gameState(GameState.LOGGING_IN));
+		reporter.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+
+		JsonObject event = sentOfType(AlertEvent.BANNED).get(0);
+		assertFalse(event.get("loggedIn").getAsBoolean());
+		assertEquals(1, sentOfType(AlertEvent.BANNED).size());
+
+		reporter.onGameStateChanged(gameState(GameState.LOGGED_IN));
+		reporter.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+		assertEquals(2, sentOfType(AlertEvent.BANNED).size());
+	}
+
+	@Test
+	public void aSecondDisabledAccountOnTheSameClientIsReportedToo()
+	{
+		when(client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+		when(client.getLoginIndex()).thenReturn(ClientAlertReporter.BANNED_LOGIN_INDEX);
+		when(client.getUsername()).thenReturn("first");
+		reporter.checkBanned();
+		reporter.checkBanned();
+		when(client.getUsername()).thenReturn("second");
+		reporter.checkBanned();
+		when(client.getUsername()).thenReturn("first");
+		reporter.checkBanned();
+
+		assertEquals(2, sentOfType(AlertEvent.BANNED).size());
+	}
+
+	@Test
+	public void aBanThatCouldNotBeSentIsTriedAgain()
+	{
+		when(client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+		when(client.getLoginIndex()).thenReturn(ClientAlertReporter.BANNED_LOGIN_INDEX);
+		when(client.getUsername()).thenReturn("first");
+		when(sessions.getMicrobotSessionId()).thenReturn(null);
+		reporter.checkBanned();
+		verify(api, never()).sendAlertEvent(any(), any(), any());
+
+		when(sessions.getMicrobotSessionId()).thenReturn(SESSION);
+		reporter.checkBanned();
+
+		assertEquals(1, sentOfType(AlertEvent.BANNED).size());
+	}
+
+	@Test
+	public void otherLoginScreensAreNotBans()
+	{
+		runScheduledTasksRightAway();
+		when(client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+		when(client.getLoginIndex()).thenReturn(2);
+
+		reporter.onGameStateChanged(gameState(GameState.LOGIN_SCREEN));
+		reporter.checkBanned();
+
+		verify(api, never()).sendAlertEvent(any(), any(), any());
+	}
+
+	@Test
+	public void noBanIsReportedWithoutAToken()
+	{
+		when(token.get()).thenReturn(Optional.empty());
+		when(client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+		when(client.getLoginIndex()).thenReturn(ClientAlertReporter.BANNED_LOGIN_INDEX);
+
+		reporter.checkBanned();
+
+		verify(api, never()).sendAlertEvent(any(), any(), any());
+	}
+
+	private void runScheduledTasksRightAway()
+	{
+		doAnswer(invocation ->
+		{
+			invocation.<Runnable>getArgument(0).run();
+			return null;
+		}).when(executor).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
 	}
 
 	private static GameStateChanged gameState(GameState state)

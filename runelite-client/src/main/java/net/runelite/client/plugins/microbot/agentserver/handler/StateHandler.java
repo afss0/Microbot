@@ -6,9 +6,11 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
+import net.runelite.client.RuneLiteProperties;
 import net.runelite.client.plugins.microbot.Microbot;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -36,6 +38,10 @@ public class StateHandler extends AgentHandler {
 			return;
 		}
 
+		sendJson(exchange, 200, snapshot(client));
+	}
+
+	static Map<String, Object> snapshot(Client client) {
 		Map<String, Object> state = new LinkedHashMap<>();
 		GameState gameState = client.getGameState();
 		state.put("loggedIn", Microbot.isLoggedIn());
@@ -75,6 +81,15 @@ public class StateHandler extends AgentHandler {
 		}
 
 		state.put("scriptsPaused", Microbot.pauseAllScripts.get());
-		sendJson(exchange, 200, state);
+		state.put("instance", instance());
+		return state;
+	}
+
+	static Map<String, Object> instance() {
+		Map<String, Object> instance = new LinkedHashMap<>();
+		instance.put("pid", ProcessHandle.current().pid());
+		instance.put("microbotVersion", RuneLiteProperties.getMicrobotVersion());
+		instance.put("uptimeMs", ManagementFactory.getRuntimeMXBean().getUptime());
+		return instance;
 	}
 }

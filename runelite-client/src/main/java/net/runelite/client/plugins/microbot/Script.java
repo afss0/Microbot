@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Slf4j
 public abstract class Script extends Global implements IScript {
+    static final long EXECUTOR_KEEP_ALIVE_SECONDS = 60;
     private final AtomicBoolean startAnnounced = new AtomicBoolean();
 
     private void announceStart() {
@@ -47,6 +48,12 @@ public abstract class Script extends Global implements IScript {
                 return t;
             }
         }) {
+            {
+                setKeepAliveTime(EXECUTOR_KEEP_ALIVE_SECONDS, TimeUnit.SECONDS);
+                allowCoreThreadTimeOut(true);
+                setRemoveOnCancelPolicy(true);
+            }
+
             @Override
             public ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay,
                     long delay, TimeUnit unit) {

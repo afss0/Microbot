@@ -22,7 +22,9 @@ import net.runelite.client.events.RuneScapeProfileChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.microbot.alerts.ClientAlertReporter;
+import net.runelite.client.plugins.microbot.alerts.DashboardSync;
 import net.runelite.client.plugins.microbot.alerts.DeviceLinkFlow;
+import net.runelite.client.plugins.microbot.diagnostics.BugReportTracker;
 import net.runelite.client.plugins.microbot.diagnostics.ScriptErrorReporter;
 import net.runelite.client.plugins.microbot.pouch.PouchOverlay;
 import net.runelite.client.plugins.microbot.ui.MicrobotPluginConfigurationDescriptor;
@@ -156,10 +158,16 @@ public class MicrobotPlugin extends Plugin
 	private ClientAlertReporter clientAlertReporter;
 
 	@Inject
+	private DashboardSync dashboardSync;
+
+	@Inject
 	private DeviceLinkFlow deviceLinkFlow;
 
 	@Inject
 	private MicrobotHelpMenu helpMenu;
+
+	@Inject
+	private BugReportTracker bugReportTracker;
 
 	@Inject
 	private MicrobotTour tour;
@@ -194,6 +202,7 @@ public class MicrobotPlugin extends Plugin
 		scriptErrorAttachment = scriptErrorReporter.install(context);
 		eventBus.register(clientAlertReporter);
 		clientAlertReporter.start();
+		dashboardSync.start();
 		eventBus.register(deviceLinkFlow);
 
 		// Initialize the cached configuration in GameChatAppender
@@ -238,6 +247,7 @@ public class MicrobotPlugin extends Plugin
 
 		new InputSelector(clientToolbar);
 		helpMenu.install();
+		bugReportTracker.start();
 		eventBus.register(tour);
 		tour.install(navButton);
 
@@ -264,10 +274,12 @@ public class MicrobotPlugin extends Plugin
 		eventBus.unregister(tour);
 		tour.uninstall();
 		helpMenu.uninstall();
+		bugReportTracker.stop();
 		gameChatAttachment.remove();
 		scriptErrorAttachment.remove();
 		eventBus.unregister(clientAlertReporter);
 		clientAlertReporter.stop();
+		dashboardSync.stop();
 		eventBus.unregister(deviceLinkFlow);
 		deviceLinkFlow.stop();
 		microbotVersionChecker.shutdown();

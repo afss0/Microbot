@@ -1,5 +1,6 @@
 package net.runelite.client.plugins.microbot.ui;
 
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
@@ -20,6 +21,7 @@ import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLiteProperties;
+import net.runelite.client.plugins.microbot.diagnostics.BugReportTracker;
 import net.runelite.client.plugins.microbot.diagnostics.DiagnosticReportCollector;
 import net.runelite.client.plugins.microbot.recovery.StartupRecovery;
 import net.runelite.client.ui.ClientToolbar;
@@ -32,17 +34,24 @@ public class MicrobotHelpMenu
 {
 	static final String BUG_REPORT_URL = "https://github.com/chsami/Microbot/issues/new?template=bug-issue.yml";
 	private static final String SAFE_MODE_TITLE = "Safe mode on next start";
+	private static final Color UPDATE_DOT = new Color(255, 215, 0);
 
 	private final DiagnosticReportCollector diagnosticReportCollector;
+	private final MicrobotBugReporter bugReporter;
+	private final BugReportTracker bugReportTracker;
 	private final ClientToolbar clientToolbar;
+	private final Runnable onReportsChanged = () -> SwingUtilities.invokeLater(this::refreshButton);
 	private NavigationButton button;
 	private Runnable onSafeModeChanged = () -> { };
 	private Runnable onShowTour;
 
 	@Inject
-	MicrobotHelpMenu(DiagnosticReportCollector diagnosticReportCollector, ClientToolbar clientToolbar)
+	MicrobotHelpMenu(DiagnosticReportCollector diagnosticReportCollector, MicrobotBugReporter bugReporter, BugReportTracker bugReportTracker,
+		ClientToolbar clientToolbar)
 	{
 		this.diagnosticReportCollector = diagnosticReportCollector;
+		this.bugReporter = bugReporter;
+		this.bugReportTracker = bugReportTracker;
 		this.clientToolbar = clientToolbar;
 	}
 
@@ -52,23 +61,55 @@ public class MicrobotHelpMenu
 		{
 			return;
 		}
-		button = NavigationButton.builder()
-			.tab(false)
-			.icon(bugIcon())
-			.tooltip("Report a problem")
-			.priority(90)
-			.onClick(this::showAtPointer)
-			.build();
+		button = buildButton(bugReportTracker.unseenCount());
 		clientToolbar.addNavigation(button);
+		bugReportTracker.onChange(onReportsChanged);
 	}
 
 	public void uninstall()
 	{
+		bugReportTracker.removeListener(onReportsChanged);
 		if (button != null)
 		{
 			clientToolbar.removeNavigation(button);
 			button = null;
 		}
+	}
+
+	private void refreshButton()
+	{
+		if (button == null)
+		{
+			return;
+		}
+		NavigationButton next = buildButton(bugReportTracker.unseenCount());
+		if (next.getTooltip().equals(button.getTooltip()))
+		{
+			return;
+		}
+		clientToolbar.removeNavigation(button);
+		button = next;
+		clientToolbar.addNavigation(button);
+	}
+
+	private NavigationButton buildButton(int unseen)
+	{
+		return NavigationButton.builder()
+			.tab(false)
+			.icon(unseen > 0 ? withDot(bugIcon()) : bugIcon())
+			.tooltip(tooltip(unseen))
+			.priority(90)
+			.onClick(this::showAtPointer)
+			.build();
+	}
+
+	static String tooltip(int unseen)
+	{
+		if (unseen <= 0)
+		{
+			return "Report a problem";
+		}
+		return "Report a problem (" + unseen + (unseen == 1 ? " report update)" : " report updates)");
 	}
 
 	void onSafeModeChanged(Runnable listener)
@@ -111,17 +152,26 @@ public class MicrobotHelpMenu
 	{
 		JPopupMenu menu = new JPopupMenu();
 
-		JMenuItem diagnostics = new JMenuItem("Copy diagnostics");
-		diagnostics.setToolTipText("Copy client, build, walker and plugin details for bug reports. Excludes account names, chat, tokens and file paths.");
-		diagnostics.addActionListener(e -> copyDiagnostics(owner));
-		menu.add(diagnostics);
+		JMenuItem report = new JMenuItem(BugReportDialog.TITLE + "...");
+		report.setToolTipText("Tell us what went wrong. We'll let you know when it's fixed.");
+		report.addActionListener(e -> bugReporter.open(owner, null));
+		menu.add(report);
+
+		if (bugReporter.hasReports())
+		{
+			int unseen = bugReporter.unseenReports();
+			JMenuItem reports = new JMenuItem(MyReportsDialog.TITLE + (unseen > 0 ? " (" + unseen + " new)" : ""));
+			reports.setToolTipText("See what happened to the reports you sent.");
+			reports.addActionListener(e -> bugReporter.openMyReports(owner));
+			menu.add(reports);
+		}
+
+		menu.addSeparator();
 
 		JMenuItem safeMode = new JMenuItem(StartupRecovery.nextStartSafeMode() ? "Cancel safe mode next start" : "Safe mode next start");
 		safeMode.setToolTipText("Start Microbot once without external (Hub or sideloaded) plugins and the GPU plugin, to recover from a plugin that freezes or crashes the client. Plugin files and settings are kept.");
 		safeMode.addActionListener(e -> toggleNextStartSafeMode(owner));
 		menu.add(safeMode);
-
-		menu.addSeparator();
 
 		Runnable showTour = onShowTour;
 		if (showTour != null)
@@ -132,12 +182,19 @@ public class MicrobotHelpMenu
 			menu.add(tour);
 		}
 
+		menu.addSeparator();
+
 		JMenuItem discord = new JMenuItem("Ask for help on Discord");
 		discord.addActionListener(e -> LinkBrowser.browse(RuneLiteProperties.getDiscordInvite()));
 		menu.add(discord);
 
-		JMenuItem issue = new JMenuItem("Report a bug on GitHub");
-		issue.setToolTipText("Copy diagnostics first, then paste them into the report.");
+		JMenuItem diagnostics = new JMenuItem("Copy client details (for Discord)");
+		diagnostics.setToolTipText("Copy your Microbot, plugin and system versions to paste in a Discord message. Leaves out account names, chat, passwords and file paths.");
+		diagnostics.addActionListener(e -> copyDiagnostics(owner));
+		menu.add(diagnostics);
+
+		JMenuItem issue = new JMenuItem("Open a GitHub issue");
+		issue.setToolTipText("For people with a GitHub account. Send a report first and mention its code in the issue.");
 		issue.addActionListener(e -> LinkBrowser.browse(BUG_REPORT_URL));
 		menu.add(issue);
 
@@ -151,13 +208,13 @@ public class MicrobotHelpMenu
 			String report = diagnosticReportCollector.collectReport();
 			Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(report), null);
 			JOptionPane.showMessageDialog(owner,
-				"Diagnostics copied. Paste them into your Discord post or GitHub bug report.\nThey leave out account names, chat, tokens and file paths.",
-				"Copy diagnostics", JOptionPane.INFORMATION_MESSAGE);
+				"Client details copied. Paste them into your Discord message.\nThey leave out account names, chat, passwords and file paths.",
+				"Copy client details", JOptionPane.INFORMATION_MESSAGE);
 		}
 		catch (Exception ex)
 		{
 			log.warn("Could not copy diagnostics: {}", ex.getMessage());
-			JOptionPane.showMessageDialog(owner, "Could not copy diagnostics.", "Copy diagnostics", JOptionPane.WARNING_MESSAGE);
+			JOptionPane.showMessageDialog(owner, "Could not copy the client details.", "Copy client details", JOptionPane.WARNING_MESSAGE);
 		}
 	}
 
@@ -179,7 +236,20 @@ public class MicrobotHelpMenu
 		}
 	}
 
-	private static BufferedImage bugIcon()
+	private static BufferedImage withDot(BufferedImage icon)
+	{
+		Graphics2D g = icon.createGraphics();
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		g.setComposite(AlphaComposite.Clear);
+		g.fillOval(8, -2, 10, 10);
+		g.setComposite(AlphaComposite.SrcOver);
+		g.setColor(UPDATE_DOT);
+		g.fillOval(10, 0, 6, 6);
+		g.dispose();
+		return icon;
+	}
+
+	static BufferedImage bugIcon()
 	{
 		BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D g = image.createGraphics();

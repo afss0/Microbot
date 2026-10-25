@@ -36,9 +36,11 @@ Replace the official `RuneLite.jar` with the Microbot jar and keep the filename 
 
 ## Reporting A Problem
 
-Click the bug icon in the client's right-hand toolbar and choose **Copy diagnostics**. Paste the copied text into your Discord post or GitHub issue.
+Click the bug icon in the client's right-hand toolbar and choose **Report a problem...**, or use the bug icon in a plugin's settings header. Describe what went wrong, check what will be sent, and click **Send**. Microbot tells you when the report is fixed or when the team has a question; follow your reports under **My reports** in the same menu.
 
-The report lists the Microbot/RuneLite versions, commit, build origin, Java/OS, safe mode, GPU state, walker planner and settings, and loaded external plugin versions. Builds without official release metadata show `Build origin: unknown` or `custom`. It excludes account and player names, chat, credentials/tokens, and file paths.
+The report always includes the Microbot/RuneLite versions, commit, build origin, Java/OS, safe mode, GPU state, walker planner and settings, and loaded external plugin versions. You can also include the recent log and errors, the plugin's settings, the game state and a screenshot. Account and player names found in the text, chat, credentials/tokens, and file paths are removed; a screenshot is sent as it is.
+
+To paste details into Discord instead, choose **Copy client details (for Discord)**.
 
 ## Recovering From A Freeze Or Crash
 

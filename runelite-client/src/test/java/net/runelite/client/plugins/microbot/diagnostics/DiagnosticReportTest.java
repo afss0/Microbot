@@ -99,6 +99,16 @@ public class DiagnosticReportTest
 	}
 
 	@Test
+	public void shortCredentialsAfterAKeyAreRedacted()
+	{
+		assertEquals("login failed password=[redacted] retry", DiagnosticReport.clean("login failed password=abc123 retry"));
+		assertEquals("Bank PIN: [redacted], token = [redacted]", DiagnosticReport.clean("Bank PIN: 1234, token = x9"));
+		assertEquals("api_key=[redacted]) and secret:[redacted]", DiagnosticReport.clean("api_key=k1) and secret:s3cr3t"));
+		assertEquals("spin=3 tokens left", DiagnosticReport.clean("spin=3 tokens left"));
+		assertEquals("pin entered", DiagnosticReport.clean("pin entered"));
+	}
+
+	@Test
 	public void pluginFieldsAreSanitized()
 	{
 		String report = DiagnosticReport.render(official()

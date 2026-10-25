@@ -14,7 +14,7 @@ A single-page reference for every tool available when **creating or debugging** 
 | **Logged out** | Client open, not logged in | All offline tools + `profile`, `login`, `state`, `widgets`, `screenshot` |
 | **Logged in** | Client + game session | Everything |
 
-The **Agent Server** plugin (port 8081, localhost) must be enabled for any CLI/HTTP command. It is enabled by default.
+The **Agent Server** plugin (port 8081, localhost) must be enabled for any CLI/HTTP command. It is off by default: enable **Agent Server** in the Microbot plugin list.
 
 ```bash
 # Quick connectivity check
@@ -54,6 +54,8 @@ The **Agent Server** plugin (port 8081, localhost) must be enabled for any CLI/H
 | CLI Command | Purpose |
 |-------------|---------|
 | `state` | Game state, player position, health, animation, combat level |
+| `observe [--chat-since N] [--menu-since N] [--wait-ticks T] [--nearby D]` | One snapshot: state, inventory, equipment, dialogue, recent game chat, menu clicks, errors, script health |
+| `var-changes [--since N] [--varbit ID]` | Recent varbit/varp changes |
 | `skills [--name X]` | All skill levels, boosted levels, XP |
 | `varbit <id>` | Read a varbit value (critical for verifying settings) |
 | `inventory` | Inventory items with id, name, quantity, slot, actions |
@@ -69,7 +71,9 @@ The **Agent Server** plugin (port 8081, localhost) must be enabled for any CLI/H
 | `screenshot save [--label X]` | Save screenshot to disk (returns file path) |
 | `scripts` | List all plugins with on/off status |
 | `scripts status --class <cls>` | Script runtime state |
-| `scripts health [--class <cls>]` | Heartbeat / stall detection |
+| `scripts health [--class <cls>]` | Heartbeat / stall detection, last error |
+| `scripts pause` / `scripts resume` | Hold every script loop still while you inspect, then continue |
+| `endpoints` | List every endpoint path |
 | `scripts results --class <cls>` | Retrieve test results JSON |
 
 ### Act (mutate game state)
@@ -104,8 +108,13 @@ The **Agent Server** plugin (port 8081, localhost) must be enabled for any CLI/H
 | Tool | Purpose |
 |------|---------|
 | `scripts health` | Detect stalled scripts (heartbeat age) |
+| `path <x> <y> [plane] [--full]` | Plan a walker route without moving: termination reason, transports, cost |
+| `path active` | Route the walker is following right now |
+| `tile <x> <y> [plane]` | Pathfinder collision for one tile: static vs live, conflicts, objects |
+| `observe --menu-since N` | Menu clicks actually sent, to compare with what the script meant to click |
 | `GET /debug/snapshot` | State machine snapshot — current state, transitions, guard results, trace buffer |
 | `screenshot save --label debug` | Visual state capture for multimodal analysis |
+| Plugin setting *Trace requests* | Every agent request (path, status, duration, body field names) in `~/.runelite/agent-trace.jsonl`, to replay what an agent did |
 
 ---
 
@@ -235,7 +244,8 @@ Step-by-step playbooks for common debugging scenarios. Each shows the commands t
 
 # 3. Is the loop stalled? (check heartbeat age)
 ./microbot-cli scripts health --class "com.example.MyPlugin"
-# → If lastLoopMs is very old, the script loop is stuck or crashed
+# → A plugin class resolves to the Script classes in its package; several scripts come back as a "scripts" list
+# → If stalledMs is very old, the script loop is stuck or crashed
 
 # 4. Take a screenshot to see visual state
 ./microbot-cli screenshot save --label "debug-stuck"

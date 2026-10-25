@@ -8,6 +8,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.agentserver.AgentServerPlugin;
 
 import javax.swing.*;
 import java.io.IOException;
@@ -55,6 +56,12 @@ public class ScriptHandler extends AgentHandler {
 				break;
 			case "/health":
 				handleHealth(exchange);
+				break;
+			case "/pause":
+				handlePause(exchange, true);
+				break;
+			case "/resume":
+				handlePause(exchange, false);
 				break;
 			default:
 				sendJson(exchange, 404, errorResponse("Unknown endpoint: " + BASE_PATH + sub));
@@ -174,6 +181,11 @@ public class ScriptHandler extends AgentHandler {
 		Plugin plugin = resolvePlugin(body);
 		if (plugin == null) {
 			sendJson(exchange, 404, errorResponse("Plugin not found. Provide className or name in the request body."));
+			return;
+		}
+
+		if (plugin instanceof AgentServerPlugin) {
+			sendJson(exchange, 400, errorResponse("Refusing to stop the Agent Server through its own API"));
 			return;
 		}
 
@@ -308,6 +320,20 @@ public class ScriptHandler extends AgentHandler {
 		}
 	}
 
+	private void handlePause(HttpExchange exchange, boolean paused) throws IOException {
+		try {
+			requirePost(exchange);
+		} catch (HttpMethodException e) {
+			sendJson(exchange, 405, errorResponse(e.getMessage()));
+			return;
+		}
+		Microbot.pauseAllScripts.set(paused);
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("success", true);
+		result.put("scriptsPaused", paused);
+		sendJson(exchange, 200, result);
+	}
+
 	private void handleHealth(HttpExchange exchange) throws IOException {
 		try {
 			requireGet(exchange);
@@ -327,6 +353,7 @@ public class ScriptHandler extends AgentHandler {
 			return;
 		}
 
+		boolean isPlugin;
 		if (className == null || className.isEmpty()) {
 			Plugin plugin = findPluginByName(name);
 			if (plugin == null) {
@@ -334,21 +361,62 @@ public class ScriptHandler extends AgentHandler {
 				return;
 			}
 			className = plugin.getClass().getName();
+			isPlugin = true;
+		} else {
+			isPlugin = getPluginManager() != null && Microbot.getPlugin(className) != null;
 		}
 
-		Map<String, Object> health = ScriptHeartbeatRegistry.getHealth(className);
-		if (health == null) {
+		List<Map<String, Object>> health = healthFor(className, isPlugin);
+		if (health.isEmpty()) {
 			Map<String, Object> result = new LinkedHashMap<>();
 			result.put("scriptClassName", className);
 			result.put("loopCount", 0);
 			result.put("lastHeartbeatAt", null);
 			result.put("stalledMs", null);
 			result.put("status", "NO_HEARTBEAT");
+			Map<String, Object> lastError = AgentLogs.lastErrorFor(className);
+			if (lastError != null) {
+				result.put("lastError", lastError);
+			}
 			sendJson(exchange, 200, result);
 			return;
 		}
+		if (health.size() == 1) {
+			sendJson(exchange, 200, health.get(0));
+			return;
+		}
 
-		sendJson(exchange, 200, health);
+		Map<String, Object> result = new LinkedHashMap<>();
+		result.put("className", className);
+		result.put("scripts", health);
+		sendJson(exchange, 200, result);
+	}
+
+	static List<Map<String, Object>> healthFor(String className, boolean isPlugin) {
+		Map<String, Object> exact = ScriptHeartbeatRegistry.getHealth(className);
+		if (exact != null) {
+			return List.of(withLastError(exact));
+		}
+		int dot = className.lastIndexOf('.');
+		if (!isPlugin || dot < 0) {
+			return List.of();
+		}
+		String pluginPackage = className.substring(0, dot + 1);
+		List<Map<String, Object>> matches = new ArrayList<>();
+		for (Map.Entry<String, Map<String, Object>> entry : ScriptHeartbeatRegistry.getAllHealth().entrySet()) {
+			if (entry.getKey().startsWith(pluginPackage)) {
+				matches.add(withLastError(entry.getValue()));
+			}
+		}
+		return matches;
+	}
+
+	static Map<String, Object> withLastError(Map<String, Object> health) {
+		Map<String, Object> lastError = AgentLogs.lastErrorFor((String) health.get("scriptClassName"));
+		if (lastError != null) {
+			health.put("lastError", lastError);
+		}
+		return health;
 	}
 
 	private PluginManager getPluginManager() {
@@ -396,19 +464,40 @@ public class ScriptHandler extends AgentHandler {
 	private Plugin findPluginByName(String name) {
 		PluginManager pm = getPluginManager();
 		if (pm == null) return null;
-
-		String lower = name.toLowerCase();
-		for (Plugin plugin : pm.getPlugins()) {
-			PluginDescriptor desc = plugin.getClass().getAnnotation(PluginDescriptor.class);
-			if (desc == null) continue;
-			if (desc.name().toLowerCase().contains(lower)) {
-				return plugin;
-			}
-		}
-		return null;
+		return matchPluginByName(pm.getPlugins(), name);
 	}
 
-	private boolean isMicrobotPlugin(Plugin plugin) {
+	static Plugin matchPluginByName(Collection<Plugin> plugins, String name) {
+		String wanted = plainName(name).toLowerCase();
+		List<Plugin> partial = new ArrayList<>();
+		for (Plugin plugin : plugins) {
+			if (!isMicrobotPlugin(plugin)) continue;
+			PluginDescriptor desc = plugin.getClass().getAnnotation(PluginDescriptor.class);
+			if (desc == null) continue;
+			String plain = plainName(desc.name()).toLowerCase();
+			if (plain.equals(wanted)) {
+				return plugin;
+			}
+			if (plain.contains(wanted)) {
+				partial.add(plugin);
+			}
+		}
+		if (partial.size() > 1) {
+			StringJoiner names = new StringJoiner(", ");
+			for (Plugin plugin : partial) {
+				names.add(plainName(plugin.getClass().getAnnotation(PluginDescriptor.class).name()));
+			}
+			throw new BadRequestException("Ambiguous plugin name '" + name + "' matches: " + names
+					+ ". Use the exact name or className.");
+		}
+		return partial.isEmpty() ? null : partial.get(0);
+	}
+
+	static String plainName(String descriptorName) {
+		return descriptorName.replaceAll("<[^>]*>", "").replaceFirst("^\\[[^\\]]*]\\s*", "").trim();
+	}
+
+	private static boolean isMicrobotPlugin(Plugin plugin) {
 		return plugin.getClass().getPackageName().toLowerCase().contains("microbot");
 	}
 }

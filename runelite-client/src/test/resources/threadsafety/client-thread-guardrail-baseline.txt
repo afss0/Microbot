@@ -324,6 +324,7 @@ net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#collect
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#collectOffer(boolean): boolean  ->  net.runelite.api.widgets.Widget#getId(): int
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#collectOffer(boolean): boolean  ->  net.runelite.api.widgets.Widget#getItemId(): int
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#collectOffer(boolean): boolean  ->  net.runelite.api.widgets.Widget#getItemQuantity(): int
+net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#findSearchResult(Widget[], String, boolean): Pair  ->  net.runelite.api.widgets.Widget#getText(): String
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#findSlotForItem(int, boolean): GrandExchangeSlots  ->  net.runelite.api.GrandExchangeOffer#getItemId(): int
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#findSlotForItem(int, boolean): GrandExchangeSlots  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#getActiveOfferSlotsByProgress(): List  ->  net.runelite.api.GrandExchangeOffer#getItemId(): int
@@ -343,7 +344,6 @@ net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#getOffe
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#getOfferDetailsForCancellation(GrandExchangeSlots): Map  ->  net.runelite.api.GrandExchangeOffer#getItemId(): int
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#getOfferDetailsForCancellation(GrandExchangeSlots): Map  ->  net.runelite.api.GrandExchangeOffer#getQuantitySold(): int
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#getOfferDetailsForCancellation(GrandExchangeSlots): Map  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
-net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#getSearchResultWidget(String, boolean): Pair  ->  net.runelite.api.widgets.Widget#getChildren(): Widget[]
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#hasBoughtOffer(GrandExchangeSlots): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#hasBuyOffer(int): GrandExchangeOfferDetails  ->  net.runelite.api.GrandExchangeOffer#getItemId(): int
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#hasBuyOffer(int): GrandExchangeOfferDetails  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
@@ -361,13 +361,12 @@ net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$abortOffer$20(String, GrandExchangeSlots): boolean  ->  net.runelite.api.widgets.Widget#getChild(int): Widget
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$abortOffer$20(String, GrandExchangeSlots): boolean  ->  net.runelite.api.widgets.Widget#getText(): String
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$adjustPriceByPercent$12(boolean, int): boolean  ->  net.runelite.api.widgets.Widget#getText(): String
-net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$getSearchResultWidget$24(boolean, String, Widget): boolean  ->  net.runelite.api.widgets.Widget#getText(): String
-net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasBoughtOffer$27(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
+net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasBoughtOffer$26(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
+net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasFinishedBuyingOffers$27(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasFinishedBuyingOffers$28(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
-net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasFinishedBuyingOffers$29(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
+net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasFinishedSellingOffers$30(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasFinishedSellingOffers$31(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
-net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasFinishedSellingOffers$32(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
-net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasSoldOffer$30(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
+net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$hasSoldOffer$29(GrandExchangeOffer): boolean  ->  net.runelite.api.GrandExchangeOffer#getState(): GrandExchangeOfferState
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#lambda$setQuantity$17(int): void  ->  net.runelite.api.widgets.Widget#getBounds(): Rectangle
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#processOffer(GrandExchangeRequest): boolean  ->  net.runelite.api.widgets.Widget#getChild(int): Widget
 net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange#processOffer(GrandExchangeRequest): boolean  ->  net.runelite.api.widgets.Widget#getText(): String
@@ -727,6 +726,9 @@ net.runelite.client.plugins.microbot.util.walker.Rs2MiniMap#worldToMinimap(World
 net.runelite.client.plugins.microbot.util.walker.Rs2MiniMap#worldToMinimap(WorldPoint): Point  ->  net.runelite.api.WorldView#isInstance(): boolean
 net.runelite.client.plugins.microbot.util.walker.Rs2MiniMap#worldToMinimap(WorldPoint): Point  ->  net.runelite.api.coords.LocalPoint#fromWorld(WorldView, WorldPoint): LocalPoint
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#closeWorldMap(): boolean  ->  net.runelite.api.widgets.Widget#getBounds(): Rectangle
+net.runelite.client.plugins.microbot.util.walker.Rs2Walker#dispatchCanvasWalk(WorldPoint): boolean  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
+net.runelite.client.plugins.microbot.util.walker.Rs2Walker#dispatchCanvasWalk(WorldPoint): boolean  ->  net.runelite.api.WorldView#isInstance(): boolean
+net.runelite.client.plugins.microbot.util.walker.Rs2Walker#dispatchCanvasWalk(WorldPoint): boolean  ->  net.runelite.api.coords.LocalPoint#fromWorld(WorldView, WorldPoint): LocalPoint
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#distanceToRegion(int, int): int  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#distanceToRegion(int, int): int  ->  net.runelite.api.WorldView#getPlane(): int
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#getPointWithWallDistance(WorldPoint, WorldPoint): WorldPoint  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
@@ -763,9 +765,6 @@ net.runelite.client.plugins.microbot.util.walker.Rs2Walker#tryResolvePathAdjacen
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkCanvas(WorldPoint): WorldPoint  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkCanvas(WorldPoint): WorldPoint  ->  net.runelite.api.WorldView#getPlane(): int
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkCanvas(WorldPoint): WorldPoint  ->  net.runelite.api.coords.LocalPoint#fromWorld(WorldView, WorldPoint): LocalPoint
-net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkFastCanvas(WorldPoint, boolean): boolean  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
-net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkFastCanvas(WorldPoint, boolean): boolean  ->  net.runelite.api.WorldView#isInstance(): boolean
-net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkFastCanvas(WorldPoint, boolean): boolean  ->  net.runelite.api.coords.LocalPoint#fromWorld(WorldView, WorldPoint): LocalPoint
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkFastLocal(LocalPoint): void  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkFastLocal(LocalPoint): void  ->  net.runelite.api.WorldView#getPlane(): int
 net.runelite.client.plugins.microbot.util.walker.Rs2Walker#walkNextToInstance(GameObject): void  ->  net.runelite.api.Client#getTopLevelWorldView(): WorldView
@@ -969,7 +968,6 @@ net.runelite.client.plugins.microbot.util.widget.Rs2WidgetInspector#toDescriptio
 net.runelite.client.plugins.microbot.util.widget.Rs2WidgetInspector#toDescription(Widget, String): Rs2WidgetInspector$WidgetDescription  ->  net.runelite.api.widgets.WidgetUtil#componentToInterface(int): int
 net.runelite.client.plugins.microbot.util.widget.Rs2WidgetInspector#walkTree(Widget, String, int, int, List): void  ->  net.runelite.api.widgets.Widget#isHidden(): boolean
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#canAccessWorld(int): boolean  ->  net.runelite.api.Client#getLocalPlayer(): Player
-net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#canAccessWorld(int): boolean  ->  net.runelite.api.Client#getWorldType(): EnumSet
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#findBestAccessibleWorld(boolean, WorldRegion, Set): int  ->  net.runelite.api.Client#getWorldType(): EnumSet
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getAccessibleWorldsByPing(int, List): List  ->  net.runelite.api.Client#getWorldType(): EnumSet
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getAccessibleWorldsByPopulation(int): List  ->  net.runelite.api.Client#getWorldType(): EnumSet
@@ -983,4 +981,4 @@ net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getRandomAccessible
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getRandomAccessibleWorldFromRegion(WorldRegion, boolean, boolean, boolean): int  ->  net.runelite.api.Client#getWorldType(): EnumSet
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#getWorldStatistics(): Map  ->  net.runelite.api.Client#getWorldType(): EnumSet
 net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#isMemberAccount(): boolean  ->  net.runelite.api.Client#getLocalPlayer(): Player
-net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#lambda$hopWorld$7(): boolean  ->  net.runelite.api.Client#getGameState(): GameState
+net.runelite.client.plugins.microbot.util.world.Rs2WorldUtil#lambda$hopWorld$8(): boolean  ->  net.runelite.api.Client#getGameState(): GameState

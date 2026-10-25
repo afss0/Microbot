@@ -301,6 +301,19 @@ public interface MicrobotConfig extends Config
 		return "";
 	}
 
+	String keyAllowDashboardScreenshots = "allowDashboardScreenshots";
+	@ConfigItem(
+		keyName = keyAllowDashboardScreenshots,
+		name = "Allow dashboard screenshots",
+		description = "Let the Microbot dashboard take a screenshot of the game when this client is linked to your account",
+		position = 10,
+		section = generalSection
+	)
+	default boolean allowDashboardScreenshots()
+	{
+		return true;
+	}
+
 	@ConfigSection(
 		name = "World hop limit",
 		description = "Pace world hops so the per-IP login limit (\"Too many login attempts\") is never reached",

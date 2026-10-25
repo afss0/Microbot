@@ -2793,7 +2793,7 @@ public class Rs2Walker {
                                             distance, FINAL_ADJACENT_CANVAS_NUDGE_CHEBYSHEV,
                                             DOOR_OPEN_CANVAS_NUDGE_MAX_FROM_PLAYER)
                                     && Rs2Tile.isTileReachable(recoverTarget)
-                                    && walkFastCanvas(recoverTarget)) {
+                                    && walkFastCanvasWithAutoRun(recoverTarget)) {
                                 clicked = true;
                                 clickedRecoveryTarget = recoverTarget;
                                 log.debug("[Walker] unreachable recovery: scene click -> {}", recoverTarget);
@@ -3218,7 +3218,7 @@ public class Rs2Walker {
                             finalClick = clickRouteBackedShortWalk(rawPath, canvasClickWp, finalPlayerLoc,
                                     normalMinimapReach() - 1, rawAnchorIndex);
                         } else {
-                            finalClick = Rs2Walker.walkFastCanvas(canvasClickWp);
+                            finalClick = walkFastCanvasWithAutoRun(canvasClickWp);
                         }
                         if (finalClick) {
                             waitUntilIdleAfterSceneWalk(target, POST_SCENE_WALK_IDLE_WAIT_MS_MAX, target, finishTh);
@@ -3602,7 +3602,7 @@ public class Rs2Walker {
 
     private static void manageRunEnergy(int pathRemaining) {
         try {
-            Rs2Player.toggleRunEnergy(true);
+            requestAutoRun();
             if (pathRemaining < STAMINA_MIN_PATH_TILES) return;
             if (Rs2Player.getRunEnergy() >= staminaThreshold()) return;
             if (Rs2Player.hasStaminaBuffActive()) return;
@@ -3845,7 +3845,7 @@ public class Rs2Walker {
             if (target != null && playerLoc.distanceTo2D(target) <= INTERIM_CLOSE_TILES
                     && clickTarget.getPlane() == target.getPlane()
                     && clickTarget.distanceTo2D(target) <= 1
-                    && walkFastCanvas(clickTarget)) {
+                    && walkFastCanvasWithAutoRun(clickTarget)) {
                 clickedTarget = clickTarget;
                 clicked = true;
             } else {
@@ -3947,11 +3947,24 @@ public class Rs2Walker {
 
 
     public static boolean walkFastCanvas(WorldPoint worldPoint, boolean toggleRun) {
+        if (worldPoint != null) Rs2Player.toggleRunEnergy(toggleRun);
+        return dispatchCanvasWalk(worldPoint);
+    }
+
+    static boolean walkFastCanvasWithAutoRun(WorldPoint worldPoint) {
+        if (worldPoint != null) requestAutoRun();
+        return dispatchCanvasWalk(worldPoint);
+    }
+
+    static void requestAutoRun() {
+        if (Microbot.enableAutoRunOn) Rs2Player.toggleRunEnergy(true);
+    }
+
+    private static boolean dispatchCanvasWalk(WorldPoint worldPoint) {
         if (worldPoint == null) {
             log.debug("[Walker] walkFastCanvas rejected: null worldPoint");
             return false;
         }
-        Rs2Player.toggleRunEnergy(toggleRun);
         LocalPoint localPoint = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), worldPoint);
 
         if (Microbot.getClient().getTopLevelWorldView().isInstance() && localPoint == null) {

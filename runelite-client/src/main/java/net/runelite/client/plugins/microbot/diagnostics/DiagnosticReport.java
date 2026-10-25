@@ -14,6 +14,8 @@ public final class DiagnosticReport
 	private static final Pattern URL_CREDENTIALS = Pattern.compile("(?i)([a-z][a-z0-9+.-]*://)[^\\s/@]+@");
 	private static final Pattern EMAIL = Pattern.compile("[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+");
 	private static final Pattern SECRET = Pattern.compile("[A-Za-z0-9_\\-+/=]{32,}");
+	private static final Pattern KEYED_SECRET = Pattern.compile(
+		"(?i)\\b(password|passwd|passphrase|token|api[_-]?key|secret|authorization|bank ?pin|pin)(\\s*[:=]\\s*)[^\\s,;)]+");
 
 	private DiagnosticReport()
 	{
@@ -114,6 +116,7 @@ public final class DiagnosticReport
 		text = WINDOWS_PATH.matcher(text).replaceAll("[path]");
 		text = UNIX_PATH.matcher(text).replaceAll("[path]");
 		text = EMAIL.matcher(text).replaceAll("[redacted]");
+		text = KEYED_SECRET.matcher(text).replaceAll("$1$2[redacted]");
 		text = SECRET.matcher(text).replaceAll("[redacted]");
 		return text;
 	}

@@ -17,6 +17,8 @@ public class AlertEvent
 	public static final String SCRIPT_STOPPED = "script_stopped";
 	public static final String SCRIPT_ERROR = "script_error";
 	public static final String LOGGED_OUT = "logged_out";
+	public static final String DIED = "died";
+	public static final String BANNED = "banned";
 
 	static final int MAX_PLUGIN_CHARS = 100;
 	static final int MAX_VERSION_CHARS = 30;

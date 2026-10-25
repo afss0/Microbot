@@ -29,6 +29,18 @@ if [[ -n "$AGENT_TOKEN" ]]; then
     AUTH_HEADER_ARGS=(-H "X-Agent-Token: $AGENT_TOKEN")
 fi
 
+SOCKET="${MICROBOT_SOCKET:-}"
+SOCKET_AUTO=""
+DEFAULT_SOCKET="${HOME}/.runelite/agent/agent.sock"
+if [[ -z "$SOCKET" && -z "${MICROBOT_PORT:-}" && -z "${MICROBOT_HOST:-}" && -S "$DEFAULT_SOCKET" ]]; then
+    SOCKET="$DEFAULT_SOCKET"
+    SOCKET_AUTO=1
+fi
+SOCKET_ARGS=()
+if [[ -n "$SOCKET" ]]; then
+    SOCKET_ARGS=(--unix-socket "$SOCKET")
+fi
+
 json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g'
 }
@@ -45,8 +57,19 @@ Widget Commands:
   widgets click --text "some text"
   widgets invoke <groupId> <childId> --param0 N [--action Select] [--identifier 1]
 
+Server:
+  endpoints                              List every endpoint path
+
 Game State:
   state                                  Current game state and player info
+  observe [--chat-since N] [--menu-since N] [--errors-since N] [--wait-ticks T] [--nearby D] [--limit N]
+                                         One snapshot: state, inventory, equipment, dialogue,
+                                         recent game chat, menu clicks, errors, script health;
+                                         each stream has a cursor for its --*-since flag;
+                                         --wait-ticks T waits T game ticks (max 10) first;
+                                         --nearby D adds the nearest NPCs and objects within D tiles
+  var-changes [--since N] [--varbit ID] [--varp ID] [--limit N]
+                                         Recent varbit/varp changes (cursor via --since)
   skills [--name Attack]                 Skill levels and XP
   varbit <id>                            Read a varbit value
   varp <id>                              Read a varp (player variable) value
@@ -73,6 +96,12 @@ Movement:
                                          Walk to coordinates (non-blocking by default;
                                          --wait blocks until arrival or timeout, default 30s;
                                          --distance defaults to 0 for exact coordinates)
+  path <x> <y> [plane] [--from X Y [PLANE]] [--bank-items true|false] [--full]
+                                         Plan a route without moving: termination, tiles,
+                                         transports, cost (--full includes every tile)
+  path active [--full]                   Route the walker is currently following
+  tile <x> <y> [plane]                   Pathfinder collision for one tile: static vs live
+                                         edges, conflicts, objects on the tile
 
 Banking:
   bank                                   Bank status (open/closed, items)
@@ -101,7 +130,8 @@ Scripts:
   scripts start --name <name>            Start plugin by display name
   scripts stop --class <className>       Stop a running plugin
   scripts status --class <className>     Plugin runtime status
-  scripts health [--class <c>|--name <n>]  Loop heartbeat (stall detection)
+  scripts health [--class <c>|--name <n>]  Loop heartbeat (stall detection) and last error
+  scripts pause | scripts resume         Pause or resume every script loop
   scripts results --class <className>    Get test results
   scripts results post --class <c> --data <json>  Submit test results
 
@@ -142,17 +172,69 @@ Client thread (offline lookup):
 Environment:
   MICROBOT_HOST      Server host (default: 127.0.0.1)
   MICROBOT_PORT      Server port (default: 8081)
+  MICROBOT_SOCKET    Unix socket path; used automatically when ~/.runelite/agent/agent.sock
+                     exists and MICROBOT_HOST/MICROBOT_PORT are unset (falls back to TCP if stale)
   MICROBOT_TIMEOUT   Request timeout in seconds (default: 30)
 EOF
     exit 1
 }
 
+fail_transport() {
+    case "$1" in
+        7) echo '{"error":"Connection refused - is the Agent Server plugin enabled?"}' ;;
+        28) echo "{\"error\":\"Request timed out after ${2}s\"}" ;;
+        *) echo "{\"error\":\"Request failed (curl exit $1)\"}" ;;
+    esac
+    exit 1
+}
+
+urlencode() {
+    local LC_ALL=C s="$1" out="" c i
+    for ((i = 0; i < ${#s}; i++)); do
+        c="${s:i:1}"
+        case "$c" in
+            [a-zA-Z0-9.~_-]) out+="$c" ;;
+            *) out+=$(printf '%%%02X' "'$c") ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
+fail_http() {
+    if [[ "$1" == "Not Found" ]]; then
+        echo '{"error":"Not Found - unknown endpoint, or the auth token is missing or stale (~/.runelite/.agent-token)"}'
+    else
+        printf '%s\n' "$1"
+    fi
+    exit 1
+}
+
+http_call() {
+    local max="$1" out rc=0
+    shift
+    out=$(curl -sS --max-time "$max" "${SOCKET_ARGS[@]}" "${AUTH_HEADER_ARGS[@]}" -w '\n%{http_code}' "$@" 2>/dev/null) || rc=$?
+    if [[ $rc -eq 7 && -n "$SOCKET_AUTO" ]]; then
+        SOCKET_ARGS=() SOCKET_AUTO=""
+        http_call "$max" "$@"
+        return
+    fi
+    [[ $rc -ne 0 ]] && fail_transport "$rc" "$max"
+    HTTP_STATUS="${out##*$'\n'}"
+    HTTP_BODY="${out%$'\n'*}"
+}
+
+request() {
+    http_call "$@"
+    [[ "$HTTP_STATUS" -ge 400 ]] && fail_http "$HTTP_BODY"
+    printf '%s\n' "$HTTP_BODY"
+}
+
 do_get() {
-    curl -sf --max-time "$TIMEOUT" "${AUTH_HEADER_ARGS[@]}" "$1" 2>/dev/null || { echo '{"error":"Connection refused - is the Agent Server plugin enabled?"}'; exit 1; }
+    request "$TIMEOUT" "$1"
 }
 
 do_post() {
-    curl -sf --max-time "$TIMEOUT" "${AUTH_HEADER_ARGS[@]}" -X POST -H "Content-Type: application/json" -d "$2" "$1" 2>/dev/null || { echo '{"error":"Connection refused - is the Agent Server plugin enabled?"}'; exit 1; }
+    request "$TIMEOUT" -X POST -H "Content-Type: application/json" -d "$2" "$1"
 }
 
 build_query() {
@@ -161,7 +243,7 @@ build_query() {
     while [[ $# -gt 0 ]]; do
         local key="$1" val="$2"
         if [[ -n "$val" ]]; then
-            params="${params}${sep}${key}=$(curl -Gso /dev/null -w '%{url_effective}' --data-urlencode "=${val}" '' 2>/dev/null | cut -c3- || echo "$val")"
+            params="${params}${sep}${key}=$(urlencode "$val")"
             sep="&"
         fi
         shift 2
@@ -279,6 +361,73 @@ case "$1" in
         do_get "${BASE}/state"
         ;;
 
+    observe)
+        shift
+        chat_since="" menu_since="" errors_since="" wait_ticks="" nearby="" limit=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --chat-since) chat_since="$2"; shift 2 ;;
+                --menu-since) menu_since="$2"; shift 2 ;;
+                --errors-since) errors_since="$2"; shift 2 ;;
+                --wait-ticks) wait_ticks="$2"; shift 2 ;;
+                --nearby) nearby="$2"; shift 2 ;;
+                --limit) limit="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        q=$(build_query "chatSince" "$chat_since" "menuSince" "$menu_since" "errorSince" "$errors_since" "waitTicks" "$wait_ticks" "nearby" "$nearby" "nearbyLimit" "$limit")
+        do_get "${BASE}/observe${q}"
+        ;;
+
+    var-changes)
+        shift
+        since="" varbit="" varp="" limit=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --since) since="$2"; shift 2 ;;
+                --varbit) varbit="$2"; shift 2 ;;
+                --varp) varp="$2"; shift 2 ;;
+                --limit) limit="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        q=$(build_query "since" "$since" "varbit" "$varbit" "varp" "$varp" "limit" "$limit")
+        do_get "${BASE}/var-changes${q}"
+        ;;
+
+    tile)
+        [[ $# -lt 3 ]] && { echo '{"error":"Usage: microbot-cli tile <x> <y> [plane]"}'; exit 1; }
+        q=$(build_query "x" "$2" "y" "$3" "plane" "${4:-}")
+        do_get "${BASE}/tile${q}"
+        ;;
+
+    path)
+        if [[ "${2:-}" == "active" ]]; then
+            q=""
+            [[ "${3:-}" == "--full" ]] && q="?full=true"
+            do_get "${BASE}/path/active${q}"
+            exit 0
+        fi
+        [[ $# -lt 3 ]] && { echo '{"error":"Usage: microbot-cli path <x> <y> [plane] [--from X Y [PLANE]] [--bank-items true|false] [--full] | path active [--full]"}'; exit 1; }
+        path_x="$2" path_y="$3" path_plane=""
+        shift 3
+        if [[ $# -gt 0 ]] && [[ "$1" =~ ^[0-9]+$ ]]; then path_plane="$1"; shift; fi
+        from_x="" from_y="" from_plane="" bank_items="" full=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --from)
+                    from_x="$2" from_y="$3"; shift 3
+                    if [[ $# -gt 0 ]] && [[ "$1" =~ ^[0-9]+$ ]]; then from_plane="$1"; shift; fi
+                    ;;
+                --bank-items) bank_items="$2"; shift 2 ;;
+                --full) full="true"; shift ;;
+                *) shift ;;
+            esac
+        done
+        q=$(build_query "x" "$path_x" "y" "$path_y" "plane" "$path_plane" "fromX" "$from_x" "fromY" "$from_y" "fromPlane" "$from_plane" "bankItems" "$bank_items" "full" "$full")
+        do_get "${BASE}/path${q}"
+        ;;
+
     skills)
         shift
         name=""
@@ -392,8 +541,7 @@ case "$1" in
         walk_body="{\"x\":${walk_x},\"y\":${walk_y},\"plane\":${walk_plane},\"wait\":${walk_wait},\"timeout\":${walk_timeout},\"distance\":${walk_distance}}"
         if [[ "$walk_wait" == "true" ]]; then
             curl_timeout=$((walk_timeout + 5))
-            curl -sf --max-time "$curl_timeout" "${AUTH_HEADER_ARGS[@]}" -X POST -H "Content-Type: application/json" -d "$walk_body" "${BASE}/walk" 2>/dev/null \
-                || { echo '{"error":"Connection refused - is the Agent Server plugin enabled?"}'; exit 1; }
+            request "$curl_timeout" -X POST -H "Content-Type: application/json" -d "$walk_body" "${BASE}/walk"
         else
             do_post "${BASE}/walk" "$walk_body"
         fi
@@ -457,9 +605,10 @@ case "$1" in
                 if [[ -n "$world" ]]; then
                     body="{\"world\":${world},\"timeout\":${login_timeout}}"
                 fi
-                result=$(curl -s --max-time "$((login_timeout + 5))" "${AUTH_HEADER_ARGS[@]}" -X POST -H "Content-Type: application/json" -d "$body" "${BASE}/login" 2>/dev/null) || { echo '{"error":"Connection refused - is the Agent Server plugin enabled?"}'; exit 1; }
-                echo "$result"
-                echo "$result" | grep -q '"success": *true' || exit 1
+                http_call "$((login_timeout + 5))" -X POST -H "Content-Type: application/json" -d "$body" "${BASE}/login"
+                [[ "$HTTP_BODY" == "Not Found" ]] && fail_http "$HTTP_BODY"
+                echo "$HTTP_BODY"
+                echo "$HTTP_BODY" | grep -q '"success": *true' || exit 1
                 ;;
             *) usage ;;
         esac
@@ -477,9 +626,16 @@ case "$1" in
         esac
         ;;
 
+    endpoints)
+        do_get "${BASE}/"
+        ;;
+
     scripts)
         [[ $# -lt 2 ]] && { do_get "${BASE}/scripts"; exit 0; }
         case "$2" in
+            pause|resume)
+                do_post "${BASE}/scripts/$2" "{}"
+                ;;
             start)
                 shift 2
                 class_name="" name=""
@@ -710,7 +866,14 @@ case "$1" in
             q=$(build_query "save" "true" "label" "${label:-screenshot}" "dir" "${dir:-}")
             do_get "${BASE}/screenshot${q}"
         else
-            curl -sf --max-time "$TIMEOUT" "${AUTH_HEADER_ARGS[@]}" -o "${1:-screenshot.png}" "${BASE}/screenshot" 2>/dev/null || { echo '{"error":"Connection refused - is the Agent Server plugin enabled?"}'; exit 1; }
+            shot="${1:-screenshot.png}"
+            part="${shot}.part.$$"
+            trap 'rm -f "$part"' EXIT
+            http_call "$TIMEOUT" -o "$part" "${BASE}/screenshot"
+            if [[ "$HTTP_STATUS" -ge 400 ]]; then
+                body=$(cat "$part"); rm -f "$part"; fail_http "$body"
+            fi
+            mv -f "$part" "$shot"
             echo "{\"success\":true,\"path\":\"$(pwd)/${1:-screenshot.png}\"}"
         fi
         ;;

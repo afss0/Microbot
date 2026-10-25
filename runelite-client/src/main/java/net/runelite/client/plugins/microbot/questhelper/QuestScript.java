@@ -34,6 +34,7 @@ import net.runelite.client.plugins.microbot.util.shop.Rs2Shop;
 import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
 import net.runelite.client.plugins.microbot.util.walker.Rs2PathApi;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
+import net.runelite.client.plugins.microbot.util.walker.WalkerState;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.client.plugins.microbot.api.npc.models.Rs2NpcModel;
 import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjectQueryable;
@@ -53,6 +54,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
@@ -60,7 +62,7 @@ import org.slf4j.event.Level;
 import net.runelite.api.coords.WorldArea;
 
 public class QuestScript extends Script {
-    public static double version = 0.5;
+    public static double version = 0.6;
 
     private static final long MISSING_REQUIREMENT_NOTIFY_INTERVAL_MS = 10_000L;
     private static final Map<Integer, Long> lastMissingRequirementNotice = new HashMap<>();
@@ -1427,7 +1429,7 @@ public class QuestScript extends Script {
                     targetTile = stepLocation;
             }
 
-            Rs2Walker.walkTo(targetTile, 3);
+            WalkerState walkState = Rs2Walker.walkWithState(targetTile, 3);
 
             var activeRoute = Rs2PathApi.getActiveRouteStatus();
             if (activeRoute.isPresent()) {
@@ -1435,7 +1437,7 @@ public class QuestScript extends Script {
                 if (endpoint.isPresent()
                         && endpoint.get().distanceTo(step.getDefinedPoint().getWorldPoint()) <= 1)
                     return false;
-            } else
+            } else if (walkState == WalkerState.ARRIVED || mainScheduledFuture.isCancelled() || !hasLineOfSightToObject(object))
                 return false;
         }
 
@@ -1551,17 +1553,17 @@ public class QuestScript extends Script {
     }
 
 	private String chooseCorrectItemOption(QuestStep step, int itemId) {
-		var actions = Rs2Inventory.get(itemId).getInventoryActions();
+		return chooseItemAction(step.getText(), Rs2Inventory.get(itemId).getInventoryActions());
+	}
 
-		for (var action : actions) {
-			if (action != null && step.getText().stream().anyMatch(x -> x.toLowerCase().contains(action.toLowerCase())))
-				return action;
-		}
-
-		// Fallback: first non-empty inventory action (the item's default left-click).
-		for (var action : actions) {
-			if (action != null && !action.isEmpty())
-				return action;
+	static String chooseItemAction(List<String> stepText, String[] actions) {
+		if (stepText != null && actions != null) {
+			for (var action : actions) {
+				if (action == null || action.isEmpty()) continue;
+				Pattern word = Pattern.compile("(?<![a-z])" + Pattern.quote(action.toLowerCase()) + "(?![a-z])");
+				if (stepText.stream().anyMatch(x -> x != null && word.matcher(x.toLowerCase()).find()))
+					return action;
+			}
 		}
 
 		return "use";

@@ -11,7 +11,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -23,6 +25,7 @@ import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.ClientSessionManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -52,6 +55,8 @@ public class ClientAlertReporter
 	static final long ERROR_ALERT_INTERVAL_MS = TimeUnit.MINUTES.toMillis(30);
 	static final int MAX_RECENT_ERRORS = 50;
 	static final long INTENDED_LOGOUT_WINDOW_MS = 30_000;
+	static final int BANNED_LOGIN_INDEX = 14;
+	static final long BAN_CHECK_DELAY_MS = 2_000;
 
 	private final MicrobotApi microbotApi;
 	private final ClientLinkToken clientLinkToken;
@@ -70,6 +75,7 @@ public class ClientAlertReporter
 	private volatile UUID reportedSessionId;
 	private volatile long logoutRequestedAt;
 	private volatile boolean awaitingRelog;
+	private final Set<String> reportedBans = ConcurrentHashMap.newKeySet();
 
 	@Inject
 	ClientAlertReporter(MicrobotApi microbotApi, ClientLinkToken clientLinkToken, ClientSessionManager clientSessionManager,
@@ -171,6 +177,14 @@ public class ClientAlertReporter
 		GameState previous = lastGameState;
 		GameState next = event.getGameState();
 		lastGameState = next;
+		if (next == GameState.LOGIN_SCREEN)
+		{
+			executor.schedule(RunnableExceptionLogger.wrap(this::checkBanned), BAN_CHECK_DELAY_MS, TimeUnit.MILLISECONDS);
+		}
+		else if (next == GameState.LOGGED_IN)
+		{
+			reportedBans.clear();
+		}
 		if (isLogout(previous, next))
 		{
 			boolean intended = isIntendedLogout(logoutRequestedAt, System.currentTimeMillis());
@@ -189,6 +203,35 @@ public class ClientAlertReporter
 			{
 				send(snapshot().type(AlertEvent.HEARTBEAT).loggedIn(true).build());
 			}
+		}
+	}
+
+	@Subscribe
+	public void onActorDeath(ActorDeath event)
+	{
+		if (event.getActor() == null || event.getActor() != client.getLocalPlayer() || !isActive())
+		{
+			return;
+		}
+		send(snapshot().type(AlertEvent.DIED).build());
+	}
+
+	void checkBanned()
+	{
+		if (!isActive()
+			|| client.getGameState() != GameState.LOGIN_SCREEN
+			|| client.getLoginIndex() != BANNED_LOGIN_INDEX)
+		{
+			return;
+		}
+		String username = Strings.nullToEmpty(client.getUsername());
+		if (reportedBans.contains(username))
+		{
+			return;
+		}
+		if (deliver(snapshot().type(AlertEvent.BANNED).loggedIn(false).build()))
+		{
+			reportedBans.add(username);
 		}
 	}
 
@@ -245,6 +288,7 @@ public class ClientAlertReporter
 		{
 			return;
 		}
+		checkBanned();
 		deliver(snapshot().type(AlertEvent.HEARTBEAT).build());
 	}
 
@@ -253,24 +297,25 @@ public class ClientAlertReporter
 		executor.execute(() -> deliver(event));
 	}
 
-	private void deliver(AlertEvent event)
+	private boolean deliver(AlertEvent event)
 	{
 		if (shuttingDown)
 		{
-			return;
+			return false;
 		}
 		Optional<String> token = clientLinkToken.get();
 		if (token.isEmpty())
 		{
-			return;
+			return false;
 		}
 		UUID sessionId = reportingSession();
 		if (sessionId == null)
 		{
-			return;
+			return false;
 		}
 		String value = token.get();
 		microbotApi.sendAlertEvent(value, event.toJson(sessionId), () -> onRejected(value));
+		return true;
 	}
 
 	private UUID reportingSession()

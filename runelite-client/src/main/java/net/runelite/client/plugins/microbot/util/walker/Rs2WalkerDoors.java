@@ -220,7 +220,7 @@ final class Rs2WalkerDoors {
         }
         // candidates non-empty: index range [0, size-1] is valid for betweenInclusive.
         WorldPoint pick = candidates.get(Rs2Random.betweenInclusive(0, candidates.size() - 1));
-        if (walkFastCanvas(pick)) {
+        if (walkFastCanvasWithAutoRun(pick)) {
             log.debug("[Walker] door nudge: canvas -> {} (goal={} dGoal={})", pick, goal, dGoal);
             waitUntilIdleAfterSceneWalk(goal, POST_SCENE_WALK_IDLE_WAIT_MS_MAX, goal, finishTh);
             routeState.lastMovedTimeMs = System.currentTimeMillis();
@@ -1442,7 +1442,7 @@ final class Rs2WalkerDoors {
             }
         }
 
-        boolean clicked = walkFastCanvas(clickTo);
+        boolean clicked = walkFastCanvasWithAutoRun(clickTo);
         if (!clicked) {
             clicked = walkMiniMapToward(clickTo, before, POST_DOOR_FAST_CLICK_MAX_EUCLIDEAN - 1);
         }

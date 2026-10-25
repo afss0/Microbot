@@ -77,6 +77,14 @@ public class WalkerArchitectureGuardTest
 		"ShortestPathPlugin.pathfinder"
 	);
 
+	private static final Pattern EXPLICIT_RUN_CLICK = Pattern.compile("\\bwalkFastCanvas\\s*\\(");
+
+	private static final List<String> EXPLICIT_RUN_DEFINITIONS = Arrays.asList(
+		"public static boolean walkFastCanvas(",
+		"return walkFastCanvas(worldPoint, true);",
+		"if (Microbot.enableAutoRunOn) Rs2Player.toggleRunEnergy(true);"
+	);
+
 	private static final List<String> FORBIDDEN_HANDLER_LIFECYCLE_ACCESS = Arrays.asList(
 		"Rs2Walker.setTarget(",
 		"Rs2Walker.clearWalkingRoute(",
@@ -127,6 +135,35 @@ public class WalkerArchitectureGuardTest
 			}
 		}
 		assertNoViolations("Interaction handlers report outcomes; NavigationEngine owns lifecycle", violations);
+	}
+
+	@Test
+	public void walkerClicksRespectTheAutoRunOption() throws IOException
+	{
+		Path microbotRoot = microbotSourceRoot();
+		List<String> violations = new ArrayList<>();
+		for (Path source : javaSources(microbotRoot.resolve("util/walker")))
+		{
+			String relative = relative(microbotRoot, source);
+			String[] lines = codeOnly(source).split("\n", -1);
+			for (int i = 0; i < lines.length; i++)
+			{
+				String line = lines[i];
+				boolean publicClick = EXPLICIT_RUN_CLICK.matcher(line).find();
+				boolean directRun = line.contains("toggleRunEnergy(true)");
+				if (!publicClick && !directRun)
+				{
+					continue;
+				}
+				if (WALKER_RELATIVE.equals(relative) && EXPLICIT_RUN_DEFINITIONS.stream().anyMatch(line::contains))
+				{
+					continue;
+				}
+				violations.add(relative + ":" + (i + 1) + " -> " + line.trim());
+			}
+		}
+		assertNoViolations("Walker-internal clicks must use walkFastCanvasWithAutoRun / requestAutoRun; "
+			+ "the public walkFastCanvas is an explicit run request for scripts", violations);
 	}
 
 	@Test

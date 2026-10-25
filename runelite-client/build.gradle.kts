@@ -276,6 +276,12 @@ tasks.register<Test>("runUnitTests") {
     }
 }
 
+gradle.taskGraph.whenReady {
+    if (gradle.startParameter.taskNames.any { it == ":client:test" || it == "client:test" }) {
+        throw GradleException(":client:test is disabled and runs no tests. Use :client:runUnitTests (it accepts --tests).")
+    }
+}
+
 tasks.register<Test>("regenerateClientThreadGuardrailBaseline") {
     group = "verification"
     description = "Regenerate src/test/resources/threadsafety/client-thread-guardrail-baseline.txt from current sources"

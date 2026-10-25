@@ -572,7 +572,7 @@ final class Rs2WalkerTransports {
                                 } else {
                                     WorldPoint originTile = path.get(i);
                                     noteDeliberateSkip(TransportDispatchTrace.DeliberateSkip.TERMINAL_APPROACH);
-                                    boolean clicked = Rs2Walker.walkFastCanvas(originTile);
+                                    boolean clicked = walkFastCanvasWithAutoRun(originTile);
                                     if (!clicked) {
                                         WorldPoint playerLoc = Rs2Player.getWorldLocation();
                                         if (playerLoc != null) {
@@ -1254,7 +1254,7 @@ final class Rs2WalkerTransports {
                     if (afterOpen != null && !afterOpen.equals(transport.getDestination())) {
                         boolean clicked = walkMiniMap(transport.getDestination());
                         if (!clicked) {
-                            clicked = walkFastCanvas(transport.getDestination());
+                            clicked = walkFastCanvasWithAutoRun(transport.getDestination());
                         }
                         if (clicked) {
                             sleepUntil(() -> {
@@ -1910,7 +1910,7 @@ final class Rs2WalkerTransports {
                             Rs2Player.waitForAnimation();
                         }, 8000, 1200);
             }
-            Rs2Walker.walkFastCanvas(transport.getDestination());
+            walkFastCanvasWithAutoRun(transport.getDestination());
             return sleepUntil(() -> !Objects.equals(currentPlayerPoint, Rs2Player.getWorldLocation()));
         }
 
@@ -2021,7 +2021,7 @@ final class Rs2WalkerTransports {
         if (obelisk != null) {
             Rs2GameObject.interact(obelisk, transport.getAction());
             sleepUntil(() -> Rs2GameObject.getGameObject(obj -> obj.getId() == transport.getObjectId(), transport.getOrigin()) != null);
-            walkFastCanvas(transport.getOrigin());
+            walkFastCanvasWithAutoRun(transport.getOrigin());
             return sleepUntilTrue(() -> {
                 WorldPoint pl = Rs2Player.getWorldLocation();
                 WorldPoint td = transport.getDestination();

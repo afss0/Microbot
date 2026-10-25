@@ -892,7 +892,11 @@ final class Rs2WalkerMovement {
         if (worldPoint == null || SCENE_CLICKS.isSuppressed(System.currentTimeMillis())) {
             return false;
         }
-        Rs2Player.toggleRunEnergy(toggleRun);
+        if (toggleRun) {
+            requestAutoRun();
+        } else {
+            Rs2Player.toggleRunEnergy(false);
+        }
         if (!dispatchSceneWalk(worldPoint)) {
             return false;
         }
@@ -1101,7 +1105,7 @@ final class Rs2WalkerMovement {
                 clicked = clickRouteBackedShortWalk(rawPath, end, retryPlayerLoc,
                         directClickMaxDistance - 1, retryRawAnchorIndex);
             } else {
-                clicked = walkFastCanvas(end);
+                clicked = walkFastCanvasWithAutoRun(end);
             }
             if (!clicked) {
                 return WalkerState.MOVING;

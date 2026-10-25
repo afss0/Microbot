@@ -43,8 +43,8 @@ enum MicrobotTourStep
 			+ "Bot alerts shows whether they are on and lets you link your Microbot account. Open the dashboard to see your bots.",
 		true, true, Side.LEFT),
 	HELP("Need help?",
-		"The red bug button copies diagnostics for bug reports, can start Microbot once in safe mode, and links to Discord and GitHub. "
-			+ "You can also replay this tour from it. That's it, have fun!",
+		"The red bug button reports a problem, and an orange dot on it means news under My reports. "
+			+ "It can also start Microbot once in safe mode and links to Discord. You can replay this tour from it too. That's it, have fun!",
 		false, true, Side.LEFT);
 
 	private final String title;

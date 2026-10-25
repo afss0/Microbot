@@ -14,14 +14,20 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
@@ -44,6 +50,7 @@ import net.runelite.client.util.ResetResistantAttachment;
 public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEvent>
 {
 	static final int MAX_FINGERPRINTS = 100;
+	static final int MAX_RECENT_ERRORS = 50;
 	private static final int MAX_FRAMES = 20;
 	private static final int FINGERPRINT_FRAMES = 3;
 	private static final long FLUSH_MINUTES = 5;
@@ -53,6 +60,11 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 	static final long LOG_UPLOAD_INTERVAL_MILLIS = TimeUnit.MINUTES.toMillis(10);
 	static final int MAX_LOG_BYTES = 256 * 1024;
 	private static final Pattern IP_PATTERN = Pattern.compile("\\b\\d{1,3}(\\.\\d{1,3}){3}\\b");
+	static final Pattern NAME_FIELD = Pattern.compile("(?i)\\b(?:player name|for player|username|user name|account name|display name|rsn)\\s*[:=]\\s*"
+		+ "([A-Za-z0-9][A-Za-z0-9_\\-]*(?:[ \\u00A0][A-Za-z0-9][A-Za-z0-9_\\-]*)*)");
+	private static final Set<String> NOT_NAMES = Set.of("null", "unknown", "none", "empty");
+	static final int MAX_NAME_LENGTH = 12;
+	static final int MAX_SEEN_NAMES = 20;
 	private final AtomicLong lastLogUpload = new AtomicLong();
 
 	private final MicrobotApi microbotApi;
@@ -62,8 +74,18 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 	private final ClientSessionManager clientSessionManager;
 	private final ClientAlertReporter clientAlertReporter;
 	private final Map<String, JsonObject> pending = new LinkedHashMap<>();
+	private final Map<String, JsonObject> recent = new LinkedHashMap<>(MAX_RECENT_ERRORS, 0.75f, true)
+	{
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<String, JsonObject> eldest)
+		{
+			return size() > MAX_RECENT_ERRORS;
+		}
+	};
 	private ScheduledFuture<?> flushTask;
 	private volatile String playerName;
+	private final Set<String> seenNames = new LinkedHashSet<>();
+	private volatile Pattern seenNamesPattern;
 
 	@Inject
 	ScriptErrorReporter(MicrobotApi microbotApi, MicrobotPluginManager microbotPluginManager, ScheduledExecutorService executor,
@@ -121,8 +143,7 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 		}
 		if (!event.getLevel().isGreaterOrEqual(Level.ERROR)
 			|| event.getLoggerName().startsWith(ScriptErrorReporter.class.getPackageName())
-			|| event.getLoggerName().equals(MicrobotApi.class.getName())
-			|| isDisabled())
+			|| event.getLoggerName().equals(MicrobotApi.class.getName()))
 		{
 			return;
 		}
@@ -133,10 +154,6 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 			return;
 		}
 		List<String> frames = frames(root);
-		if (clientAlertReporter.isActive())
-		{
-			clientAlertReporter.onScriptError(event.getLoggerName(), frames, alertMessage(event, root));
-		}
 		String fingerprint = root == null
 			? event.getLoggerName() + "|" + scrub(event.getMessage()).replaceAll("\\d+", "#")
 			: root.getClassName() + "|" + frames.stream()
@@ -144,6 +161,15 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 				.limit(FINGERPRINT_FRAMES)
 				.collect(Collectors.joining("|"));
 
+		JsonObject described = remember(event, root, frames, fingerprint);
+		if (isDisabled())
+		{
+			return;
+		}
+		if (clientAlertReporter.isActive())
+		{
+			clientAlertReporter.onScriptError(event.getLoggerName(), frames, alertMessage(event, root));
+		}
 		synchronized (pending)
 		{
 			JsonObject error = pending.get(fingerprint);
@@ -156,7 +182,7 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 			{
 				return;
 			}
-			pending.put(fingerprint, describe(event, root, frames, fingerprint));
+			pending.put(fingerprint, described != null ? described.deepCopy() : describe(event, root, frames, fingerprint));
 		}
 	}
 
@@ -211,12 +237,141 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 		}
 	}
 
+	private JsonObject remember(ILoggingEvent event, IThrowableProxy root, List<String> frames, String fingerprint)
+	{
+		synchronized (recent)
+		{
+			JsonObject error = recent.get(fingerprint);
+			if (error != null)
+			{
+				error.addProperty("count", error.get("count").getAsInt() + 1);
+				return null;
+			}
+			JsonObject described = describe(event, root, frames, fingerprint);
+			recent.put(fingerprint, described);
+			return described;
+		}
+	}
+
+	public String recentErrors(String pluginInternalName)
+	{
+		List<JsonObject> errors = new ArrayList<>();
+		synchronized (recent)
+		{
+			recent.values().forEach(error -> errors.add(error.deepCopy()));
+		}
+		errors.forEach(this::attribute);
+		StringBuilder out = new StringBuilder();
+		if (pluginInternalName != null)
+		{
+			errors.stream().filter(error -> pluginInternalName.equals(plugin(error))).forEach(error -> render(out, error));
+			errors.stream().filter(error -> plugin(error) == null).forEach(error -> render(out, error));
+			return out.toString();
+		}
+		errors.forEach(error -> render(out, error));
+		return out.toString();
+	}
+
+	private static String plugin(JsonObject error)
+	{
+		return error.has("plugin") ? error.get("plugin").getAsString() : null;
+	}
+
+	private static void render(StringBuilder out, JsonObject error)
+	{
+		String plugin = plugin(error);
+		out.append(error.get("count").getAsInt()).append("x ")
+			.append(plugin == null ? "client" : plugin)
+			.append(": ").append(error.get("message").getAsString());
+		if (error.has("exception"))
+		{
+			out.append(" (").append(error.get("exception").getAsString());
+			String detail = error.get("exceptionMessage").getAsString();
+			out.append(detail.isEmpty() ? "" : ": " + detail).append(')');
+		}
+		out.append('\n');
+		error.getAsJsonArray("stack").forEach(frame -> out.append("    at ").append(frame.getAsString()).append('\n'));
+	}
+
 	public void rememberPlayerName(String name)
 	{
 		if (name != null && !name.isEmpty())
 		{
 			playerName = name;
+			synchronized (seenNames)
+			{
+				seenNames.remove(name);
+				seenNames.add(name);
+				if (seenNames.size() > MAX_SEEN_NAMES)
+				{
+					seenNames.remove(seenNames.iterator().next());
+				}
+				seenNamesPattern = namesPattern(seenNames);
+			}
 		}
+	}
+
+	public Set<String> namesIn(String text)
+	{
+		Set<String> names;
+		synchronized (seenNames)
+		{
+			names = new LinkedHashSet<>(seenNames);
+		}
+		names.addAll(namesFoundIn(text));
+		return names;
+	}
+
+	static Set<String> namesFoundIn(String text)
+	{
+		Set<String> names = new LinkedHashSet<>();
+		if (text == null)
+		{
+			return names;
+		}
+		Matcher matcher = NAME_FIELD.matcher(text);
+		while (matcher.find())
+		{
+			String name = matcher.group(1);
+			int space;
+			while (name.length() > MAX_NAME_LENGTH && (space = Math.max(name.lastIndexOf(' '), name.lastIndexOf('\u00A0'))) > 0)
+			{
+				name = name.substring(0, space);
+			}
+			if (name.length() <= MAX_NAME_LENGTH && !NOT_NAMES.contains(name.toLowerCase()))
+			{
+				names.add(name);
+			}
+		}
+		return names;
+	}
+
+	public static String scrubNames(String text, Collection<String> names)
+	{
+		if (text == null || names.isEmpty())
+		{
+			return text;
+		}
+		Pattern pattern = namesPattern(names);
+		return pattern == null ? text : pattern.matcher(text).replaceAll("[player]");
+	}
+
+	static Pattern namesPattern(Collection<String> names)
+	{
+		List<String> sorted = names.stream()
+			.filter(name -> name != null && !name.isBlank())
+			.map(String::trim)
+			.distinct()
+			.sorted(Comparator.comparingInt(String::length).reversed())
+			.collect(Collectors.toList());
+		if (sorted.isEmpty())
+		{
+			return null;
+		}
+		String alternatives = sorted.stream()
+			.map(name -> Arrays.stream(name.split("[ \u00A0]+")).map(Pattern::quote).collect(Collectors.joining("[ \u00A0]+")))
+			.collect(Collectors.joining("|"));
+		return Pattern.compile("(?<![A-Za-z0-9])(?:" + alternatives + ")(?![A-Za-z0-9])", Pattern.CASE_INSENSITIVE);
 	}
 
 	private void requeue(JsonArray errors)
@@ -394,13 +549,17 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 
 	String scrubLog(String raw, String name)
 	{
-		String text = raw;
+		Set<String> names = namesIn(raw);
 		if (name != null && !name.isEmpty())
 		{
-			text = text.replace(name, "[player]")
-				.replace(name.replace(' ', ' '), "[player]")
-				.replace(name.replace(' ', ' '), "[player]");
+			names.add(name);
 		}
+		return scrubLogNames(raw, names);
+	}
+
+	String scrubLogNames(String raw, Set<String> names)
+	{
+		String text = scrubNames(raw, names);
 		String user = System.getProperty("user.name");
 		if (user != null && user.length() >= 3)
 		{
@@ -416,11 +575,7 @@ public class ScriptErrorReporter extends UnsynchronizedAppenderBase<ILoggingEven
 
 	private String scrub(String raw)
 	{
-		String name = playerName;
-		if (raw != null && name != null && !name.isEmpty())
-		{
-			raw = raw.replace(name, "[player]").replace(name.replace('\u00A0', ' '), "[player]");
-		}
-		return DiagnosticReport.clean(raw);
+		Pattern pattern = seenNamesPattern;
+		return DiagnosticReport.clean(raw == null || pattern == null ? raw : pattern.matcher(raw).replaceAll("[player]"));
 	}
 }

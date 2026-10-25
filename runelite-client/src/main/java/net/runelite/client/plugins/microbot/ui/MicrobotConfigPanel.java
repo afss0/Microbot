@@ -82,6 +82,8 @@ class MicrobotConfigPanel extends MicrobotPluginPanel {
     private static final ImageIcon SECTION_RETRACT_ICON;
     static final ImageIcon CONFIG_ICON;
     static final ImageIcon BACK_ICON;
+    static final ImageIcon REPORT_ICON = new ImageIcon(ImageUtil.grayscaleImage(MicrobotHelpMenu.bugIcon()));
+    static final ImageIcon REPORT_HOVER_ICON = new ImageIcon(MicrobotHelpMenu.bugIcon());
 
     private static final Map<ConfigSectionDescriptor, Boolean> sectionExpandStates = new HashMap<>();
 
@@ -104,12 +106,14 @@ class MicrobotConfigPanel extends MicrobotPluginPanel {
     private final ExternalPluginManager externalPluginManager;
     private final ColorPickerManager colorPickerManager;
     private final Provider<MicrobotNotificationPanel> notificationPanelProvider;
+    private final MicrobotBugReporter bugReporter;
 
     private final TitleCaseListCellRenderer listCellRenderer = new TitleCaseListCellRenderer();
 
     private final MicrobotFixedWidthPanel mainPanel;
     private final JLabel title;
     private final MicrobotPluginToggleButton pluginToggle;
+    private final JButton reportButton;
 
     private MicrobotPluginConfigurationDescriptor pluginConfig = null;
     // add near other fields
@@ -125,7 +129,8 @@ class MicrobotConfigPanel extends MicrobotPluginPanel {
             PluginManager pluginManager,
             ExternalPluginManager externalPluginManager,
             ColorPickerManager colorPickerManager,
-            Provider<MicrobotNotificationPanel> notificationPanelProvider
+            Provider<MicrobotNotificationPanel> notificationPanelProvider,
+            MicrobotBugReporter bugReporter
     ) {
         super(false);
 
@@ -135,6 +140,7 @@ class MicrobotConfigPanel extends MicrobotPluginPanel {
         this.externalPluginManager = externalPluginManager;
         this.colorPickerManager = colorPickerManager;
         this.notificationPanelProvider = notificationPanelProvider;
+        this.bugReporter = bugReporter;
 
         setLayout(new BorderLayout());
         setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -172,7 +178,16 @@ class MicrobotConfigPanel extends MicrobotPluginPanel {
 
         header.add(backBtn, BorderLayout.WEST);
         header.add(title, BorderLayout.CENTER);
-        header.add(pluginToggle, BorderLayout.EAST);
+        reportButton = new JButton(REPORT_ICON);
+        SwingUtil.removeButtonDecorations(reportButton);
+        reportButton.setRolloverIcon(REPORT_HOVER_ICON);
+        reportButton.setPreferredSize(new Dimension(22, 0));
+        reportButton.setToolTipText("Report a problem with this plugin");
+        reportButton.setVisible(false);
+        JPanel headerActions = new JPanel(new BorderLayout(8, 0));
+        headerActions.add(reportButton, BorderLayout.WEST);
+        headerActions.add(pluginToggle, BorderLayout.EAST);
+        header.add(headerActions, BorderLayout.EAST);
         topPanel.add(header, BorderLayout.NORTH);
 
         // --- search field ---
@@ -248,7 +263,12 @@ class MicrobotConfigPanel extends MicrobotPluginPanel {
             uninstallItem.addActionListener(ev -> externalPluginManager.remove(iname));
         }
 
-        MicrobotPluginListItem.addLabelPopupMenu(title, pluginConfig.createSupportMenuItem(pluginConfig.getPlugin()), uninstallItem);
+        MicrobotPluginListItem.addLabelPopupMenu(title, pluginConfig.createSupportMenuItem(pluginConfig.getPlugin()),
+                bugReporter.menuItem(this, pluginConfig.getPlugin()), uninstallItem);
+        if (pluginConfig.getPlugin() != null) {
+            reportButton.addActionListener(e -> bugReporter.open(this, pluginConfig.getPlugin()));
+            reportButton.setVisible(true);
+        }
 
         if (pluginConfig.getPlugin() != null) {
             pluginToggle.setConflicts(pluginConfig.getConflicts());

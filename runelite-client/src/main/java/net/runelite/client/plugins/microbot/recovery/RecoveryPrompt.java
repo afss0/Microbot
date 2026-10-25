@@ -180,7 +180,7 @@ public final class RecoveryPrompt implements StartupRecovery.Prompter
 		{
 			out.append("- ").append(line).append('\n');
 		}
-		out.append("After startup, use Copy diagnostics under the bug icon in the right-hand toolbar for the full report.\n");
+		out.append("After startup, use Report a problem under the bug icon in the right-hand toolbar to send a full report.\n");
 		return out.toString();
 	}
 

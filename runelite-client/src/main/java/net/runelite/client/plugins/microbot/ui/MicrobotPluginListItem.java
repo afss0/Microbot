@@ -143,7 +143,8 @@ class MicrobotPluginListItem extends JPanel implements SearchablePlugin
 			uninstallItem.addActionListener(ev -> pluginListPanel.getExternalPluginManager().remove(internalName));
 		}
 
-		addLabelPopupMenu(nameLabel, configMenuItem, pluginConfig.createSupportMenuItem(pluginConfig.getPlugin()), uninstallItem);
+		addLabelPopupMenu(nameLabel, configMenuItem, pluginConfig.createSupportMenuItem(pluginConfig.getPlugin()),
+			pluginListPanel.getBugReporter().menuItem(this, pluginConfig.getPlugin()), uninstallItem);
 		add(nameLabel, BorderLayout.CENTER);
 
 		onOffToggle = new MicrobotPluginToggleButton();

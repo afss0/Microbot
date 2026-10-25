@@ -96,6 +96,8 @@ public class MicrobotPluginListPanel extends MicrobotPluginPanel {
     private final PluginManager pluginManager;
     private final MicrobotPluginManager microbotPluginManager;
     private final Provider<MicrobotConfigPanel> configPanelProvider;
+    @Getter
+    private final MicrobotBugReporter bugReporter;
     private final List<MicrobotPluginConfigurationDescriptor> fakePlugins = new ArrayList<>();
 
     @Getter
@@ -116,9 +118,11 @@ public class MicrobotPluginListPanel extends MicrobotPluginPanel {
             MicrobotPluginManager microbotPluginManager,
             ExternalPluginManager externalPluginManager,
             EventBus eventBus,
-            Provider<MicrobotConfigPanel> configPanelProvider) {
+            Provider<MicrobotConfigPanel> configPanelProvider,
+            MicrobotBugReporter bugReporter) {
         super(false);
 
+        this.bugReporter = bugReporter;
         this.configManager = configManager;
         this.pluginManager = pluginManager;
         this.externalPluginManager = externalPluginManager;

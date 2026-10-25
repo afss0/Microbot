@@ -353,6 +353,7 @@ public class Rs2Bank {
      * and so on...
      */
     private static int container = -1;
+    private static volatile int pendingRequestedQuantity = -1;
     // Array to store the counts of items in each tab
     private static final int[] bankTabCounts = new int[9];
 
@@ -1264,6 +1265,7 @@ public class Rs2Bank {
     private static boolean handleAmount(Rs2ItemModel rs2Item, int amount, boolean safe) {
 
         if (amount <= 0) return true;
+        boolean xConfirmed = awaitPendingRequestedQuantity();
         int selected = Microbot.getVarbitValue(VarbitID.BANK_QUANTITY_TYPE);
         int configuredX = Microbot.getVarbitValue(VarbitID.BANK_REQUESTEDQUANTITY);
         boolean hasX = configuredX > 0;
@@ -1287,7 +1289,7 @@ public class Rs2Bank {
             }
         }
 
-        if (hasX && configuredX == amount) {
+        if (xConfirmed && hasX && configuredX == amount) {
             final int before = Rs2Inventory.count();
             invokeMenu(xSetOffset, rs2Item);
             if (safe) return sleepUntilTrue(() -> Rs2Inventory.count() != before, 100, 2500);
@@ -1303,11 +1305,18 @@ public class Rs2Bank {
         Rs2Random.waitEx(1200, 100);
         Rs2Keyboard.typeString(String.valueOf(amount));
         Rs2Keyboard.enter();
-        sleepUntil(() -> Microbot.getVarbitValue(VarbitID.BANK_REQUESTEDQUANTITY) == amount, 2400);
+        pendingRequestedQuantity = amount;
 
         if (safe) return sleepUntilTrue(() -> isInventory != Rs2Inventory.hasItem(rs2Item.getId()), 100, 2500);
 
         return true;
+    }
+
+    private static boolean awaitPendingRequestedQuantity() {
+        final int pending = pendingRequestedQuantity;
+        if (pending <= 0) return true;
+        pendingRequestedQuantity = -1;
+        return sleepUntil(() -> Microbot.getVarbitValue(VarbitID.BANK_REQUESTEDQUANTITY) == pending, 2400);
     }
 
     /**
