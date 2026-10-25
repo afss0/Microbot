@@ -314,10 +314,13 @@ public class CannoningScript implements AModule {
             return false;                                   // retry next tick, not a failure
         }
         if (!target.clicked()) {
+            // NOT_RENDERED dominates here; a hover/menu failure is named too so a stuck
+            // cannon row is distinguishable from a render race in the log.
             renderMisses++;
-            log.debug("[Cannoning] object not rendered yet (miss {}/{})", renderMisses, MAX_RENDER_MISSES);
+            log.debug("[Cannoning] cannon click not dispatched ({}, miss {}/{})",
+                    target.miss(), renderMisses, MAX_RENDER_MISSES);
             if (renderMisses >= MAX_RENDER_MISSES) {
-                fail("cannon never rendered");
+                fail("cannon never rendered/clicked");
             }
             return false;
         }

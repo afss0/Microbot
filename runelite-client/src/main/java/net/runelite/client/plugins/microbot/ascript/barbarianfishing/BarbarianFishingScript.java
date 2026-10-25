@@ -12,9 +12,8 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
@@ -33,7 +32,6 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import java.awt.Rectangle;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -70,9 +68,6 @@ public class BarbarianFishingScript implements AModule {
     private static final int BANK_CLOSE_DISTANCE = 10;
 
     private static final int FISHING_ANIMATION_DEFAULT_MS = 600;
-    /** Droppables clicked per drop-slice tick (rolled per slice). */
-    private static final int DROP_SLICE_MIN = 5;
-    private static final int DROP_SLICE_MAX = 9;
     private static final int POST_DROP_PAUSE_MIN_MS = 800;
     private static final int POST_DROP_PAUSE_MAX_MS = 1600;
     private static final int AFK_MIN_MS = 3_000;
@@ -375,10 +370,10 @@ public class BarbarianFishingScript implements AModule {
     }
 
     private void handleDropping(AScriptConfig config) {
-        List<Rs2ItemModel> droppables = Rs2Inventory.items(BarbarianFishingScript::isDroppable)
-                .collect(Collectors.toList());
+        AScriptDrop.Result result = AScriptDrop.drop(
+                BarbarianFishingScript::isDroppable, "DROPPING FISH", weatherMultiplier);
 
-        if (droppables.isEmpty()) {
+        if (result.getOutcome() == AScriptDrop.Outcome.NOTHING_TO_DROP) {
             dropSessionActive = false;
             if (droppedInSession) {
                 droppedInSession = false;
@@ -390,30 +385,7 @@ public class BarbarianFishingScript implements AModule {
             }
             return;
         }
-
-        Microbot.status = "DROPPING FISH";
-        int before = countDroppables();
-        int slice = Rs2Random.fancyNormalSample(DROP_SLICE_MIN, DROP_SLICE_MAX);
-        int clicked = 0;
-        // One pass over the precomputed route: the slots that hold a droppable fish right
-        // now, shuffled once. No slot is drawn twice, and dropAtSlot re-reads the slot (a
-        // slot emptied by an earlier drop is skipped) and installs the item's Drop entry —
-        // a raw click sent the default "Use" and selected the fish instead of dropping it.
-        for (int slot : AScriptPick.dropRoute(BarbarianFishingScript::isDroppable)) {
-            if (clicked >= slice) break;
-            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
-            if (item == null || !isDroppable(item)) continue;
-            if (!AScriptClick.dropAtSlot(slot, item.getId())) continue;
-            clicked++;
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
-        }
-
-        if (clicked == 0) {
-            fail("no clickable fish slots to drop");
-            return;
-        }
-        if (!sleepUntil(() -> countDroppables() < before,
-                (int) Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier))) {
+        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
             fail("drop clicks did not land");
             return;
         }
@@ -539,14 +511,6 @@ public class BarbarianFishingScript implements AModule {
             if (item.getId() == id) return true;
         }
         return false;
-    }
-
-    private int countDroppables() {
-        int count = 0;
-        for (int id : DROPPABLE_IDS) {
-            count += Rs2Inventory.count(id);
-        }
-        return count;
     }
 
     /**
