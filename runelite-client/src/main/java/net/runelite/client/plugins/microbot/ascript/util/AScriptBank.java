@@ -15,7 +15,6 @@ import net.runelite.client.plugins.microbot.util.settings.Rs2Settings;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
@@ -98,6 +97,18 @@ public final class AScriptBank {
     private static volatile String bankCapabilityFailure;
 
     /**
+     * When {@link #bankCapabilityFailure} was recorded. The orchestrator normally consumes it on
+     * the very next bank tick, but a failure recorded from a module's {@code doAction} (a tool
+     * lock, for instance) can survive until the next bank phase — and a run that stops before
+     * that happens must not hand a stale message to whichever module is started next. Anything
+     * older than this bound is discarded, and a successful capability check clears it outright.
+     */
+    private static volatile long bankCapabilityFailureAtMs;
+
+    /** How long a recorded capability failure stays reportable. */
+    private static final long CAPABILITY_FAILURE_TTL_MS = 60_000;
+
+    /**
      * Ensure the bank can actually lock inventory slots. When the settings are off this clicks
      * the bank's own Locks panel ({@link Rs2Settings#enableBankSlotLocking()}, needs the bank
      * open) and re-checks; when it still cannot be enabled the capability failure is recorded
@@ -108,8 +119,12 @@ public final class AScriptBank {
      */
     public static boolean ensureSlotLockingCapability() {
         if (tryEnableSlotLocking()) {
+            // Self-heal: a capability that is usable right now invalidates anything recorded
+            // earlier (e.g. by a previous module whose failure was never consumed).
+            bankCapabilityFailure = null;
             return true;
         }
+        bankCapabilityFailureAtMs = System.currentTimeMillis();
         bankCapabilityFailure = SLOT_LOCKING_REQUIRED;
         log.warn("[AScriptBank] {}", SLOT_LOCKING_REQUIRED);
         return false;
@@ -136,7 +151,13 @@ public final class AScriptBank {
      */
     public static String takeBankCapabilityFailure() {
         String failure = bankCapabilityFailure;
+        if (failure == null) return null;
         bankCapabilityFailure = null;
+        long ageMs = System.currentTimeMillis() - bankCapabilityFailureAtMs;
+        if (ageMs > CAPABILITY_FAILURE_TTL_MS) {
+            log.debug("[AScriptBank] discarding a stale slot-lock capability failure ({} ms old)", ageMs);
+            return null;
+        }
         return failure;
     }
 
@@ -231,7 +252,11 @@ public final class AScriptBank {
         if (quantity <= 0) {
             return true;
         }
-        int held = inventoryQuantity(name);
+        // Resolve the item TYPE before anything is counted and keep it for the whole call: the
+        // amount check and the retry windows must count the same type the dispatch clicks, even
+        // after the bank row disappears (whole stack withdrawn) or the bank list re-sorts.
+        final String resolvedType = isNumeric(name) ? null : bankResolvedName(name);
+        int held = countResolvedType(resolvedType, name);
         if (held >= quantity) {
             return true;
         }
@@ -254,7 +279,8 @@ public final class AScriptBank {
         int toWithdraw = Math.min(available, missing);
         int target = held + toWithdraw;
         boolean withdrawn = withdrawWithRetry(name, () -> withdrawBankItemX(name, toWithdraw),
-                name + " x" + toWithdraw, () -> inventoryQuantity(name) >= target);
+                name + " x" + toWithdraw,
+                () -> countResolvedType(resolvedType, name) >= target);
         if (!withdrawn) {
             // A landing that arrived as BANKNOTES is not a verification failure to hide: the game
             // notes multi-withdraws when the bank is set to "Withdraw as note", and a noted stack
@@ -943,6 +969,13 @@ public final class AScriptBank {
      * {@link #inventoryQuantity(String)} with an explicit banknote policy: {@code includeNoted}
      * counts banknotes too, which is only meaningful for a diagnostic (the amount check must not
      * accept notes — a noted stack cannot be crafted/fletched with).
+     * <p>
+     * The item TYPE is resolved before anything is counted, and only that exact display name is
+     * summed. A bare substring sum mixes types ("Feather" + "Stripy feather", "Logs" + "Oak
+     * logs"), so the amount check could be satisfied by an item the withdraw never clicked. The
+     * row the dispatch itself resolves is preferred while the bank lists it (same
+     * shortest-name rule as {@link Rs2Bank#findBankItem}); once that row is gone (the whole stack
+     * just moved to the inventory) the same rule runs over the inventory names.
      *
      * @param nameOrId    item name (substring match) or numeric id as a string
      * @param includeNoted whether banknote units count
@@ -956,12 +989,89 @@ public final class AScriptBank {
                     .mapToInt(Rs2ItemModel::getQuantity)
                     .sum();
         }
-        String nameLc = nameOrId.toLowerCase();
-        return Rs2Inventory.items()
-                .filter(item -> item.getName() != null && (includeNoted || !item.isNoted())
-                        && item.getName().toLowerCase().contains(nameLc))
+        List<Rs2ItemModel> items = Rs2Inventory.items()
+                .filter(Objects::nonNull)
+                .filter(item -> item.getName() != null && (includeNoted || !item.isNoted()))
+                .collect(Collectors.toList());
+        String target = bankResolvedName(nameOrId);
+        if (target == null) {
+            target = shortestMatchingName(nameOrId, items.stream()
+                    .map(Rs2ItemModel::getName)
+                    .collect(Collectors.toList()));
+        }
+        if (target == null) {
+            return 0;
+        }
+        final String exactName = target;
+        return items.stream()
+                .filter(item -> item.getName().equalsIgnoreCase(exactName))
                 .mapToInt(Rs2ItemModel::getQuantity)
                 .sum();
+    }
+
+    /**
+     * Inventory count for a withdraw whose item type was resolved once: the pinned display name
+     * while the bank row resolved one, otherwise the normal (bank-first) resolution.
+     */
+    private static int countResolvedType(String resolvedType, String nameOrId) {
+        return resolvedType != null ? inventoryQuantityExact(resolvedType) : inventoryQuantity(nameOrId);
+    }
+
+    /**
+     * Units of exactly {@code exactName} (case-insensitive) held in the inventory, banknotes
+     * excluded. Pins the withdraw verification to the type the dispatch resolved, so a bank list
+     * that re-sorts (or a stack that leaves the bank entirely) cannot make the count drift to a
+     * same-substring sibling between the attempt windows.
+     */
+    private static int inventoryQuantityExact(String exactName) {
+        return Rs2Inventory.items()
+                .filter(Objects::nonNull)
+                .filter(item -> item.getName() != null && !item.isNoted()
+                        && item.getName().equalsIgnoreCase(exactName))
+                .mapToInt(Rs2ItemModel::getQuantity)
+                .sum();
+    }
+
+    /**
+     * The display name of the bank row a name-based dispatch would click — the same resolution
+     * {@code Rs2Bank.withdrawX/withdrawAll(name)} uses ({@link Rs2Bank#findBankItem}: shortest
+     * matching display name), so the amount check and the dispatch agree on the item type.
+     *
+     * @return the matched display name, or {@code null} when no bank snapshot lists a match
+     */
+    private static String bankResolvedName(String nameOrId) {
+        List<Rs2ItemModel> rows = Rs2Bank.bankItems();
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+        return shortestMatchingName(nameOrId, rows.stream()
+                .filter(Objects::nonNull)
+                .map(Rs2ItemModel::getName)
+                .collect(Collectors.toList()));
+    }
+
+    /**
+     * The shortest display name among {@code names} that contains {@code nameOrId}
+     * (case-insensitive) — the "shortest matching display name wins" rule {@link
+     * Rs2Bank#findBankItem} applies, extracted so the bank row and the inventory count select
+     * the same item type.
+     *
+     * @param names candidate display names (may contain nulls)
+     * @return the matched display name, or {@code null} when nothing matches
+     */
+    static String shortestMatchingName(String nameOrId, Collection<String> names) {
+        if (nameOrId == null || names == null) {
+            return null;
+        }
+        String nameLc = nameOrId.toLowerCase();
+        String best = null;
+        for (String name : names) {
+            if (name == null || !name.toLowerCase().contains(nameLc)) continue;
+            if (best == null || name.length() < best.length()) {
+                best = name;
+            }
+        }
+        return best;
     }
 
     /**
@@ -982,13 +1092,17 @@ public final class AScriptBank {
                     .mapToInt(Rs2ItemModel::getQuantity)
                     .sum();
         }
-        String nameLc = nameOrId.toLowerCase();
-        Rs2ItemModel row = rows.stream()
-                .filter(item -> item.getName() != null
-                        && item.getName().toLowerCase().contains(nameLc))
-                .min(Comparator.comparingInt(item -> item.getName().length()))
-                .orElse(null);
-        return row == null ? 0 : row.getQuantity();
+        String target = shortestMatchingName(nameOrId, rows.stream()
+                .filter(Objects::nonNull)
+                .map(Rs2ItemModel::getName)
+                .collect(Collectors.toList()));
+        if (target == null) {
+            return 0;
+        }
+        return rows.stream()
+                .filter(item -> item.getName() != null && item.getName().equalsIgnoreCase(target))
+                .mapToInt(Rs2ItemModel::getQuantity)
+                .sum();
     }
 
     /**

@@ -71,6 +71,15 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     private final TileObject tileObject;
     private String[] actions;
 
+    /**
+     * The client object this model wraps. Menu-entry matching needs the raw object: the
+     * wrapper is not itself a {@link GameObject}, so its multi-tile size (which the client
+     * packs into a menu row's param0/param1) is otherwise unreachable.
+     */
+    public TileObject getTileObject() {
+        return tileObject;
+    }
+
 
     @Override
     public long getHash() {
