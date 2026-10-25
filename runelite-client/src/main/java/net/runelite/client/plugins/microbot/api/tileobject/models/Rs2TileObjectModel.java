@@ -275,6 +275,14 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
      */
     public boolean click(String action) {
         try {
+            // A stale tile object can outlive its world view (scene unload / instance exit);
+            // every field below would then read a dead scene, so bail out before building the
+            // entry. Upstream guard, lost by the fork's snapshot.
+            WorldView worldView = getWorldView();
+            if (worldView == null) {
+                log.warn("Failed to interact with object {} - object is no longer in a loaded world view", getId());
+                return false;
+            }
 
             int param0;
             int param1;
@@ -385,11 +393,11 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
 // MenuEntryImpl(getOption=Use, getTarget=Barrier, getIdentifier=43700, getType=GAME_OBJECT_THIRD_OPTION, getParam0=53, getParam1=51, getItemId=-1, isForceLeftClick=true, getWorldViewId=-1, isDeprioritized=false)
             //Rs2Reflection.invokeMenu(param0, param1, menuAction.getId(), object.getId(),-1, "", "", -1, -1);
 
+            return true;
         } catch (Exception ex) {
             log.error("Failed to interact with object: ", ex);
+            return false;
         }
-
-        return true;
     }
 
     private Rectangle clearClickArea() {
