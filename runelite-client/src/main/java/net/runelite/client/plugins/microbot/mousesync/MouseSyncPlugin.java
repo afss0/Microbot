@@ -32,9 +32,10 @@ import java.util.concurrent.TimeUnit;
  * (falling back to {@code ClientUI.getClient().setEnabled(false)} and
  * {@code canvas.setFocusable(false)} if InputSelector is unavailable). After
  * the interaction completes, a configurable grace period keeps input disabled
- * so the user cannot accidentally interfere with the return movement. Once the
- * grace period expires the bot naturally moves the cursor (via
- * {@code NaturalMouse}) to the user's last known OS mouse position and
+ * so the user cannot accidentally interfere with the return movement. The
+ * grace period is a debounce: a new gesture during it cancels and restarts the
+ * countdown. Once the grace period expires the bot naturally moves the cursor
+ * (via {@code NaturalMouse}) to the user's last known OS mouse position and
  * re-enables input.
  *
  * <p>An emergency hotkey (default CTRL+X) immediately stops the bot
@@ -62,6 +63,20 @@ public class MouseSyncPlugin extends Plugin {
     }
 
     private volatile State state = State.IDLE;
+
+    /**
+     * Guards every state transition plus the grace timer/ticket pair. The
+     * grace task runs on a different thread than the mouse gestures, so a
+     * state check followed by an action would otherwise race a new gesture.
+     */
+    private final Object stateLock = new Object();
+
+    /**
+     * Invalidates a grace/return task that was scheduled before the latest
+     * interaction started. A scheduled task cannot be cancelled once it has
+     * begun, so it must re-check this ticket before changing state or input.
+     */
+    private long graceGeneration;
 
     /**
      * Tracks whether user input was already disabled (by the "Disable Input"
@@ -125,6 +140,11 @@ public class MouseSyncPlugin extends Plugin {
             t.setDaemon(true);
             return t;
         });
+        synchronized (stateLock) {
+            state = State.IDLE;
+            inputWasAlreadyDisabled = false;
+            graceGeneration = 0;
+        }
         keyManager.registerKeyListener(emergencyKeyListener);
         startCursorTracker();
         // Listen for window focus changes — release input if the user alt-tabs away
@@ -138,7 +158,6 @@ public class MouseSyncPlugin extends Plugin {
     @Override
     protected void shutDown() {
         keyManager.unregisterKeyListener(emergencyKeyListener);
-        cancelGraceTimer();
         stopCursorTracker();
         // Unregister focus listener
         javax.swing.SwingUtilities.invokeLater(() -> {
@@ -146,9 +165,13 @@ public class MouseSyncPlugin extends Plugin {
             if (window != null) window.removeWindowFocusListener(focusListener);
         });
         // Always restore input on shutdown so the user is never stuck
-        enableUserInput();
-        state = State.IDLE;
-        inputWasAlreadyDisabled = false;
+        synchronized (stateLock) {
+            cancelGraceTimer();
+            graceGeneration++;
+            enableUserInput();
+            state = State.IDLE;
+            inputWasAlreadyDisabled = false;
+        }
         if (executor != null) {
             executor.shutdownNow();
             executor = null;
@@ -183,13 +206,36 @@ public class MouseSyncPlugin extends Plugin {
      * Skips if the client window is unfocused (configurable).
      */
     public void onBotInteractionStart() {
-        if (!config.enabled() || state == State.BOT_ACTIVE || state == State.RETURNING) return;
+        if (!config.enabled() || state == State.RETURNING) return;
         if (config.skipWhenUnfocused() && !isClientFocused()) return;
-        cancelGraceTimer();
-        // Track if user input was already disabled before we touched it
-        inputWasAlreadyDisabled = !ClientUI.getClient().isEnabled();
-        disableUserInput();
-        state = State.BOT_ACTIVE;
+
+        boolean disableInput;
+        synchronized (stateLock) {
+            if (state == State.BOT_ACTIVE || state == State.RETURNING) return;
+
+            // A new gesture during the grace period is the normal case for multi-click
+            // recipes (select item -> click target). Cancel the countdown and make the
+            // bot own the cursor again instead of letting the old timer fire mid-gesture.
+            cancelGraceTimer();
+            graceGeneration++;
+
+            // Only snapshot input ownership when we are coming from IDLE. During GRACE
+            // the disabled client is our own doing; reading it here would record a
+            // "user disabled input" flag and never restore it afterwards.
+            boolean clientEnabled = ClientUI.getClient().isEnabled();
+            if (state == State.IDLE) {
+                inputWasAlreadyDisabled = !clientEnabled;
+            }
+
+            // Already disabled (our grace hold, or the user's own choice) — don't
+            // churn the client toolbar on every click of a multi-click recipe.
+            disableInput = !inputWasAlreadyDisabled && clientEnabled;
+            state = State.BOT_ACTIVE;
+        }
+
+        if (disableInput) {
+            disableUserInput();
+        }
         log.debug("MouseSync: BOT_ACTIVE — user input disabled (wasAlreadyDisabled={})", inputWasAlreadyDisabled);
     }
 
@@ -199,24 +245,37 @@ public class MouseSyncPlugin extends Plugin {
      * returns to the user's position and input is re-enabled.
      */
     public void onBotInteractionEnd() {
-        if (!config.enabled() || state != State.BOT_ACTIVE) return;
-        state = State.GRACE_PERIOD;
-
-        // Snapshot the user's current OS mouse position *now* so we know
-        // where to return after the grace period.
-        snapshotOsMousePosition();
+        if (!config.enabled()) return;
 
         int graceMs = config.gracePeriodMs();
-        log.debug("MouseSync: GRACE_PERIOD ({}ms)", graceMs);
+        synchronized (stateLock) {
+            if (state != State.BOT_ACTIVE) return;
 
-        cancelGraceTimer();
-        graceTimer = executor.schedule(this::finishGracePeriod, graceMs, TimeUnit.MILLISECONDS);
+            state = State.GRACE_PERIOD;
+
+            // Snapshot the user's current OS mouse position *now* so we know
+            // where to return after the grace period.
+            snapshotOsMousePosition();
+
+            cancelGraceTimer();
+            long generation = ++graceGeneration;
+            graceTimer = scheduleGrace(generation, graceMs, TimeUnit.MILLISECONDS);
+            if (graceTimer == null) {
+                // Executor is gone (shutdown in progress) — do not leave input held.
+                enableUserInput();
+                state = State.IDLE;
+                inputWasAlreadyDisabled = false;
+                return;
+            }
+        }
+
+        log.debug("MouseSync: GRACE_PERIOD ({}ms)", graceMs);
     }
 
     // ── Internal ───────────────────────────────────────────────────────
 
-    private void finishGracePeriod() {
-        if (state != State.GRACE_PERIOD) return;
+    private void finishGracePeriod(long generation) {
+        if (!isGraceCurrent(generation)) return;
 
         // Walker still active — keep input disabled, retry in 1s.
         // This prevents cursor teleportation: returning the cursor while the
@@ -224,8 +283,7 @@ public class MouseSyncPlugin extends Plugin {
         // position, only for the walker to re-disable input on the next click.
         if (Rs2Walker.getCurrentTarget() != null) {
             log.debug("MouseSync: walker still active during grace — retrying in 1s");
-            cancelGraceTimer();
-            graceTimer = executor.schedule(this::finishGracePeriod, 1, TimeUnit.SECONDS);
+            rescheduleGrace(generation, 1, TimeUnit.SECONDS);
             return;
         }
 
@@ -233,52 +291,95 @@ public class MouseSyncPlugin extends Plugin {
         java.awt.Point target = lastOsMousePosition;
         if (target == null) {
             log.debug("MouseSync: no OS position captured — restoring input immediately");
-            enableUserInput();
-            state = State.IDLE;
-            inputWasAlreadyDisabled = false;
+            restoreInputAfterGrace(generation, State.GRACE_PERIOD);
             return;
         }
-
-        state = State.RETURNING;
-        log.debug("MouseSync: RETURNING to ({}, {})", target.x, target.y);
 
         net.runelite.api.Point canvasTarget = screenToCanvas(target);
         if (canvasTarget == null) {
             log.debug("MouseSync: canvas not visible — restoring input");
-            enableUserInput();
-            state = State.IDLE;
-            inputWasAlreadyDisabled = false;
+            restoreInputAfterGrace(generation, State.GRACE_PERIOD);
             return;
         }
 
-        // Use NaturalMouse for human-like return movement.
-        // NaturalMouse.moveTo runs on its own thread and dispatches
-        // synthetic events to the canvas. We wait for it to finish,
-        // then re-enable input.
-        executor.submit(() -> {
-            try {
-                if (Microbot.getNaturalMouse() != null) {
-                    Microbot.getNaturalMouse().moveTo(canvasTarget.getX(), canvasTarget.getY());
-                } else {
-                    // Fallback: direct move
-                    Microbot.getMouse().move(canvasTarget.getX(), canvasTarget.getY());
-                }
-            } catch (Exception e) {
-                log.warn("MouseSync: return movement failed", e);
-            } finally {
-                enableUserInput();
-                state = State.IDLE;
-                inputWasAlreadyDisabled = false;
-                log.debug("MouseSync: IDLE — user input restored");
+        // Re-check under the lock immediately before committing RETURNING. A new
+        // gesture may have started while the caller above was checking the walker
+        // or reading the OS pointer; the ticket makes that gesture win.
+        synchronized (stateLock) {
+            if (generation != graceGeneration || state != State.GRACE_PERIOD) return;
+            state = State.RETURNING;
+        }
+        log.debug("MouseSync: RETURNING to ({}, {})", target.x, target.y);
+
+        // Use NaturalMouse for human-like return movement. We are already on the
+        // MouseSync executor, so this may block; that executor has no other job.
+        try {
+            if (Microbot.getNaturalMouse() != null) {
+                Microbot.getNaturalMouse().moveTo(canvasTarget.getX(), canvasTarget.getY());
+            } else {
+                // Fallback: direct move
+                Microbot.getMouse().move(canvasTarget.getX(), canvasTarget.getY());
             }
-        });
+        } catch (Exception e) {
+            log.warn("MouseSync: return movement failed", e);
+        } finally {
+            restoreInputAfterGrace(generation, State.RETURNING);
+            log.debug("MouseSync: IDLE — user input restored");
+        }
+    }
+
+    /** True when this task still owns the current grace period. */
+    private boolean isGraceCurrent(long generation) {
+        synchronized (stateLock) {
+            return generation == graceGeneration && state == State.GRACE_PERIOD;
+        }
+    }
+
+    private void rescheduleGrace(long generation, long delay, TimeUnit unit) {
+        boolean failed;
+        synchronized (stateLock) {
+            if (generation != graceGeneration || state != State.GRACE_PERIOD) return;
+            cancelGraceTimer();
+            graceTimer = scheduleGrace(generation, delay, unit);
+            failed = graceTimer == null;
+        }
+        if (failed) {
+            restoreInputAfterGrace(generation, State.GRACE_PERIOD);
+        }
+    }
+
+    private ScheduledFuture<?> scheduleGrace(long generation, long delay, TimeUnit unit) {
+        ScheduledExecutorService exec = executor;
+        if (exec == null) return null;
+        try {
+            return exec.schedule(() -> finishGracePeriod(generation), delay, unit);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Restores input only when the task that requested it is still the current
+     * one. A new gesture bumps {@link #graceGeneration}, so a stale grace or
+     * return task cannot re-enable input underneath the bot.
+     */
+    private void restoreInputAfterGrace(long generation, State expected) {
+        synchronized (stateLock) {
+            if (generation != graceGeneration || state != expected) return;
+            enableUserInput();
+            state = State.IDLE;
+            inputWasAlreadyDisabled = false;
+        }
     }
 
     private void emergencyRelease() {
-        cancelGraceTimer();
-        enableUserInput();
-        state = State.IDLE;
-        inputWasAlreadyDisabled = false;
+        synchronized (stateLock) {
+            cancelGraceTimer();
+            graceGeneration++;
+            enableUserInput();
+            state = State.IDLE;
+            inputWasAlreadyDisabled = false;
+        }
         log.info("MouseSync: emergency release — input restored");
     }
 
@@ -369,6 +470,10 @@ public class MouseSyncPlugin extends Plugin {
     private void startCursorTracker() {
         if (cursorTracker != null && !cursorTracker.isDone()) return;
         cursorTracker = executor.scheduleAtFixedRate(() -> {
+            // Only track when the user has input control. During BOT_ACTIVE /
+            // GRACE_PERIOD / RETURNING the bot owns the cursor; writing the OS
+            // position here would overwrite the bot's tracked point mid-gesture.
+            if (state != State.IDLE) return;
             // Only track when user has input control
             if (!ClientUI.getClient().isEnabled()) return;
             // Skip when window is unfocused — no point tracking cursor position
