@@ -45,8 +45,8 @@ public class AScriptPlugin extends Plugin {
     private UseLampEvent useLampEvent;
 
     /**
-     * Menu Entry Swapper mechanics for the drop recipe: while a drop swap is pending,
-     * reorder the real menu entries so the item's Drop row is the left click.
+     * Menu Entry Swapper mechanics for the inventory recipes: while a swap is pending, reorder
+     * the real menu entries so the item's {@code Drop} or {@code Use} row is the left click.
      */
     @Subscribe
     public void onPostMenuSort(PostMenuSort event) {

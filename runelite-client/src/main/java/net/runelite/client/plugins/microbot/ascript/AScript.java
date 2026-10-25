@@ -109,6 +109,12 @@ public class AScript extends Script {
     private int consecutiveBankCloseFailures = 0;
     private static final int MAX_BANK_CLOSE_FAILURES = 5;
     /**
+     * Consecutive failures to put the bank into "Withdraw as item" mode. Modules cannot use
+     * banknotes, so the cycle must not proceed in note mode; a run of failures stops loudly.
+     */
+    private int consecutiveWithdrawModeFailures = 0;
+    private static final int MAX_WITHDRAW_MODE_FAILURES = 5;
+    /**
      * Consecutive "materials missing" verdicts. A missing verdict ends the run and is read
      * from the cached bank mirror (refreshed only by bank container events), so it is
      * confirmed across ticks and trusted only on a live mirror — see the bank step in
@@ -323,6 +329,23 @@ public class AScript extends Script {
             }
             consecutiveBankOpenFailures = 0;
 
+            // aScript modules can only use base items, never banknotes: put the bank into
+            // "Withdraw as item" mode before any verdict/withdraw. The player's "Withdraw as
+            // note" setting is restored when the bank phase ends.
+            if (!AScriptBank.ensureItemWithdrawMode()) {
+                currentPhase = Phase.BANKING;
+                consecutiveWithdrawModeFailures++;
+                log.warn("[AScript] Bank would not switch to 'Withdraw as item' ({}/{})",
+                        consecutiveWithdrawModeFailures, MAX_WITHDRAW_MODE_FAILURES);
+                if (consecutiveWithdrawModeFailures >= MAX_WITHDRAW_MODE_FAILURES) {
+                    stopWithMessage("aScript Stopped — Bank Withdraw Mode",
+                            "the bank would not switch to 'Withdraw as item' after "
+                                    + consecutiveWithdrawModeFailures + " attempts — set it manually");
+                }
+                return;
+            }
+            consecutiveWithdrawModeFailures = 0;
+
             if (bankModule.isBankMissingMaterials(config)) {
                 // A "missing" verdict ends the run, and it is read from the cached bank
                 // mirror (refreshed only by bank container events). Confirm it before
@@ -353,13 +376,14 @@ public class AScript extends Script {
             consecutiveMissingVerdicts = 0;
             // Bank HAS materials — fall through to BANKING
         } else {
-            // No module needs bank — close bank if open. The close is a HARD precondition
-            // for dispatch: an open bank interface blocks production interfaces (make-X,
-            // smelt) for any module, so dispatching doAction with the bank open stalls
-            // the module ("production interface did not open"). The close itself falls
-            // back between ESC and the widget click inside closeBank(); if the bank is
-            // STILL open after that, retry next tick — and stop loudly after the bound
-            // instead of looping forever against an open bank.
+            // No module needs bank — restore the player's withdraw mode, then close the bank.
+            // The close is a HARD precondition for dispatch: an open bank interface blocks
+            // production interfaces (make-X, smelt) for any module, so dispatching doAction
+            // with the bank open stalls the module ("production interface did not open"). The
+            // close itself falls back between ESC and the widget click inside closeBank(); if
+            // the bank is STILL open after that, retry next tick — and stop loudly after the
+            // bound instead of looping forever against an open bank.
+            AScriptBank.restoreWithdrawMode();
             if (Rs2Bank.isOpen()) {
                 Rs2Bank.closeBank();
                 if (Rs2Bank.isOpen()) {
@@ -435,6 +459,7 @@ public class AScript extends Script {
         consecutiveBankFailures = 0;
         consecutiveBankOpenFailures = 0;
         consecutiveBankCloseFailures = 0;
+        consecutiveWithdrawModeFailures = 0;
         consecutiveMissingVerdicts = 0;
         consecutiveEatFailures = 0;
         eatThreshold = 0;
@@ -616,6 +641,7 @@ public class AScript extends Script {
         Microbot.status = "STOPPED — " + message;
         log.warn("[AScript] {}: {}", title, message);
         AScriptNotify.notify(title, message);
+        AScriptBank.restoreWithdrawMode();
         if (Rs2Bank.isOpen()) {
             Rs2Bank.closeBank();
             sleepUntil(() -> !Rs2Bank.isOpen(), 5000);
@@ -640,6 +666,7 @@ public class AScript extends Script {
             wasActive.put(mod, false);
             mod.resetExitFlag();
         }
+        AScriptBank.restoreWithdrawMode();
         currentPhase = Phase.DISABLED;
         super.shutdown();
     }

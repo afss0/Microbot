@@ -8,6 +8,7 @@ import net.runelite.client.plugins.microbot.util.misc.Rs2Food;
 
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Predicate;
@@ -26,8 +27,10 @@ import java.util.function.Predicate;
  * <p><b>Contract:</b> this helper changes WHICH candidate is clicked, never WHICH candidates
  * qualify. The type is resolved with the plain {@link Rs2Inventory#get} rules — fuzzy name
  * matching, shortest-name tie-break and all — and only the instance is drawn, so a
- * converted call site cannot silently retarget a different item. Candidates are one item
- * type (one id); a weighted pick ACROSS types is not supported.</p>
+ * converted call site cannot silently retarget a different item. One qualification is
+ * enforced by the helper itself: <b>banknotes are never candidates</b> (a note is a
+ * certificate, not the item a Use click can act on); a noted reference resolves to its base
+ * id via {@link Rs2ItemModel#getUnNotedId()} and draws the unnoted instances.</p>
  *
  * <p>Resolve the pick at the click site (immediately before the recipe), never at the top
  * of {@code doAction}: item models come from the event-refreshed container cache.</p>
@@ -46,46 +49,67 @@ public final class AScriptPick {
 
     /**
      * Weighted pick among the items of the same type (same item id) as {@code reference}.
+     * <p>
+     * A banknote is never a candidate for an item-use click: when {@code reference} is noted,
+     * the base id is resolved through {@link Rs2ItemModel#getUnNotedId()} and the unnoted
+     * instances of that type are drawn instead.
      *
      * @param reference the model whose TYPE is drawn from; {@code null} yields {@code null}
-     * @return the picked model, or {@code null} when no candidate is in the inventory
+     * @return the picked model, or {@code null} when no unnoted candidate is in the inventory
      */
     public static Rs2ItemModel pick(Rs2ItemModel reference) {
         if (reference == null) return null;
-        return pick(item -> item.getId() == reference.getId());
+        int typeId = reference.isNoted() ? reference.getUnNotedId() : reference.getId();
+        return pick(item -> item.getId() == typeId);
     }
 
     /**
      * Weighted pick among the items matching one of {@code ids} — the type resolution is
      * {@link Rs2Inventory#get(int...)}'s (first match wins), only the instance is drawn.
+     * Banknotes are excluded.
      */
     public static Rs2ItemModel pick(int... ids) {
-        return pick(Rs2Inventory.get(ids));
+        return pick(item -> Arrays.stream(ids).anyMatch(id -> id == item.getId()));
     }
 
     /**
-     * Weighted pick among the items matching {@code name} — the type resolution is
+     * Weighted pick among the <b>unnoted</b> items matching {@code name} — the type resolution is
      * {@link Rs2Inventory#get(String)}'s (substring match, shortest name wins), only the
-     * instance is drawn.
+     * instance is drawn. A name resolves both the note and the base item; notes are never
+     * candidates for a Use click.
      */
     public static Rs2ItemModel pick(String name) {
-        return pick(Rs2Inventory.get(name));
+        return pick(unnotedReference(name, false));
     }
 
     /**
-     * Weighted pick among the items matching {@code name} exactly — the type resolution is
-     * {@link Rs2Inventory#get(String, boolean)}'s, only the instance is drawn.
+     * Weighted pick among the <b>unnoted</b> items matching {@code name} exactly.
      */
     public static Rs2ItemModel pick(String name, boolean exact) {
-        return pick(Rs2Inventory.get(name, exact));
+        return pick(unnotedReference(name, exact));
+    }
+
+    /** The first unnoted inventory instance matching {@code name}, or {@code null}. */
+    private static Rs2ItemModel unnotedReference(String name, boolean exact) {
+        if (name == null) return null;
+        Predicate<Rs2ItemModel> filter = item -> item != null && item.getName() != null && !item.isNoted()
+                && (exact ? item.getName().equalsIgnoreCase(name)
+                        : item.getName().toLowerCase().contains(name.toLowerCase()));
+        // Same type resolution as Rs2Inventory.get(name): exact = first slot, fuzzy =
+        // shortest matching display name (so "logs" does not resolve "Oaken logs" over "Logs").
+        return exact
+                ? Rs2Inventory.items(filter).findFirst().orElse(null)
+                : Rs2Inventory.items(filter)
+                        .min(Comparator.comparingInt(item -> item.getName().length())).orElse(null);
     }
 
     /**
-     * Weighted pick among the items matching {@code filter}. The caller guarantees the
-     * filter selects a single item type.
+     * Weighted pick among the items matching {@code filter}. The caller guarantees the filter
+     * selects a single item type; banknotes are excluded because they cannot be used as items.
      */
     public static Rs2ItemModel pick(Predicate<Rs2ItemModel> filter) {
-        List<Rs2ItemModel> candidates = Rs2Inventory.getList(filter);
+        List<Rs2ItemModel> candidates = Rs2Inventory.getList(
+                filter.and(item -> item != null && !item.isNoted()));
         if (candidates.isEmpty()) return null;
         // The rank weighting is only meaningful against slot order: rank 1 must be the
         // lowest slot. items() walks the container in ascending slot order today; the
