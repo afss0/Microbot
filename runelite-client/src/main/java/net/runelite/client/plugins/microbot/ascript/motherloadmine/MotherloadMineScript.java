@@ -581,7 +581,12 @@ public class MotherloadMineScript implements AModule {
             }
 
             if (!AScriptBank.hasUnnotedItem("hammer")) {
-                log.warn("[MotherloadMineScript] No hammer found");
+                if (AScriptBank.hasNotedItem("hammer")) {
+                    Microbot.status = "HAMMER IS NOTED — bank it to un-note";
+                    log.warn("[MotherloadMineScript] hammer is a banknote — bank it to un-note before repairing");
+                } else {
+                    log.warn("[MotherloadMineScript] No hammer found");
+                }
                 sleep(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
                 return false;
             }
