@@ -12,6 +12,7 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -659,36 +660,15 @@ public class MotherloadMineScript implements AModule {
     }
 
     private boolean dropGems() {
-        Microbot.status = "DROPPING GEMS";
-        int before = countGems();
-        // Precomputed route over the slots holding a catalogued gem, shuffled once: no slot is
-        // drawn twice and dropAtSlot skips a slot whose item is gone. It also installs the
-        // gem's Drop entry as the left-click entry (uncut gems default to "Use").
-        for (int slot : AScriptPick.dropRoute(
-                item -> GEM_IDS.stream().anyMatch(gemId -> gemId == item.getId()))) {
-            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
-            if (item == null) continue;
-            if (GEM_IDS.stream().noneMatch(gemId -> gemId == item.getId())) continue;
-            AScriptClick.dropAtSlot(slot, item.getId());
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
-        }
-        // The old shape was fire-and-forget: the drops were never verified, so a failed
-        // click still counted as a clean cycle. Wait for the count to actually fall.
-        if (!sleepUntil(() -> countGems() < before,
-                Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier))) {
+        // Small set: one full pass through the shared dropper (it still paces every click and
+        // verifies the count; the slicer is reserved for bulk inventories).
+        AScriptDrop.Result result = AScriptDrop.dropAll(
+                item -> GEM_IDS.contains(item.getId()), "DROPPING GEMS", weatherMultiplier);
+        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
             log.warn("[MotherloadMineScript] gem drop did not land");
             return false;
         }
         return true;
-    }
-
-    /** Total gem count across the catalogued ids. */
-    private int countGems() {
-        int total = 0;
-        for (int gemId : GEM_IDS) {
-            total += Rs2Inventory.itemQuantity(gemId);
-        }
-        return total;
     }
 
     // ── Clicks ────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -48,11 +49,37 @@ public class BarbarianVillageFisherScript implements AModule {
     private static final int MAX_BANK_FAILURES = 3;
     private static final int SPOT_CLICK_RETRIES = 5;
 
-    // Raw fish IDs: Trout (335), Salmon (331), Pike (349)
-    private static final int[] RAW_FISH = {335, 331, 349};
-    /** Everything the drop phase may take: raw fish, cooked trout/salmon/pike (333/329/351)
-     *  and burnt fish (343). */
-    private static final int[] DROPPABLE_IDS = {335, 331, 349, 333, 329, 351, 343};
+    /**
+     * Landed wait for a fishing click. Deliberately long: a lagging client can delay the
+     * first animation/interaction by many seconds, and a shorter window re-clicks the spot
+     * while the first click is still in flight.
+     */
+    private static final int FISHING_LANDED_MIN_MS = 8_000;
+    private static final int FISHING_LANDED_MAX_MS = 30_000;
+    /** Sleep while the character is already fishing. */
+    private static final int FISHING_ACTIVE_MIN_MS = 3_500;
+    private static final int FISHING_ACTIVE_MAX_MS = 10_000;
+    /**
+     * XP window for the active cooking batch. Several fish can pass between XP reads, and a
+     * lag spike must not read as a dead dispatch (which re-opened the make-X box).
+     */
+    private static final int COOKING_XP_MIN_MS = 8_000;
+    private static final int COOKING_XP_MAX_MS = 15_000;
+    /** Extra window before a timed-out XP wait releases the latch for a re-dispatch. */
+    private static final int COOKING_XP_GRACE_MIN_MS = 4_000;
+    private static final int COOKING_XP_GRACE_MAX_MS = 8_000;
+    /** Make-X dialog appearance window. */
+    private static final int COOKING_DIALOG_MIN_MS = 8_000;
+    private static final int COOKING_DIALOG_MAX_MS = 16_000;
+
+    private static final String COOK_MAKE_X_PROMPT = "How many would you like to cook?";
+
+    /**
+     * The raw ids a cook dispatch may select. Membership is owned by {@link BarbarianFish}
+     * (raw {@code ItemID} ids, cooked ids validated against {@code CookingAction}); cooked and
+     * burnt ids are drop/bank-only and must never appear here.
+     */
+    private static final int[] RAW_FISH = BarbarianFish.rawIds();
     /**
      * Rod and bait are resolved by ID, never by name: every relevant name is a substring
      * of a larger family. "Fishing rod" is contained in "Fly fishing rod", and "Feather"
@@ -90,6 +117,13 @@ public class BarbarianVillageFisherScript implements AModule {
     private long lastAfkTime = 0L;
     /** Set when a full cycle ended in banking — the post-cycle break runs bank-closed next tick. */
     private boolean postCycleBreakPending = false;
+    /**
+     * DROP_RAW / COOK_AND_DROP: a drop phase is running. Entered when the inventory fills and
+     * held until the filter is empty — a slice frees slots, so without the latch the phase
+     * resolver would resume fishing with the module's fish still in the bag (the
+     * Woodcutting/Mining latch finding).
+     */
+    private boolean dropping = false;
     /** When the BANKING phase found no loaded bank object (bounded wait). */
     private long bankTurnSinceMs = 0L;
     private static final long BANK_APPROACH_STOP_MS = 20_000;
@@ -145,6 +179,7 @@ public class BarbarianVillageFisherScript implements AModule {
         spotClickRetries = 0;
         lastAfkTime = 0L;
         postCycleBreakPending = false;
+        dropping = false;
         bankTurnSinceMs = 0L;
     }
 
@@ -240,7 +275,7 @@ public class BarbarianVillageFisherScript implements AModule {
                 consecutiveBankFailures++;
                 return false;
             }
-            if (!sleepUntil(Rs2Bank::isOpen, Rs2Random.logNormalBounded(5000, 10000))) {
+            if (!sleepUntil(Rs2Bank::isOpen, Rs2Random.logNormalBounded(5000, 22000))) {
                 consecutiveBankFailures++;
                 return false;
             }
@@ -284,6 +319,7 @@ public class BarbarianVillageFisherScript implements AModule {
         }
 
         consecutiveBankFailures = 0;
+        dropping = false; // a fresh trip — the next fill starts a new drop phase
         // Run the post-cycle break bank-closed on the next tick: the orchestrator closes
         // the bank once needsBank flips false (cannonball/crafting placement).
         postCycleBreakPending = true;
@@ -361,10 +397,19 @@ public class BarbarianVillageFisherScript implements AModule {
             return;
         }
 
+        // A running drop phase owns the tick regardless of fullness: a slice frees slots, and
+        // without the latch the module would resume fishing with the module's fish still in
+        // the bag (the Woodcutting/Mining latch finding). Cleared when the filter is empty.
+        if (dropping) {
+            currentPhase = Phase.DROPPING;
+            return;
+        }
+
         // Inventory full
         if (Rs2Inventory.isFull()) {
             switch (func) {
                 case DROP_RAW:
+                    dropping = true;
                     currentPhase = Phase.DROPPING;
                     return;
                 case BANK_RAW:
@@ -385,6 +430,7 @@ public class BarbarianVillageFisherScript implements AModule {
                             currentPhase = Phase.WALK_TO_BANK;
                         }
                     } else {
+                        dropping = true;
                         currentPhase = Phase.DROPPING;
                     }
                     return;
@@ -406,7 +452,9 @@ public class BarbarianVillageFisherScript implements AModule {
     private void doFishing(AScriptConfig config) {
         if (Rs2Player.isInteracting()) {
             Microbot.status = "FISHING";
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(256, 789, weatherMultiplier));
+            AScriptSleep.sleepInterruptibly(
+                    Rs2Random.logNormalBounded(FISHING_ACTIVE_MIN_MS, FISHING_ACTIVE_MAX_MS,
+                            weatherMultiplier));
             return;
         }
 
@@ -430,14 +478,14 @@ public class BarbarianVillageFisherScript implements AModule {
         }
 
         // "Lure" is the spot's default op — a plain left-click on the clickbox is what a
-        // human does, so that stays the plain actor recipe. "Bait" is NOT the default: a
-        // left-click can only ever dispatch the default, so it goes through the
-        // non-default-op recipe (right-click the clickbox, pick our row out of the open
-        // menu, confirm the menu closed on it). The effect is still judged by the gate
-        // below, unchanged.
+        // human does, so the recipe issues it directly. "Bait" is NOT the default: a
+        // left-click can only ever dispatch the default, so the recipe presses our row out
+        // of the open menu instead. Both paths are dispatch-verified by AScriptClick (the
+        // hover must rank our row top, or the frozen menu must expose it); the effect is
+        // still judged by the gate below, unchanged.
         AScriptClick.Target spotClick =
                 config.barbarianVillageFisherType() == BarbarianFishingType.BAIT_FISHING
-                        ? AScriptClick.clickActorOp(fishingSpot.getNpc(), "Bait")
+                        ? AScriptClick.clickActor(fishingSpot.getNpc(), "Bait")
                         : AScriptClick.clickActor(fishingSpot.getNpc());
         if (spotClick.cameraTurned()) {
             // The recipe turned the camera toward the spot — a retry on a later tick,
@@ -448,7 +496,8 @@ public class BarbarianVillageFisherScript implements AModule {
         if (spotClick.clicked()) {
             boolean landed = sleepUntil(
                     () -> Rs2Player.isAnimating() || Rs2Player.isInteracting(),
-                    (int) Rs2Random.logNormalBounded(5000, 10000, weatherMultiplier));
+                    (int) Rs2Random.logNormalBounded(FISHING_LANDED_MIN_MS, FISHING_LANDED_MAX_MS,
+                            weatherMultiplier));
             if (!landed) {
                 // Transient click failure — bounded retry with backoff (Ponto 2)
                 spotClickRetries++;
@@ -457,8 +506,8 @@ public class BarbarianVillageFisherScript implements AModule {
                     return;
                 }
                 AScriptSleep.sleepInterruptibly(
-                        Rs2Random.logNormalBounded(500 + spotClickRetries * 200,
-                                1100 + spotClickRetries * 400, weatherMultiplier));
+                        Rs2Random.logNormalBounded(1000 + spotClickRetries * 400,
+                                2000 + spotClickRetries * 800, weatherMultiplier));
                 return;
             }
             // Click landed — reset transient counter
@@ -471,57 +520,52 @@ public class BarbarianVillageFisherScript implements AModule {
         }
     }
 
+    /**
+     * One sliced drop pass over the module's fish ({@link AScriptDrop}): 5–9 slots per tick,
+     * paced and verified, instead of clicking a full bag inside a single tick. The phase
+     * resolver keeps the module in DROPPING until the filter matches nothing; a clean bag
+     * (remaining 0) ends the cycle and runs the bank-free post-cycle break.
+     */
     private void doDropping(AScriptConfig config) {
-        Microbot.status = "DROPPING";
-        // One pass over the precomputed route: the slots that hold a droppable fish right
-        // now, shuffled once (AScriptPick.dropRoute). dropAtSlot installs the item's Drop
-        // entry as the left-click entry, so the click dispatches Drop (a raw click sent the
-        // default "Use" and selected the fish), and a slot emptied since the route was built
-        // is skipped there instead of clicked.
-        // Only the fish the module itself handles: "everything but rod/bait" would also click
-        // a lamp, food or a teleport that happens to sit in the inventory.
-        for (int slot : AScriptPick.dropRoute(i -> isDroppable(i.getId()))) {
-            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
-            if (item == null || !isDroppable(item.getId())) continue;
-            AScriptClick.dropAtSlot(slot, item.getId());
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
-        }
-        boolean dropped = sleepUntil(() -> countDroppableItems() == 0,
-                (int) Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
-        if (!dropped) {
+        AScriptDrop.Result result = AScriptDrop.drop(
+                BarbarianVillageFisherScript::isDroppable, "DROPPING", weatherMultiplier);
+        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
             fail("drop did not land");
             return;
         }
+        if (result.getOutcome() == AScriptDrop.Outcome.NOTHING_TO_DROP) {
+            dropping = false;
+            if (Rs2Inventory.isFull()) {
+                // Full with nothing the module owns is a stuck state, not a silent spin.
+                fail("inventory full but nothing droppable (unexpected items?)");
+            } else {
+                // The latch can survive one tick past the last slice; an empty filter is the
+                // normal end of the phase, not a failure.
+                consecutiveFailures = 0;
+                postCycleBreak(config);
+            }
+            return;
+        }
         consecutiveFailures = 0;
-        postCycleBreak(config);
+        if (result.getRemaining() == 0) {
+            dropping = false;
+            postCycleBreak(config);
+        }
     }
 
     private void doCooking(AScriptConfig config) {
         Microbot.status = "COOKING";
 
         if (!hasRawFish()) {
-            // Done cooking — clear all cooking state
-            expectingXPDrop = false;
-            currentlyCookingID = 0;
-            cookingConfirmed = false;
-            cookingDeadlineMs = 0;
-            cookingRedispaches = 0;
+            clearCookingState();
             return;
         }
 
         // Wait for XP drop if we previously started cooking (confirmed dispatch)
         if (expectingXPDrop && currentlyCookingID != 0
                 && Rs2Inventory.count(currentlyCookingID) != 0) {
-            if (Rs2Player.waitForXpDrop(Skill.COOKING,
-                    (int) Rs2Random.logNormalBounded(3500, 6500, weatherMultiplier))) {
-                Microbot.status = "COOKING — got XP";
-                consecutiveFailures = 0;
-                AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(235, 798, weatherMultiplier));
-                expectingXPDrop = false;
-                cookingConfirmed = false;
-                // Progress made — reset stagnation deadline (Ponto 3)
-                cookingDeadlineMs = System.currentTimeMillis() + 60_000;
-                cookingRedispaches = 0;
+            if (waitForCookingXp(COOKING_XP_MIN_MS, COOKING_XP_MAX_MS)) {
+                onCookingProgress();
                 return;
             }
 
@@ -530,6 +574,14 @@ public class BarbarianVillageFisherScript implements AModule {
             if (cookingConfirmed && isCookingInFlight()) {
                 // Action is in progress — do NOT count as failure, do NOT reset
                 // the latch, do NOT re-dispatch. Just re-wait next tick.
+                return;
+            }
+
+            // One grace window before releasing the latch: under lag the XP read can arrive
+            // late with no animation in flight, and a re-dispatch in that gap is what used
+            // to select the freshly burnt fish left in the raw stack's slot.
+            if (waitForCookingXp(COOKING_XP_GRACE_MIN_MS, COOKING_XP_GRACE_MAX_MS)) {
+                onCookingProgress();
                 return;
             }
 
@@ -547,6 +599,21 @@ public class BarbarianVillageFisherScript implements AModule {
             expectingXPDrop = false;
             cookingConfirmed = false;
             return; // next tick re-calls doCookingDispatch()
+        }
+
+        // A stale make-X box means an earlier SPACE never landed. Dismiss it so the dispatch
+        // below starts a fresh, tracked batch — selecting a second fish on the fire while a
+        // box is open races the selection.
+        if (isCookPromptOpen()) {
+            Rs2Keyboard.keyPress(KeyEvent.VK_ESCAPE);
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(180, 540, weatherMultiplier));
+            return;
+        }
+
+        // Still cooking the previous batch (animation/interaction): never dispatch a second
+        // use-on-fire in the gaps between fish.
+        if (isCookingInFlight()) {
+            return;
         }
 
         // Fail fast if the fire is gone — otherwise useItemOnObject would
@@ -577,8 +644,40 @@ public class BarbarianVillageFisherScript implements AModule {
                 Microbot.getConfigManager().setConfiguration(
                         AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             }
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1100, weatherMultiplier));
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
         }
+    }
+
+    /** The make-X prompt this module confirms with SPACE. */
+    private boolean isCookPromptOpen() {
+        return Rs2Widget.findWidget(COOK_MAKE_X_PROMPT, null, false) != null;
+    }
+
+    /** One XP window for the active cooking batch, weather-modulated and log-normal. */
+    private boolean waitForCookingXp(int minMs, int maxMs) {
+        return Rs2Player.waitForXpDrop(Skill.COOKING,
+                (int) Rs2Random.logNormalBounded(minMs, maxMs, weatherMultiplier));
+    }
+
+    /** Success block for one XP drop: reset counters/latches and extend the batch deadline. */
+    private void onCookingProgress() {
+        Microbot.status = "COOKING — got XP";
+        consecutiveFailures = 0;
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(235, 798, weatherMultiplier));
+        expectingXPDrop = false;
+        cookingConfirmed = false;
+        // Progress made — reset stagnation deadline (Ponto 3)
+        cookingDeadlineMs = System.currentTimeMillis() + 60_000;
+        cookingRedispaches = 0;
+    }
+
+    /** Clear every cooking latch/state (batch finished or nothing raw left). */
+    private void clearCookingState() {
+        expectingXPDrop = false;
+        currentlyCookingID = 0;
+        cookingConfirmed = false;
+        cookingDeadlineMs = 0;
+        cookingRedispaches = 0;
     }
 
     /**
@@ -684,25 +783,10 @@ public class BarbarianVillageFisherScript implements AModule {
         return count;
     }
 
-    /**
-     * Counts all items that should be dropped in COOK_AND_DROP mode: raw fish,
-     * cooked fish (trout/salmon/pike), and burnt fish. In DROP_RAW mode,
-     * {@link #countRawFish()} is still used directly.
-     */
-    private int countDroppableItems() {
-        int count = 0;
-        for (int id : DROPPABLE_IDS) {
-            count += Rs2Inventory.count(id);
-        }
-        return count;
-    }
-
-    /** True when the id is one of the fish the drop phase owns. */
-    private static boolean isDroppable(int id) {
-        for (int droppable : DROPPABLE_IDS) {
-            if (id == droppable) return true;
-        }
-        return false;
+    /** True when the item is a fish this module produced and may drop. */
+    private static boolean isDroppable(Rs2ItemModel item) {
+        return item != null
+                && (BarbarianFish.isRawOrCooked(item.getId()) || BarbarianFish.isBurnt(item));
     }
 
     private boolean isCloseTo(WorldPoint location) {
@@ -750,34 +834,43 @@ public class BarbarianVillageFisherScript implements AModule {
      * Confirming the make-X box below stays this method's verification, as before.</p>
      */
     private boolean doCookingDispatch() {
-        for (int fishId : RAW_FISH) {
-            if (Rs2Inventory.contains(fishId)) {
-                // Raw fish's left-click default is "Use" — what the recipe's physical slot
-                // click selects with. The slot is drawn from the batch (AScriptPick), never
-                // pinned to the first raw fish.
-                Rs2ItemModel fishItem = AScriptPick.pick(fishId);
-                if (!AScriptClick.useItemOnObject(fishItem, findCookingFire())) {
-                    return false;
-                }
-                // Wait for the make-X dialog to appear (confirm the click landed)
-                boolean dialogOpened = sleepUntil(() -> !Rs2Player.isMoving()
-                                && Rs2Widget.findWidget("How many would you like to cook?",
-                                        null, false) != null,
-                        (int) Rs2Random.logNormalBounded(6000, 12000, weatherMultiplier));
-                if (!dialogOpened) {
-                    // Make-X box never appeared — dispatch did not engage
-                    return false;
-                }
-                AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(180, 540, weatherMultiplier));
-                Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
-                currentlyCookingID = fishId;
-                expectingXPDrop = true;
-                cookingConfirmed = true;
-                // Start a fresh batch deadline
-                cookingDeadlineMs = System.currentTimeMillis() + 60_000;
-                cookingRedispaches = 0;
-                return true;
+        for (BarbarianFish fish : BarbarianFish.values()) {
+            final int fishId = fish.getRawId();
+            if (Rs2Inventory.count(fishId) == 0) {
+                continue;
             }
+            // Raw fish's left-click default is "Use" — what the recipe's physical slot
+            // click selects with. The slot is drawn from the batch (AScriptPick), never
+            // pinned to the first raw fish.
+            Rs2ItemModel fishItem = AScriptPick.pick(fishId);
+            // Re-check the MODEL at the click site: a stack that finished cooking leaves the
+            // cooked/burnt product in its slot, and the recipe's selected-id check then aborts
+            // the dispatch instead of using the wrong item on the fire.
+            if (fishItem == null || fishItem.getId() != fishId || fishItem.isNoted()) {
+                log.debug("[BarbarianFishing] raw fish {} changed before the dispatch — skipping", fishId);
+                continue;
+            }
+            if (!AScriptClick.useItemOnObject(fishItem, findCookingFire())) {
+                return false;
+            }
+            // Wait for the make-X dialog to appear (confirm the click landed)
+            boolean dialogOpened = sleepUntil(() -> !Rs2Player.isMoving()
+                            && isCookPromptOpen(),
+                    (int) Rs2Random.logNormalBounded(COOKING_DIALOG_MIN_MS, COOKING_DIALOG_MAX_MS,
+                            weatherMultiplier));
+            if (!dialogOpened) {
+                // Make-X box never appeared — dispatch did not engage
+                return false;
+            }
+            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(180, 540, weatherMultiplier));
+            Rs2Keyboard.keyPress(KeyEvent.VK_SPACE);
+            currentlyCookingID = fishId;
+            expectingXPDrop = true;
+            cookingConfirmed = true;
+            // Start a fresh batch deadline
+            cookingDeadlineMs = System.currentTimeMillis() + 60_000;
+            cookingRedispaches = 0;
+            return true;
         }
         return false;
     }

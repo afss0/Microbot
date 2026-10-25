@@ -14,6 +14,7 @@ import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.Pickaxe;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -759,34 +760,18 @@ public class MiningScript implements AModule {
     }
 
     /**
-     * Drop a rolled slice of the mined product per tick (the fisher's sliced-drop
-     * pattern): one inline whole-inventory drop would hold the tick 10+ s. The slice
-     * verifies its count drop and a zero-progress slice counts a strike. Only the mined
-     * product is dropped. A plain click sends the DEFAULT action (ore is "Use"), so each
-     * click carries the Drop menu entry (clickItemOption).
+     * One sliced drop pass over the mined product ({@link AScriptDrop}): a rolled 5–9 slots per
+     * tick with log-normal pacing and a count verification. The shared helper owns the route,
+     * slice and verify; this module's {@code dropping} latch owns "keep going until the product
+     * count is 0" and the batch-end break.
      */
     private void dropSlice(MiningOre ore) {
-        Microbot.status = "MINING — dropping " + ore.getDisplayName();
-        int before = countProduct(ore);
-        if (before == 0) {
-            return; // nothing to drop — the caller's batch-end check owns this state
-        }
-        int slice = Math.min(before, Rs2Random.fancyNormalSample(5, 9));
-        // Precomputed route over the slots holding this ore's product, shuffled once: no slot
-        // is drawn twice and dropAtSlot skips a slot whose item is gone. It also installs the
-        // item's Drop entry as the left-click entry (ore defaults to "Use").
-        for (int slot : AScriptPick.dropRoute(i -> ore.isProduct(i.getId()))) {
-            if (slice <= 0) break;
-            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
-            if (item == null || !ore.isProduct(item.getId())) continue;
-            if (!AScriptClick.dropAtSlot(slot, item.getId())) continue;
-            slice--;
-            AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(120, 320, weatherMultiplier));
-        }
-        if (!sleepUntil(() -> countProduct(ore) < before,
-                Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier))) {
+        AScriptDrop.Result result = AScriptDrop.drop(
+                item -> ore.isProduct(item.getId()),
+                "MINING — dropping " + ore.getDisplayName(), weatherMultiplier);
+        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
             fail("mining drop did not land");
-        } else {
+        } else if (result.getOutcome() == AScriptDrop.Outcome.DROPPED) {
             consecutiveFailures = 0;
         }
     }
