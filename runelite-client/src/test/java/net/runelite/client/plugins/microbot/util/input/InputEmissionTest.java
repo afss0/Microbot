@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.util.input;
 import net.runelite.api.Client;
 import net.runelite.api.Point;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.mousesync.MouseSyncPlugin;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
 import net.runelite.client.plugins.microbot.util.mouse.BotEventGuard;
 import net.runelite.client.plugins.microbot.util.mouse.VirtualMouse;
@@ -284,6 +285,29 @@ public class InputEmissionTest
 		assertEquals(0, received.get(0).getModifiersEx());
 		assertEquals(InputEvent.BUTTON1_DOWN_MASK, received.get(2).getModifiersEx());
 		assertEquals(0, received.get(3).getModifiersEx());
+	}
+
+	@Test
+	public void aClickDuringGracePeriodRestartsMouseSync() throws Exception
+	{
+		MouseSyncPlugin mouseSync = mock(MouseSyncPlugin.class);
+		when(mouseSync.getState()).thenReturn(MouseSyncPlugin.State.GRACE_PERIOD);
+		Object previous = swapStatic("mouseSyncPlugin", mouseSync);
+		try
+		{
+			PointerState.setFromBot(100, 50);
+
+			new VirtualMouse().click(new Point(100, 50), false);
+
+			// The old guard treated GRACE_PERIOD as "already in an interaction" and
+			// skipped the start, leaving the previous grace timer armed mid-click.
+			verify(mouseSync).onBotInteractionStart();
+			verify(mouseSync).onBotInteractionEnd();
+		}
+		finally
+		{
+			swapStatic("mouseSyncPlugin", previous);
+		}
 	}
 
 	@Test
