@@ -11,10 +11,12 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
 import net.runelite.client.plugins.microbot.api.IEntity;
+import net.runelite.client.plugins.microbot.api.player.models.Rs2PlayerModel;
 import net.runelite.client.plugins.microbot.api.boat.Rs2BoatCache;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
+import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -166,6 +168,56 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
         return new WorldArea(southWest, sizeX(), sizeY());
     }
 
+    public boolean hasLineOfSight() {
+        return hasLineOfSight(new Rs2PlayerModel().getWorldLocation());
+    }
+
+    public boolean hasLineOfSight(WorldPoint from) {
+        if (from == null) {
+            return false;
+        }
+        WorldView worldView = getWorldView();
+        if (worldView == null) {
+            return false;
+        }
+        WorldArea objectArea;
+        WorldArea fromArea;
+        if (tileObject instanceof GameObject) {
+            objectArea = getWorldArea();
+            fromArea = from.toWorldArea();
+        } else {
+            WorldPoint location = getRuneLiteWorldLocation();
+            if (location == null) {
+                return false;
+            }
+            objectArea = new WorldArea(location, 2, 2);
+            fromArea = new WorldArea(from.getX(), from.getY(), 2, 2, from.getPlane());
+        }
+        if (objectArea == null) {
+            return false;
+        }
+        WorldArea target = objectArea;
+        return Microbot.getClientThread()
+                .runOnClientThreadOptional(() -> target.hasLineOfSightTo(worldView, fromArea))
+                .orElse(false);
+    }
+
+    public boolean hover() {
+        if (!Rs2AntibanSettings.naturalMouse) {
+            if (Rs2AntibanSettings.devDebug) {
+                Microbot.log("Natural mouse is not enabled, can't hover");
+            }
+            return false;
+        }
+        Rectangle clickbox = Rs2UiHelper.getObjectClickbox(tileObject);
+        if (Rs2UiHelper.isFallbackRectangle(clickbox)) {
+            return false;
+        }
+        Point point = Rs2UiHelper.getClickingPoint(clickbox, true);
+        Microbot.getNaturalMouse().moveTo(point.getX(), point.getY());
+        return true;
+    }
+
     public boolean occupies(WorldPoint point) {
         if (point == null) {
             return false;
@@ -301,6 +353,21 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
                 return composition.getImpostor();
             }
             return composition;
+        });
+    }
+
+    public static @Nullable ObjectComposition compositionOf(int objectId) {
+        return compositionOf(objectId, false);
+    }
+
+    public static @Nullable ObjectComposition compositionOf(int objectId, boolean ignoreImpostor) {
+        return Microbot.getClientThread().invoke(() -> {
+            ObjectComposition composition = Microbot.getClient().getObjectDefinition(objectId);
+            if (composition == null || ignoreImpostor || composition.getImpostorIds() == null) {
+                return composition;
+            }
+            ObjectComposition impostor = composition.getImpostor();
+            return impostor != null ? impostor : composition;
         });
     }
 
