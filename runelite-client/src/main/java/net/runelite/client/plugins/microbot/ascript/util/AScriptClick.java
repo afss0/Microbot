@@ -13,10 +13,13 @@ import net.runelite.api.Tile;
 import net.runelite.api.TileItem;
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
+import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.input.PointerState;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -24,6 +27,7 @@ import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
+import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.client.util.Text;
 
 import java.awt.Rectangle;
@@ -60,11 +64,16 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *       click.</li>
  *   <li><b>Item-on-X</b> ({@link #useItemOnObject(Rs2ItemModel, TileObject)} /
  *       {@link #useItemOnNpc} / {@link #useItemOnPlayer} / {@link #useItemOnItem}) —
- *       select the first item with a physical
- *       click on its inventory slot, verify the game picked it up, click the target
- *       (an entity clickbox or another inventory slot) physically. Any failure path
+ *       select the first item with a physical click on its inventory slot, verify the game
+ *       picked it up, click the target (an entity clickbox or another inventory slot)
+ *       physically. The selection is armed on the item's real <b>{@code Use}</b> row: a plain
+ *       slot click dispatches the item's default op, which equips a bolt stack or the
+ *       fletcher's knife, so {@link #onPostMenuSort()} moves the real {@code Use} row on top
+ *       (the drop recipe's MES mechanics) and no press is issued until it is. Any failure path
  *       clears a selection the recipe created, because a dangling cursor item silently
- *       converts the NEXT inventory op.</li>
+ *       converts the NEXT inventory op; an item the click wore by mistake is taken back off
+ *       ({@link #unequip(int)}) before the recipe refuses the dispatch. A banknote is rejected
+ *       outright — it is a certificate, not the item a Use click can act on.</li>
  * </ul>
  * A physical click returns nothing, so these recipes only report whether the click was
  * issued — confirming the EFFECT (make-X prompt, animation, XP drop, count drop) stays
@@ -425,21 +434,58 @@ public final class AScriptClick {
     }
 
 
-    // ── Drop recipe (menu-entry-swapper mechanics) ─────────────────
-
-    /** Pending drop swap: the client menu's PostMenuSort moves this item's Drop row to the top. */
-    private static volatile int dropSwapSlot = -1;
-    private static volatile int dropSwapItemId = -1;
+    // ── Inventory menu swap (menu-entry-swapper mechanics) ─────────
 
     /**
-     * Serializes the armed window among drop callers. The swap state itself has to be static —
+     * Pending menu swap: the client menu's {@code PostMenuSort} moves this item's named real
+     * row ({@code Drop} or {@code Use}) to the top. The swap state has to be static —
      * {@link #onPostMenuSort()} is invoked by the plugin listener and has no caller to hand it
-     * to — so two concurrent drops would otherwise overwrite each other's slot and one caller
-     * could press the other's row. {@code onPostMenuSort} must NEVER take this lock: it runs on
-     * the client thread, while the holder waits on client-thread reads, so locking there would
+     * to.
+     */
+    private static volatile String menuSwapOption;
+    private static volatile int menuSwapSlot = -1;
+    private static volatile int menuSwapItemId = -1;
+
+    /**
+     * Serializes the armed window among menu-swap callers (drops and item-on-X selections).
+     * Two concurrent swaps would otherwise overwrite each other's slot and one caller could
+     * press the other's row. {@code onPostMenuSort} must NEVER take this lock: it runs on the
+     * client thread, while the holder waits on client-thread reads, so locking there would
      * deadlock the recipe the first time it polls the slot state.
      */
-    private static final Object DROP_SWAP_LOCK = new Object();
+    private static final Object MENU_SWAP_LOCK = new Object();
+
+    /** The item-on-X selection action. */
+    private static final String USE_OPTION = "Use";
+
+    /**
+     * Bounded attempts to take an accidentally worn item off again.
+     */
+    private static final int UNEQUIP_ATTEMPTS = 3;
+
+    /**
+     * Inventory-row identity for a menu entry: dynamic children carry their slot in
+     * {@link Widget#getIndex()} and the item in {@link Widget#getItemId()}, while the client
+     * also packs the same slot/item into {@code param0} / {@link MenuEntry#getItemId()} for
+     * inventory ops. Either source may identify the row. Matching the slot (not just the option
+     * text) is what keeps the swap from reordering another slot's row.
+     * <p>
+     * Only ever evaluated on the client thread (hover/open-menu reads and the swap hook).
+     */
+    static boolean occupiesInventorySlot(MenuEntry entry, int slot, int itemId) {
+        if (entry == null) {
+            return false;
+        }
+        Widget widget = entry.getWidget();
+        boolean slotMatches = (widget != null && widget.getIndex() == slot)
+                || entry.getParam0() == slot;
+        if (!slotMatches) {
+            return false;
+        }
+        int entryItemId = widget != null && widget.getItemId() > 0
+                ? widget.getItemId() : entry.getItemId();
+        return entryItemId <= 0 || entryItemId == itemId;
+    }
 
     /**
      * Drop one inventory item the way RuneLite's Menu Entry Swapper does: the client builds the
@@ -470,14 +516,14 @@ public final class AScriptClick {
         }
         Point point = Rs2UiHelper.getClickingPoint(bounds, true);
         boolean dropped = false;
-        synchronized (DROP_SWAP_LOCK) {
-            dropSwapSlot = slot;
-            dropSwapItemId = itemId;
+        synchronized (MENU_SWAP_LOCK) {
+            armMenuSwap(slot, itemId, "Drop");
             try {
                 // Hover first: the client builds the real menu for this slot, PostMenuSort reorders
                 // it, and only then does the press mean "Drop".
                 Microbot.getMouse().move(point);
-                if (!sleepUntil(() -> isDropOnTop(slot), Rs2Random.logNormalBounded(400, 800))) {
+                if (!sleepUntil(() -> isMenuSwapOnTop(slot, itemId, "Drop"),
+                        Rs2Random.logNormalBounded(400, 800))) {
                     log.warn("[AScriptClick] the Drop row never reached the top of the menu");
                     return false;
                 }
@@ -491,22 +537,38 @@ public final class AScriptClick {
                         Rs2Random.logNormalBounded(500, 1100))
                         || Rs2Inventory.getIdForSlot(slot) != itemId;
             } finally {
-                dropSwapSlot = -1;
-                dropSwapItemId = -1;
+                clearMenuSwap();
             }
         }
         return dropped;
     }
 
+    private static void armMenuSwap(int slot, int itemId, String option) {
+        menuSwapOption = option;
+        menuSwapSlot = slot;
+        menuSwapItemId = itemId;
+    }
+
+    private static void clearMenuSwap() {
+        menuSwapItemId = -1;
+        menuSwapSlot = -1;
+        menuSwapOption = null;
+    }
+
     /**
-     * MES-style swap, called from the plugin on every menu sort: put the requested item's real
-     * {@code Drop} entry on top of the client menu. Skipped while the menu is open — the open
-     * menu is not rebuilt, so swapping there would reorder it under the player's mouse.
+     * MES-style swap, called from the plugin on every menu sort: put the pending item's real
+     * {@code Drop} / {@code Use} entry on top of the client menu. Skipped while the menu is
+     * open — the open menu is not rebuilt, so swapping there would reorder it under the
+     * player's mouse.
      */
     public static void onPostMenuSort() {
-        int slot = dropSwapSlot;
-        int itemId = dropSwapItemId;
+        int itemId = menuSwapItemId;
         if (itemId < 0) {
+            return;
+        }
+        int slot = menuSwapSlot;
+        String option = menuSwapOption;
+        if (option == null) {
             return;
         }
         Client client = Microbot.getClient();
@@ -517,13 +579,8 @@ public final class AScriptClick {
         int own = -1;
         for (int i = 0; i < entries.length; i++) {
             MenuEntry entry = entries[i];
-            if (entry == null || entry.getOption() == null || !"Drop".equalsIgnoreCase(entry.getOption())) {
-                continue;
-            }
-            if (entry.getParam0() != slot) {
-                continue;
-            }
-            if (entry.getItemId() != -1 && entry.getItemId() != itemId) {
+            if (entry == null || !optionMatches(entry, option)
+                    || !occupiesInventorySlot(entry, slot, itemId)) {
                 continue;
             }
             own = i;
@@ -539,17 +596,20 @@ public final class AScriptClick {
         client.getMenu().setMenuEntries(entries);
     }
 
-    /** True when the client menu's top entry is the Drop row of {@code slot}. */
-    private static boolean isDropOnTop(int slot) {
+    /**
+     * True when the client menu's top entry is the pending real row of {@code slot}. The press
+     * is withheld until this holds: a left click only ever dispatches the top row, and a
+     * movement frame inside the press rebuilds the menu (the swap re-applies on every rebuild).
+     */
+    private static boolean isMenuSwapOnTop(int slot, int itemId, String option) {
         return Microbot.getClientThread().runOnClientThreadOptional(() -> {
             MenuEntry[] entries = Microbot.getClient().getMenuEntries();
             if (entries.length == 0) {
                 return false;
             }
             MenuEntry top = entries[entries.length - 1];
-            return top != null && top.getOption() != null
-                    && "Drop".equalsIgnoreCase(top.getOption())
-                    && top.getParam0() == slot;
+            return top != null && optionMatches(top, option)
+                    && occupiesInventorySlot(top, slot, itemId);
         }).orElse(false);
     }
 
@@ -570,8 +630,10 @@ public final class AScriptClick {
      * present on entry is cleared too — otherwise the item click would apply that pair
      * instead of selecting.
      * <p>
-     * The item's default left-click op must be "Use" (true for logs, tinderbox and the
-     * other supported items): a physical click cannot pick a non-default op.
+     * The item's <b>real {@code Use} row</b> is what gets selected, regardless of the item's
+     * default left-click op: the swap in {@link #onPostMenuSort()} puts the client's own
+     * {@code Use} entry on top before the press, so a bolt stack or the fletcher's knife is
+     * never worn by the selection click.
      * <p>
      * <b>Menu priority.</b> The contended case (a higher-priority entity shares the
      * hover and would win a plain left-click) and its open-menu row pick are handled by
@@ -611,7 +673,8 @@ public final class AScriptClick {
      * Every failure path clears a selection this recipe created; confirming the effect
      * (the hit, the pickup, the XP) stays with the caller.
      *
-     * @param item the item to use, whose default left-click op must be "Use"
+     * @param item the item to use; its real {@code Use} row is selected even when the item's
+     *             default left-click op is {@code Wield}
      * @param npc  the target NPC — prefer the raw {@link NPC} (e.g. {@code model.getNpc()});
      *             the NPC-index fallback also matches a model wrapper
      * @return true when the "use item on NPC" click was issued (effect unverified)
@@ -639,7 +702,8 @@ public final class AScriptClick {
      * <p>
      * Same failure-path and confirmation contract as the other item-on-X recipes.
      *
-     * @param item   the item to use, whose default left-click op must be "Use"
+     * @param item   the item to use; its real {@code Use} row is selected even when the item's
+     *               default left-click op is {@code Wield}
      * @param player the target player — pass the raw {@link Player}
      * @return true when the "use item on player" click was issued (effect unverified)
      */
@@ -1285,9 +1349,16 @@ public final class AScriptClick {
 
     /**
      * Item-on-item recipe — the same select-verify-click flow with the target resolved
-     * as another inventory slot (tinderbox on logs) instead of an entity clickbox.
-     * Selection cleanup on the failure path as in
+     * as another inventory slot (tinderbox on logs, gem tips on bolts) instead of an entity
+     * clickbox. Selection cleanup on the failure path as in
      * {@link #useItemOnObject(Rs2ItemModel, TileObject)}.
+     * <p>
+     * A selected cursor item makes the target's left click the client's own
+     * "use &lt;item&gt; on &lt;target&gt;" row, whatever the target's default op is (bolts
+     * would otherwise be worn). The selection is re-checked immediately before the target
+     * click and the target slot is re-read, so a selection lost in the mouse travel cannot
+     * turn the click into the target's default action; if it still does, an accidentally
+     * worn target is taken back off.
      *
      * @return true when the "use item on item" click was issued (effect unverified)
      */
@@ -1295,10 +1366,31 @@ public final class AScriptClick {
         if (!select(item)) {
             return false;
         }
+        if (target != null && target.isNoted()) {
+            log.warn("[AScriptClick] use target {} is a banknote — bank it to un-note first", target.getId());
+            clearSelection();
+            return false;
+        }
+        // The selection can be dropped between the select and the target click. Clicking the
+        // target then dispatches ITS default op (bolts: Wield) instead of the item-on-item use.
+        if (!Rs2Inventory.isItemSelected() || Rs2Inventory.getSelectedItemId() != item.getId()) {
+            log.warn("[AScriptClick] the use selection was lost before the target click (slot {})",
+                    target == null ? -1 : target.getSlot());
+            clearSelection();
+            return false;
+        }
         Rectangle bounds = target == null ? null : Rs2Inventory.itemBounds(target);
         if (bounds == null) {
             log.warn("[AScriptClick] no inventory bounds for the use target (slot {})",
                     target == null ? -1 : target.getSlot());
+            clearSelection();
+            return false;
+        }
+        // Re-read the target slot at the click site: a stale slot can hold another item now.
+        Rs2ItemModel liveTarget = Rs2Inventory.getItemInSlot(target.getSlot());
+        if (liveTarget == null || liveTarget.getId() != target.getId()) {
+            log.warn("[AScriptClick] the use target changed under its slot (slot {})",
+                    target.getSlot());
             clearSelection();
             return false;
         }
@@ -1310,6 +1402,9 @@ public final class AScriptClick {
             log.warn("[AScriptClick] use-on-item click did not consume the selection (slot {})",
                     target.getSlot());
             clearSelection();
+            return false;
+        }
+        if (recoverIfWorn(target, "the use-on-item click wore the target instead of using it")) {
             return false;
         }
         return true;
@@ -1349,21 +1444,39 @@ public final class AScriptClick {
     }
 
     /**
-     * Step one of the item-on-X recipes: pick the item up with a physical click on its
-     * inventory slot and verify the game selected <b>that item</b>.
+     * Step one of the item-on-X recipes: arm the item on its real <b>{@code Use}</b> row with a
+     * physical click on its inventory slot, and verify the game selected <b>that item</b>.
      * <p>
-     * "Something is selected" is not enough. The click targets a slot resolved a moment
+     * A raw slot click dispatches the item's default inventory op. That is {@code Use} for
+     * logs, tinderbox, fish and gems, but {@code Wield} for a bolt stack and the fletcher's
+     * knife — the live gem-tip bug: the bolts went to the equipment slot instead of the
+     * cursor, the recipe then timed out, and the module eventually stopped with its material
+     * on the player's body. The click is therefore preceded by the same MES-style swap the
+     * drop recipe uses: {@link #onPostMenuSort()} moves the client's own {@code Use} entry to
+     * the top, the recipe waits until that is verified, and only then presses. A swap that
+     * cannot be resolved means NO click — never a blind default-op press.
+     * <p>
+     * "Something is selected" is not enough either. The click targets a slot resolved a moment
      * earlier, and the container can change under it — the live case is the last raw fish of
      * a stack finishing into its cooked/burnt product in the just-freed slot, which made the
      * recipe apply <i>burnt fish</i> to the cooking fire. The selected id is therefore checked
      * against the item the caller asked for; a mismatch cancels the selection on its own slot
      * (a press elsewhere would apply the wrong item to whatever is under it) and refuses the
-     * dispatch.
+     * dispatch. If the click wore the item instead (a selection click that raced the swap),
+     * the wording is put back on ({@link #unequip(int)}) and the caller retries next tick.
      */
     private static boolean select(Rs2ItemModel item) {
+        if (item != null && item.isNoted()) {
+            log.warn("[AScriptClick] item {} is a banknote — bank it to un-note before using it", item.getId());
+            return false;
+        }
         ensureInventoryVisible();
         if (Rs2Inventory.isItemSelected() && !clearSelection()) {
             log.warn("[AScriptClick] could not clear a stale selection — not clicking an item");
+            return false;
+        }
+        if (menuOpen() && !closeMenu()) {
+            log.error("[AScriptClick] an option menu is open and will not close — not selecting an item");
             return false;
         }
         Rectangle bounds = item == null ? null : Rs2Inventory.itemBounds(item);
@@ -1372,10 +1485,30 @@ public final class AScriptClick {
                     item == null ? -1 : item.getSlot());
             return false;
         }
-        Microbot.getMouse().click(bounds);
-        if (!sleepUntil(Rs2Inventory::isItemSelected, Rs2Random.logNormalBounded(1500, 2500))) {
-            log.warn("[AScriptClick] the item click did not select anything");
-            return false;
+        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
+        synchronized (MENU_SWAP_LOCK) {
+            armMenuSwap(item.getSlot(), item.getId(), USE_OPTION);
+            try {
+                Microbot.getMouse().move(point);
+                if (!sleepUntil(() -> isMenuSwapOnTop(item.getSlot(), item.getId(), USE_OPTION),
+                        Rs2Random.logNormalBounded(400, 800))) {
+                    log.warn("[AScriptClick] the Use row never reached the top of the item menu "
+                            + "(slot {}) — not clicking", item.getSlot());
+                    return false;
+                }
+                Microbot.getMouse().click(point);
+                // Keep the swap armed while the press is processed: a menu rebuild inside the
+                // click must re-apply Use, exactly as the drop recipe does.
+                if (!sleepUntil(Rs2Inventory::isItemSelected, Rs2Random.logNormalBounded(1500, 2500))) {
+                    if (recoverIfWorn(item, "the item click wore it instead of selecting it")) {
+                        return false;
+                    }
+                    log.warn("[AScriptClick] the item click did not select anything");
+                    return false;
+                }
+            } finally {
+                clearMenuSwap();
+            }
         }
         int selectedId = Rs2Inventory.getSelectedItemId();
         if (selectedId != item.getId()) {
@@ -1383,6 +1516,99 @@ public final class AScriptClick {
             cancelSelectionOnOwnSlot(selected, "the slot click selected item " + selectedId
                     + " instead of " + item.getId() + " (slot " + item.getSlot() + ")");
             return false;
+        }
+        return true;
+    }
+
+    /**
+     * Take a worn item off through the equipment panel and return it to the inventory, using a
+     * client-mouse click on its equipment slot (the worn slot's default op is {@code Remove}).
+     * <p>
+     * This is the recovery half of the wearable-material bug: bolts (ammo) and the fletcher's
+     * knife have {@code Wield} as their inventory default, so an accidental selection click can
+     * equip them. The removal is verified against the worn container and bounded; a slot that
+     * will not come off is reported so the module's failure budget can stop the run loudly
+     * instead of retrying forever.
+     * <p>
+     * No menu injection is used ({@code Rs2Equipment.unEquip} injects a fabricated entry, which
+     * dies silently on some machines).
+     *
+     * @param itemId the worn item to remove
+     * @return true when the item is no longer worn (including when it was not worn on entry)
+     */
+    public static boolean unequip(int itemId) {
+        Rs2ItemModel worn = Rs2Equipment.get(itemId);
+        if (worn == null) {
+            return true;
+        }
+        int childId = wornSlotChild(worn.getSlot());
+        if (childId < 0) {
+            log.warn("[AScriptClick] no equipment widget for worn slot {} (item {})",
+                    worn.getSlot(), itemId);
+            return false;
+        }
+        if (menuOpen() && !closeMenu()) {
+            log.error("[AScriptClick] an option menu is open and will not close — not unequipping {}",
+                    itemId);
+            return false;
+        }
+        if (!Rs2Tab.switchTo(InterfaceTab.EQUIPMENT)) {
+            log.warn("[AScriptClick] could not open the equipment tab to unequip {}", itemId);
+            return false;
+        }
+        awaitFrames(2);
+        for (int attempt = 0; attempt < UNEQUIP_ATTEMPTS; attempt++) {
+            if (Rs2Widget.clickWidget(InterfaceID.WORNITEMS, childId)
+                    && sleepUntil(() -> !Rs2Equipment.isWearing(itemId),
+                    Rs2Random.logNormalBounded(600, 1200))) {
+                return true;
+            }
+        }
+        log.warn("[AScriptClick] could not unequip item {} after {} attempts",
+                itemId, UNEQUIP_ATTEMPTS);
+        return false;
+    }
+
+    /**
+     * Equipment-tab child that holds the worn item for an {@code EquipmentInventorySlot} index —
+     * the same mapping {@code Rs2Equipment.SLOT_PARAMS} uses ({@code InterfaceID.WORNITEMS}).
+     * Slots 6, 8 and 11 are the unused gaps in the equipment container.
+     */
+    private static int wornSlotChild(int slot) {
+        switch (slot) {
+            case 0: return InterfaceID.Wornitems.SLOT0;  // HEAD
+            case 1: return InterfaceID.Wornitems.SLOT1;  // CAPE
+            case 2: return InterfaceID.Wornitems.SLOT2;  // AMULET
+            case 3: return InterfaceID.Wornitems.SLOT3;  // WEAPON
+            case 4: return InterfaceID.Wornitems.SLOT4;  // BODY
+            case 5: return InterfaceID.Wornitems.SLOT5;  // SHIELD
+            case 7: return InterfaceID.Wornitems.SLOT7;  // LEGS
+            case 9: return InterfaceID.Wornitems.SLOT9;  // GLOVES
+            case 10: return InterfaceID.Wornitems.SLOT10; // BOOTS
+            case 12: return InterfaceID.Wornitems.SLOT12; // RING
+            case 13: return InterfaceID.Wornitems.SLOT13; // AMMO
+            default: return -1;
+        }
+    }
+
+    /**
+     * Detect the accidental-equip failure shape and undo it: the item is gone from the
+     * inventory and is now in the worn container. An item that is still in the inventory is
+     * not touched (the player may legitimately wear another copy of the same id), and a state
+     * where both are false is an ordinary miss the caller handles.
+     *
+     * @return true when the item WAS worn by the click (whether or not the unequip landed), so
+     *         the caller can skip its "nothing was selected" message and retry next tick
+     */
+    private static boolean recoverIfWorn(Rs2ItemModel item, String why) {
+        if (item == null || Rs2Inventory.hasItem(item.getId())
+                || !Rs2Equipment.isWearing(item.getId())) {
+            return false;
+        }
+        log.warn("[AScriptClick] {} — unequipping item {} and retrying", why, item.getId());
+        if (!unequip(item.getId())) {
+            log.warn("[AScriptClick] item {} is still worn; the next attempt will retry the unequip",
+                    item.getId());
         }
         return true;
     }

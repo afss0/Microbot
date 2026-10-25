@@ -216,13 +216,13 @@ public class WoodcuttingScript implements AModule {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
         if (!needsBank(config)) return false;
         // The only material this module needs is an axe — missing from inventory,
-        // equipment AND bank.
-        return !hasAxe() && !axeInBank();
+        // equipment, banknotes and bank.
+        return !hasAxe() && !axeInBank() && !notedAxeInInventory();
     }
 
     @Override
     public String describeMissing(AScriptConfig config) {
-        return "woodcutting: no axe (not worn, not in inventory, not in bank)";
+        return "woodcutting: no axe (not worn, not in inventory, not noted, not in bank)";
     }
 
     // ── Banking ───────────────────────────────────────────
@@ -271,6 +271,14 @@ public class WoodcuttingScript implements AModule {
         //    An equip that fails leaves it in the inventory — lock the slot (keep-list =
         //    the basket) so the blanket deposit cannot send it back. ONE bank snapshot for
         //    the pick (never a per-tier scan through the retrying reads).
+        //    A usable axe held only as a banknote is un-noted by the toolbar deposit first:
+        //    the bank then holds the base axe the pick below withdraws.
+        if (!wearingAnyAxe() && bestAxeInInventory() == null && notedAxeInInventory()) {
+            if (!AScriptBank.depositAll()) {
+                log.warn("[Woodcutting] could not un-note the carried axe");
+                return false;
+            }
+        }
         if (!wearingAnyAxe()) {
             Axe best = bestAxeInBank();
             if (best == null) {
@@ -561,6 +569,17 @@ public class WoodcuttingScript implements AModule {
         for (Axe axe : Axe.values()) {
             if (axe.isUsableAt(level)
                     && (Rs2Equipment.isWearing(axe.getItemId()) || Rs2Inventory.hasItem(axe.getItemId()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Any usable axe held only as a banknote — bankable, not choppable. */
+    private static boolean notedAxeInInventory() {
+        int level = Rs2Player.getBoostedSkillLevel(Skill.WOODCUTTING);
+        for (Axe axe : Axe.values()) {
+            if (axe.isUsableAt(level) && AScriptBank.hasNotedItem(axe.getItemId())) {
                 return true;
             }
         }

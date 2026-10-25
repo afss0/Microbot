@@ -291,13 +291,13 @@ public class MiningScript implements AModule {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
         if (!needsBank(config)) return false;
         // The only material this module needs is a pickaxe — missing from inventory,
-        // equipment AND bank.
-        return !hasPickaxe() && !pickaxeInBank();
+        // equipment, banknotes and bank.
+        return !hasPickaxe() && !pickaxeInBank() && !notedPickaxeInInventory();
     }
 
     @Override
     public String describeMissing(AScriptConfig config) {
-        return "mining: no pickaxe (not worn, not in inventory, not in bank)";
+        return "mining: no pickaxe (not worn, not in inventory, not noted, not in bank)";
     }
 
     // ── Banking ───────────────────────────────────────────
@@ -335,6 +335,14 @@ public class MiningScript implements AModule {
         //    equip it. An equip that fails leaves it in the inventory — lock the slot so
         //    the blanket deposit cannot send it back. ONE bank snapshot for the pick
         //    (never a per-tier scan through the retrying reads).
+        //    A usable pickaxe held only as a banknote is un-noted by the toolbar deposit
+        //    first, so the bank then holds the base pickaxe the pick below withdraws.
+        if (!wearingAnyPickaxe() && bestPickaxeInInventory() == null && notedPickaxeInInventory()) {
+            if (!AScriptBank.depositAll()) {
+                log.warn("[Mining] could not un-note the carried pickaxe");
+                return false;
+            }
+        }
         if (!wearingAnyPickaxe()) {
             Pickaxe best = bestPickaxeInBank();
             if (best == null) {
@@ -819,6 +827,17 @@ public class MiningScript implements AModule {
         for (Pickaxe p : Pickaxe.values()) {
             if (level >= p.getMiningLevel()
                     && (Rs2Equipment.isWearing(p.getItemId()) || Rs2Inventory.hasItem(p.getItemId()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Any level-usable pickaxe held only as a banknote — bankable, not usable. */
+    private static boolean notedPickaxeInInventory() {
+        int level = Rs2Player.getRealSkillLevel(Skill.MINING);
+        for (Pickaxe p : Pickaxe.values()) {
+            if (level >= p.getMiningLevel() && AScriptBank.hasNotedItem(p.getItemId())) {
                 return true;
             }
         }

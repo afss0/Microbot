@@ -195,23 +195,25 @@ public class JewelEnchantScript implements AModule {
         if (item == null || item == JewelEnchantItem.NONE) return false;
         JewelEnchantLevel level = item.getEnchantLevel();
 
-        // Missing from both inventory AND bank (retrying bank reads — the bare mirror read
-        // can report an item the bank no longer lists)
-        if (!Rs2Inventory.hasItem(item.getUnenchantedId()) && !Rs2Bank.hasBankItem(item.getUnenchantedId(), 1)) {
+        // Missing from both inventory AND bank. Noted jewellery is a banknote for the base
+        // item: the cycle's deposit converts it back, so it counts as available here even
+        // though it can never be enchanted directly.
+        if (!AScriptBank.bankableAtLeast(item.getUnenchantedId(), 1)) {
             return true;
         }
         if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId()) && !Rs2Bank.hasBankItem(Runes.COSMIC.getItemId(), 1)) {
             return true;
         }
 
-        // Staff mode: no usable staff ANYWHERE — not worn, not held, not in the (now open)
-        // bank. Stop with a message instead of looping on a staff that can never be
-        // equipped. A staff merely HELD in the inventory counts as usable: doAction wears it
-        // once the bank closes, so it is never a reason to stop.
+        // Staff mode: no usable staff ANYWHERE — not worn, not held, not noted in the
+        // inventory, not in the (now open) bank. Stop with a message instead of looping on a
+        // staff that can never be equipped. A staff merely HELD in the inventory counts as
+        // usable: doAction wears it once the bank closes, so it is never a reason to stop.
         if (config.jewelEnchantUseStaff()
                 && !staffCoverableRunes(level).isEmpty()
                 && !isWearingStaffFor(level)
                 && bestStaffInInventory(level) == null
+                && notedStaffInInventory(level) == null
                 && bestStaffInBank(level) == null) {
             return true;
         }
@@ -234,8 +236,7 @@ public class JewelEnchantScript implements AModule {
         if (item == null || item == JewelEnchantItem.NONE) return "";
         StringBuilder sb = new StringBuilder();
         sb.append(item.getName()).append(" enchant: ");
-        if (!Rs2Inventory.hasItem(item.getUnenchantedId())
-                && !Rs2Bank.hasBankItem(item.getUnenchantedId(), 1)) {
+        if (!AScriptBank.bankableAtLeast(item.getUnenchantedId(), 1)) {
             sb.append("jewellery (not in bank), ");
         }
         if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId())
@@ -247,6 +248,7 @@ public class JewelEnchantScript implements AModule {
                 && !staffCoverableRunes(level).isEmpty()
                 && !isWearingStaffFor(level)
                 && bestStaffInInventory(level) == null
+                && notedStaffInInventory(level) == null
                 && bestStaffInBank(level) == null) {
             sb.append("no usable elemental staff (not worn, not held, not in bank), ");
         }
@@ -277,6 +279,20 @@ public class JewelEnchantScript implements AModule {
 
         if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
             return false;
+        }
+
+        // A usable staff held only as a banknote: bank it first so the staff step below can
+        // withdraw and wear the base item in this cycle. The toolbar deposit also un-notes any
+        // banknote jewellery, which step 4 then withdraws as base items.
+        if (config.jewelEnchantUseStaff() && !staffCoverableRunes(level).isEmpty()
+                && !isWearingStaffFor(level)
+                && bestStaffInInventory(level) == null
+                && bankStaffFromMirror(level) == null
+                && notedStaffInInventory(level) != null) {
+            if (!AScriptBank.depositAll()) {
+                log.warn("[JewelEnchant] could not deposit the noted staff/jewellery");
+                return false;
+            }
         }
 
         // 0. STAFF FIRST — before any deposit or withdraw of this cycle:
@@ -336,6 +352,10 @@ public class JewelEnchantScript implements AModule {
         //    the sweep is keeper-aware for exactly one item. The staff needs no protection
         //    here: step 0 wears it BEFORE this deposit ever runs, and an equipped item is
         //    never deposited.
+        if (AScriptBank.hasNotedItem(item.getUnenchantedId())) {
+            Microbot.status = "UN-NOTING " + item.getName().toUpperCase();
+            log.info("[JewelEnchant] banking noted {} to un-note the stack", item.getName());
+        }
         if (!AScriptBank.depositAllExcept(Set.of(Runes.COSMIC.getItemId()))) {
             log.warn("[JewelEnchant] deposit failed");
             return false;
@@ -713,6 +733,14 @@ public class JewelEnchantScript implements AModule {
      */
     private ElementalStaff bestStaffInInventory(JewelEnchantLevel level) {
         return bestStaffFor(id -> Rs2Inventory.hasItem(id), level);
+    }
+
+    /**
+     * Best usable staff held only as a banknote. A note is not wearable, but it is bankable:
+     * the cycle deposits it and the bank then holds the base staff.
+     */
+    private ElementalStaff notedStaffInInventory(JewelEnchantLevel level) {
+        return bestStaffFor(AScriptBank::hasNotedItem, level);
     }
 
     /**

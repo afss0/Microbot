@@ -1,9 +1,22 @@
 package net.runelite.client.plugins.microbot.ascript.util;
 
+import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import org.junit.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
+
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Guardrail for the aScript slot pick: the rank must stay inside {@code [1, n]} for every
@@ -86,5 +99,41 @@ public class AScriptPickTest {
         assertEquals(0, AScriptPick.pickTopScoredIndex(new int[]{7}));
         assertEquals(-1, AScriptPick.pickTopScoredIndex(new int[0]));
         assertEquals(-1, AScriptPick.pickTopScoredIndex(null));
+    }
+
+    @Test
+    public void notedCandidatesAreNeverPicked() {
+        Rs2ItemModel noted = mock(Rs2ItemModel.class);
+        when(noted.isNoted()).thenReturn(true);
+        when(noted.getId()).thenReturn(880);
+
+        try (MockedStatic<Rs2Inventory> inventory = Mockito.mockStatic(Rs2Inventory.class)) {
+            inventory.when(() -> Rs2Inventory.getList(any())).thenAnswer(call -> {
+                Predicate<Rs2ItemModel> filter = call.getArgument(0);
+                return Stream.of(noted).filter(filter).collect(Collectors.toList());
+            });
+            assertNull("a banknote is not a clickable Use candidate", AScriptPick.pick(item -> true));
+        }
+    }
+
+    @Test
+    public void notedReferenceResolvesToTheUnnotedBaseType() {
+        Rs2ItemModel noted = mock(Rs2ItemModel.class);
+        when(noted.isNoted()).thenReturn(true);
+        when(noted.getUnNotedId()).thenReturn(879);
+        when(noted.getId()).thenReturn(880);
+
+        Rs2ItemModel base = mock(Rs2ItemModel.class);
+        when(base.isNoted()).thenReturn(false);
+        when(base.getId()).thenReturn(879);
+        when(base.getSlot()).thenReturn(3);
+
+        try (MockedStatic<Rs2Inventory> inventory = Mockito.mockStatic(Rs2Inventory.class)) {
+            inventory.when(() -> Rs2Inventory.getList(any())).thenAnswer(call -> {
+                Predicate<Rs2ItemModel> filter = call.getArgument(0);
+                return Stream.of(noted, base).filter(filter).collect(Collectors.toList());
+            });
+            assertSame(base, AScriptPick.pick(noted));
+        }
     }
 }

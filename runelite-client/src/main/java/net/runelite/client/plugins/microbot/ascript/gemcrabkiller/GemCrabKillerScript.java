@@ -180,6 +180,11 @@ public class GemCrabKillerScript implements AModule {
         if (!sleepUntil(Rs2Bank::isOpen, Rs2Random.logNormalBounded(8000, 15000, weatherMultiplier))) {
             return false;
         }
+        if (!AScriptBank.ensureItemWithdrawMode()) {
+            log.warn("[GemCrabKiller] bank would not switch to 'Withdraw as item'");
+            Rs2Bank.closeBank();
+            return false;
+        }
 
         Microbot.status = "DEPOSITING";
         // Keep the tools and supplies the trip is supposed to bring back: every pickaxe id,
@@ -195,12 +200,14 @@ public class GemCrabKillerScript implements AModule {
                 // The single notification is owned by the MAX_BANK_FAILURES stop in
                 // doAction(); alerting here would repeat the same verdict every cycle.
                 log.warn("[GemCrabKiller] Bank trip found no edible food (ids {})", FOOD_IDS);
+                AScriptBank.restoreWithdrawMode();
                 Rs2Bank.closeBank();
                 sleepUntil(() -> !Rs2Bank.isOpen(), Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
                 return false;
             }
         }
 
+        AScriptBank.restoreWithdrawMode();
         Rs2Bank.closeBank();
         sleepUntil(() -> !Rs2Bank.isOpen(), Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier));
 

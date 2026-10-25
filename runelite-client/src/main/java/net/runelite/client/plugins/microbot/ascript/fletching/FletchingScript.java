@@ -15,6 +15,7 @@ import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
@@ -189,6 +190,19 @@ public class FletchingScript implements AModule {
         }
     }
 
+    /**
+     * A recipe item sitting in the equipment slots is preparation for {@link #doAction} to undo,
+     * not a reason to open the bank: the missing-materials check only sees the inventory and the
+     * bank, so it would report "No Materials" while the bolt stack or knife is on the player's
+     * body. While false, the orchestrator skips the bank phase and dispatches {@link #doAction},
+     * which unequips the item and lets the next tick continue normally.
+     */
+    @Override
+    public boolean readyForBank(AScriptConfig config) {
+        if (currentPhase == Phase.NONE) return true;
+        return blockingWornRecipeItemIds(config).isEmpty();
+    }
+
     private boolean needsBankDarts(AScriptConfig config) {
         FletchingDartType dart = config.fletchingDartType();
         return dart == null
@@ -290,7 +304,8 @@ public class FletchingScript implements AModule {
     private boolean bankMissingLogs(AScriptConfig config) {
         LogFletchProduct product = logProduct(config);
         if (product == null || !product.isConfigured()) return true;
-        if (!AScriptFletching.hasKnife() && !AScriptFletching.bankHasKnife()) return true;
+        if (!AScriptBank.bankableAtLeast(ItemID.KNIFE, 1)
+                && !AScriptBank.bankableAtLeast(ItemID.FLETCHING_KNIFE, 1)) return true;
         return !AScriptFletching.combinedAtLeast(product.logId(), product.logsPerAction());
     }
 
@@ -347,7 +362,8 @@ public class FletchingScript implements AModule {
             case SHIELDS: {
                 LogFletchProduct product = logProduct(config);
                 if (product != null && product.isConfigured()) {
-                    if (!AScriptFletching.hasKnife() && !AScriptFletching.bankHasKnife()) {
+                    if (!AScriptBank.bankableAtLeast(ItemID.KNIFE, 1)
+                            && !AScriptBank.bankableAtLeast(ItemID.FLETCHING_KNIFE, 1)) {
                         missing.add("Knife");
                     }
                     addMissing(missing, product.logId(), product.logsPerAction(),
@@ -538,6 +554,13 @@ public class FletchingScript implements AModule {
             return;
         }
 
+        // A previous buggy run (or a lost selection race) can leave a recipe item worn: bolts
+        // are ammo and the knife is wieldable, so their default inventory click equips them.
+        // Put the material back in the inventory before any bank/material check or recipe.
+        if (recoverWornMaterials(config)) {
+            return;
+        }
+
         boolean success;
         switch (currentPhase) {
             case DARTS: success = craftDarts(config); break;
@@ -582,7 +605,10 @@ public class FletchingScript implements AModule {
         FletchingBoltTipType tip = config.fletchingBoltTipType();
         if (tip == null) return false;
         Microbot.status = "MAKING " + tip.getLabel().toUpperCase();
-        return startRecipe(tip.getBoltId(), tip.getTipId(),
+        // Select the gem tip first: its default op is "Use", while the bolts' is "Wield" (ammo).
+        // The shared recipe forces the real Use row either way, but the natural click direction
+        // also avoids ever arming a wearable as the source item.
+        return startRecipe(tip.getTipId(), tip.getBoltId(),
                 tip.getBoltId(), FletchingBoltTipType.MATERIALS_PER_ACTION, tip.getProductId(), null);
     }
 
@@ -612,6 +638,115 @@ public class FletchingScript implements AModule {
         Microbot.status = "MAKING " + product.label().toUpperCase();
         return startRecipe(knifeId, product.logId(),
                 product.logId(), product.logsPerAction(), product.productId(), null);
+    }
+
+    // ── Worn-material recovery ──────────────────────────────────
+
+    /**
+     * Worn recipe items that <b>block</b> the current phase: the item sits in an equipment slot
+     * and the inventory cannot supply the amount the phase needs. A worn stack the inventory can
+     * already match is ordinary equipment and is left alone (the script does not disturb a
+     * player's ammo when it has a batch at hand).
+     * <p>
+     * The two knife ids are interchangeable — only when neither is held is a worn knife worth
+     * taking off.
+     */
+    private List<Integer> blockingWornRecipeItemIds(AScriptConfig config) {
+        List<Integer> worn = new ArrayList<>();
+        switch (currentPhase) {
+            case DARTS: {
+                FletchingDartType dart = config.fletchingDartType();
+                addIfWornAndMissing(worn, dart == null ? -1 : dart.getMaterialId(), 1);
+                addIfWornAndMissing(worn, ItemID.FEATHER, 1);
+                break;
+            }
+            case BOLTS: {
+                FletchingBoltType bolt = config.fletchingBoltType();
+                addIfWornAndMissing(worn, bolt == null ? -1 : bolt.getUnfinishedId(), 1);
+                addIfWornAndMissing(worn, ItemID.FEATHER, 1);
+                break;
+            }
+            case BOLT_TIPS: {
+                FletchingBoltTipType tip = config.fletchingBoltTipType();
+                if (tip != null) {
+                    addIfWornAndMissing(worn, tip.getBoltId(),
+                            FletchingBoltTipType.MATERIALS_PER_ACTION);
+                    addIfWornAndMissing(worn, tip.getTipId(),
+                            FletchingBoltTipType.MATERIALS_PER_ACTION);
+                }
+                break;
+            }
+            case ARROWS: {
+                addIfWornAndMissing(worn, FletchingArrowType.HEADLESS_ARROW_ID, 1);
+                FletchingArrowType arrow = config.fletchingArrowType();
+                addIfWornAndMissing(worn, arrow == null ? -1 : arrow.getTipId(), 1);
+                break;
+            }
+            case BOWS: {
+                FletchingBowType bow = config.fletchingBowType();
+                addIfWornAndMissing(worn,
+                        bow == null || bow == FletchingBowType.NONE ? -1 : bow.getUnstrungId(), 1);
+                addIfWornAndMissing(worn, ItemID.BOW_STRING, 1);
+                break;
+            }
+            case UNSTRUNG_BOWS:
+            case ARROW_SHAFTS:
+            case STOCKS:
+            case SHIELDS: {
+                LogFletchProduct product = logProduct(config);
+                if (product != null && product.isConfigured()) {
+                    addIfWornAndMissing(worn, product.logId(), product.logsPerAction());
+                }
+                if (!AScriptFletching.hasKnife()) {
+                    addWorn(worn, ItemID.KNIFE);
+                    addWorn(worn, ItemID.FLETCHING_KNIFE);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        return worn;
+    }
+
+    private void addIfWornAndMissing(List<Integer> worn, int itemId, int amount) {
+        if (itemId <= 0 || !Rs2Equipment.isWearing(itemId)) {
+            return;
+        }
+        if (AScriptFletching.inventoryQuantity(itemId) < amount) {
+            worn.add(itemId);
+        }
+    }
+
+    private void addWorn(List<Integer> worn, int itemId) {
+        if (Rs2Equipment.isWearing(itemId)) {
+            worn.add(itemId);
+        }
+    }
+
+    /**
+     * Take any blocking worn recipe material back off and return {@code true} to end the tick.
+     * Runs when the orchestrator hands the tick to {@code doAction} because
+     * {@link #readyForBank} reported a worn blocker; a failed unequip uses the module's own
+     * failure budget, so an item that will not come off stops the run loudly instead of idling
+     * forever.
+     */
+    private boolean recoverWornMaterials(AScriptConfig config) {
+        List<Integer> worn = blockingWornRecipeItemIds(config);
+        if (worn.isEmpty()) {
+            return false;
+        }
+        for (int id : worn) {
+            String name = AScriptFletching.itemName(id, "recipe item");
+            Microbot.status = "UNEQUIPPING " + name.toUpperCase();
+            if (AScriptClick.unequip(id)) {
+                log.info("[Fletching] Unequipped {} — the inventory needs it as a fletching material", name);
+            } else {
+                registerFailure("could not unequip " + name);
+                return true;
+            }
+        }
+        return true;
     }
 
     /**

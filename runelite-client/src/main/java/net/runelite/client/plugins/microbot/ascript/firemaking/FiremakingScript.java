@@ -194,11 +194,11 @@ public class FiremakingScript implements AModule {
         if (!needsBank(config)) return false;
         FiremakingLog choice = config.firemakingLog();
         if (choice == null || choice == FiremakingLog.NONE) return true; // defensive
-        // Missing from both inventory AND bank
-        if (!Rs2Inventory.hasItem(choice.getItemId()) && !Rs2Bank.hasBankItem(choice.getItemId(), 1)) {
+        // Missing only when neither unnoted/noted inventory nor bank can supply it.
+        if (!AScriptBank.bankableAtLeast(choice.getItemId(), 1)) {
             return true;
         }
-        return !Rs2Inventory.hasItem(ItemID.TINDERBOX) && !Rs2Bank.hasBankItem(ItemID.TINDERBOX, 1);
+        return !AScriptBank.bankableAtLeast(ItemID.TINDERBOX, 1);
     }
 
     @Override
@@ -206,11 +206,10 @@ public class FiremakingScript implements AModule {
         FiremakingLog choice = config.firemakingLog();
         StringBuilder sb = new StringBuilder("firemaking: ");
         if (choice != null && choice != FiremakingLog.NONE
-                && !Rs2Inventory.hasItem(choice.getItemId())
-                && !Rs2Bank.hasBankItem(choice.getItemId(), 1)) {
+                && !AScriptBank.bankableAtLeast(choice.getItemId(), 1)) {
             sb.append("no ").append(choice.getName().toLowerCase()).append(" (not in bank), ");
         }
-        if (!Rs2Inventory.hasItem(ItemID.TINDERBOX) && !Rs2Bank.hasBankItem(ItemID.TINDERBOX, 1)) {
+        if (!AScriptBank.bankableAtLeast(ItemID.TINDERBOX, 1)) {
             sb.append("no tinderbox (not in bank), ");
         }
         if (sb.length() > 2) sb.setLength(sb.length() - 2); // trailing ", "
