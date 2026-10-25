@@ -2777,7 +2777,7 @@ public class Rs2Walker {
                                             distance, FINAL_ADJACENT_CANVAS_NUDGE_CHEBYSHEV,
                                             DOOR_OPEN_CANVAS_NUDGE_MAX_FROM_PLAYER)
                                     && Rs2Tile.isTileReachable(recoverTarget)
-                                    && walkFastCanvas(recoverTarget)) {
+                                    && walkFastCanvasWithAutoRun(recoverTarget)) {
                                 clicked = true;
                                 clickedRecoveryTarget = recoverTarget;
                                 log.debug("[Walker] unreachable recovery: scene click -> {}", recoverTarget);
@@ -3205,7 +3205,7 @@ public class Rs2Walker {
                             finalClick = clickRouteBackedShortWalk(rawPath, canvasClickWp, finalPlayerLoc,
                                     normalMinimapReach() - 1, rawAnchorIndex);
                         } else {
-                            finalClick = Rs2Walker.walkFastCanvas(canvasClickWp);
+                            finalClick = Rs2Walker.walkFastCanvasWithAutoRun(canvasClickWp);
                         }
                         if (finalClick) {
                             waitUntilIdleAfterSceneWalk(target, POST_SCENE_WALK_IDLE_WAIT_MS_MAX, target, finishTh);
@@ -3834,7 +3834,7 @@ public class Rs2Walker {
             if (target != null && playerLoc.distanceTo2D(target) <= INTERIM_CLOSE_TILES
                     && clickTarget.getPlane() == target.getPlane()
                     && clickTarget.distanceTo2D(target) <= 1
-                    && walkFastCanvas(clickTarget)) {
+                    && walkFastCanvasWithAutoRun(clickTarget)) {
                 clickedTarget = clickTarget;
                 clicked = true;
             } else {
@@ -3968,9 +3968,7 @@ public class Rs2Walker {
 
     /** Turn run energy on when the user's auto-run setting allows it (upstream name). */
     static void requestAutoRun() {
-        if (Microbot.enableAutoRunOn) {
-            Rs2Player.toggleRunEnergy(true);
-        }
+        if (Microbot.enableAutoRunOn) Rs2Player.toggleRunEnergy(true);
     }
 
     /** Canvas walk without touching run energy: the caller owns the auto-run decision. */
@@ -7737,7 +7735,7 @@ public class Rs2Walker {
                                     }
                                 } else {
                                     WorldPoint originTile = path.get(i);
-                                    boolean clicked = Rs2Walker.walkFastCanvas(originTile);
+                                    boolean clicked = Rs2Walker.walkFastCanvasWithAutoRun(originTile);
                                     if (!clicked) {
                                         WorldPoint playerLoc = Rs2Player.getWorldLocation();
                                         if (playerLoc != null) {
@@ -8238,7 +8236,7 @@ public class Rs2Walker {
                     if (afterOpen != null && !afterOpen.equals(transport.getDestination())) {
                         boolean clicked = walkMiniMap(transport.getDestination());
                         if (!clicked) {
-                            clicked = walkFastCanvas(transport.getDestination());
+                            clicked = walkFastCanvasWithAutoRun(transport.getDestination());
                         }
                         if (clicked) {
                             sleepUntil(() -> {
@@ -9036,7 +9034,7 @@ public class Rs2Walker {
                             Rs2Player.waitForAnimation();
                         }, 8000, 1200);
             }
-            Rs2Walker.walkFastCanvas(transport.getDestination());
+            Rs2Walker.walkFastCanvasWithAutoRun(transport.getDestination());
             return sleepUntil(() -> !Objects.equals(currentPlayerPoint, Rs2Player.getWorldLocation()));
         }
 
@@ -9147,7 +9145,7 @@ public class Rs2Walker {
         if (obelisk != null) {
             Rs2GameObject.interact(obelisk, transport.getAction());
             sleepUntil(() -> Rs2GameObject.getGameObject(obj -> obj.getId() == transport.getObjectId(), transport.getOrigin()) != null);
-            walkFastCanvas(transport.getOrigin());
+            walkFastCanvasWithAutoRun(transport.getOrigin());
             return sleepUntilTrue(() -> {
                 WorldPoint pl = Rs2Player.getWorldLocation();
                 WorldPoint td = transport.getDestination();
