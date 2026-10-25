@@ -3935,6 +3935,29 @@ public class Rs2Walker {
             return false;
         }
         Rs2Player.toggleRunEnergy(toggleRun);
+        return walkFastCanvasInternal(worldPoint);
+    }
+
+    /**
+     * Auto-run variant the upstream Movement/Doors call sites expect: turn run on only when the
+     * user's auto-run setting is enabled, then walk without touching run energy again.
+     */
+    static boolean walkFastCanvasWithAutoRun(WorldPoint worldPoint) {
+        if (worldPoint != null) {
+            requestAutoRun();
+        }
+        return walkFastCanvasInternal(worldPoint);
+    }
+
+    /** Turn run energy on when the user's auto-run setting allows it (upstream name). */
+    static void requestAutoRun() {
+        if (Microbot.enableAutoRunOn) {
+            Rs2Player.toggleRunEnergy(true);
+        }
+    }
+
+    /** Canvas walk without touching run energy: the caller owns the auto-run decision. */
+    private static boolean walkFastCanvasInternal(WorldPoint worldPoint) {
         Point canv;
         LocalPoint localPoint = LocalPoint.fromWorld(Microbot.getClient().getTopLevelWorldView(), worldPoint);
 
