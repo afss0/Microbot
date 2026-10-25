@@ -82,17 +82,13 @@ public final class AScriptFletching {
     }
 
     /**
-     * True when the inventory plus the bank hold at least {@code amount} usable units of
-     * {@code itemId}. The inventory part is counted first, so a partial stack in the inventory
-     * and the remainder in the bank are not reported as missing — the bank cycle deposits the
-     * inventory before withdrawing. The bank read is the retrying {@code hasBankItem} family.
+     * True when the inventory + bank can supply {@code amount} units of {@code itemId} for a
+     * bank cycle. Unnoted inventory, <b>noted</b> inventory (a banknote is a certificate for the
+     * same base item; depositing it restores the base item in the bank) and the bank all count.
+     * This is the missing-materials check; {@link #inventoryQuantity} stays unnoted-only because
+     * notes cannot be fletched with.
      */
     public static boolean combinedAtLeast(int itemId, int amount) {
-        if (amount <= 0) {
-            return true;
-        }
-        int held = inventoryQuantity(itemId);
-        int neededFromBank = amount - held;
-        return neededFromBank <= 0 || Rs2Bank.hasBankItem(itemId, neededFromBank);
+        return AScriptBank.bankableAtLeast(itemId, amount);
     }
 }

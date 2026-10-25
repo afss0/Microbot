@@ -232,10 +232,10 @@ public class BarbarianVillageFisherScript implements AModule {
         if (!needsBank(config)) return false;
         int rodId = getRodId(config);
         int baitId = getBaitId(config);
-        // Missing from BOTH inventory and bank. The bank reads are the retrying hasBankItem
-        // family — the bare mirror read can report an item the bank no longer lists.
-        if (!Rs2Inventory.hasItem(rodId) && !Rs2Bank.hasBankItem(rodId, 1)) return true;
-        if (!Rs2Inventory.hasItem(baitId) && !Rs2Bank.hasBankItem(baitId, 1)) return true;
+        // Missing only when neither unnoted/noted inventory nor bank can supply it. A noted
+        // rod is bankable; bait is stackable and therefore cannot be noted at all.
+        if (!AScriptBank.bankableAtLeast(rodId, 1)) return true;
+        if (!AScriptBank.bankableAtLeast(baitId, 1)) return true;
         return false;
     }
 
@@ -244,9 +244,9 @@ public class BarbarianVillageFisherScript implements AModule {
         int rodId = getRodId(config);
         int baitId = getBaitId(config);
         StringBuilder sb = new StringBuilder();
-        if (!Rs2Inventory.hasItem(rodId) && !Rs2Bank.hasBankItem(rodId, 1))
+        if (!AScriptBank.bankableAtLeast(rodId, 1))
             sb.append(getRodLabel(config));
-        if (!Rs2Inventory.hasItem(baitId) && !Rs2Bank.hasBankItem(baitId, 1)) {
+        if (!AScriptBank.bankableAtLeast(baitId, 1)) {
             if (sb.length() > 0) sb.append(", ");
             sb.append(getBaitLabel(config));
         }

@@ -184,20 +184,24 @@ public class CannonballSmelterScript implements AModule {
     public boolean isBankMissingMaterials(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
         if (!needsBank(config)) return false;
-        // Missing from both inventory AND bank
-        if (!Rs2Inventory.hasItem(ItemID.STEEL_BAR) && !Rs2Bank.hasBankItem(ItemID.STEEL_BAR, 1)) {
+        // Missing only when neither unnoted/noted inventory nor bank can supply it.
+        if (!AScriptBank.bankableAtLeast(ItemID.STEEL_BAR, 1)) {
             return true;
         }
-        return !hasMould() && !bankHasMould();
+        return !hasMould()
+                && !AScriptBank.bankableAtLeast(ItemID.DOUBLE_AMMO_MOULD, 1)
+                && !AScriptBank.bankableAtLeast(ItemID.AMMO_MOULD, 1);
     }
 
     @Override
     public String describeMissing(AScriptConfig config) {
         StringBuilder sb = new StringBuilder("cannonball smelter: ");
-        if (!Rs2Inventory.hasItem(ItemID.STEEL_BAR) && !Rs2Bank.hasBankItem(ItemID.STEEL_BAR, 1)) {
+        if (!AScriptBank.bankableAtLeast(ItemID.STEEL_BAR, 1)) {
             sb.append("no steel bars (not in bank), ");
         }
-        if (!hasMould() && !bankHasMould()) {
+        if (!hasMould()
+                && !AScriptBank.bankableAtLeast(ItemID.DOUBLE_AMMO_MOULD, 1)
+                && !AScriptBank.bankableAtLeast(ItemID.AMMO_MOULD, 1)) {
             sb.append("no ammo mould or double ammo mould (not in bank), ");
         }
         if (sb.length() > 2) sb.setLength(sb.length() - 2); // trailing ", "
@@ -219,12 +223,17 @@ public class CannonballSmelterScript implements AModule {
         //    Keep whichever mould is already held; when withdrawing fresh, prefer
         //    the double ammo mould (hub parity).
         String mouldName;
-        if (Rs2Inventory.hasItem(ItemID.DOUBLE_AMMO_MOULD)) {
+        if (Rs2Inventory.hasItem(ItemID.DOUBLE_AMMO_MOULD)
+                || AScriptBank.hasNotedItem(ItemID.DOUBLE_AMMO_MOULD)
+                || Rs2Bank.hasBankItem(ItemID.DOUBLE_AMMO_MOULD, 1)) {
             mouldName = "double ammo mould";
-        } else if (Rs2Inventory.hasItem(ItemID.AMMO_MOULD)) {
+        } else if (Rs2Inventory.hasItem(ItemID.AMMO_MOULD)
+                || AScriptBank.hasNotedItem(ItemID.AMMO_MOULD)
+                || Rs2Bank.hasBankItem(ItemID.AMMO_MOULD, 1)) {
             mouldName = "ammo mould";
         } else {
-            mouldName = Rs2Bank.hasItem("double ammo mould") ? "double ammo mould" : "ammo mould";
+            log.warn("[CannonballSmelter] no ammo mould in inventory (unnoted or noted) or bank");
+            return false;
         }
         if (!AScriptBank.ensureToolLocked(mouldName)) {
             return false;

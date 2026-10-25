@@ -7,6 +7,7 @@ import net.runelite.api.NPC;
 import net.runelite.api.Perspective;
 import net.runelite.api.TileItem;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import org.junit.Test;
 
@@ -47,6 +48,52 @@ public class AScriptClickMatchersTest {
         MenuEntry entry = mock(MenuEntry.class);
         when(entry.getOption()).thenReturn(null);
         assertFalse(AScriptClick.optionMatches(entry, "Take"));
+    }
+
+    // ── inventory-slot identity (Use/Drop menu swap) ───────
+
+    @Test
+    public void inventoryRowMatchesWidgetSlotAndItem() {
+        Widget widget = mock(Widget.class);
+        when(widget.getIndex()).thenReturn(4);
+        when(widget.getItemId()).thenReturn(879);
+
+        MenuEntry entry = mock(MenuEntry.class);
+        when(entry.getWidget()).thenReturn(widget);
+        when(entry.getParam0()).thenReturn(-1);
+
+        assertTrue(AScriptClick.occupiesInventorySlot(entry, 4, 879));
+        assertFalse("another slot must not match",
+                AScriptClick.occupiesInventorySlot(entry, 5, 879));
+        assertFalse("another item must not match",
+                AScriptClick.occupiesInventorySlot(entry, 4, 878));
+    }
+
+    @Test
+    public void inventoryRowFallsBackToParamsWithoutWidget() {
+        MenuEntry entry = entry(MenuAction.WIDGET_TARGET, 879, 4, 9764864, "Use");
+        when(entry.getItemId()).thenReturn(879);
+
+        assertTrue(AScriptClick.occupiesInventorySlot(entry, 4, 879));
+        assertFalse("another slot must not match",
+                AScriptClick.occupiesInventorySlot(entry, 5, 879));
+        assertFalse("another item must not match",
+                AScriptClick.occupiesInventorySlot(entry, 4, 878));
+    }
+
+    @Test
+    public void inventoryRowFallsBackToParamsForParentWidget() {
+        // A parent widget carries index -1; the client still packs slot/item into param0/itemId.
+        Widget widget = mock(Widget.class);
+        when(widget.getIndex()).thenReturn(-1);
+
+        MenuEntry entry = entry(MenuAction.WIDGET_TARGET, 879, 4, 9764864, "Use");
+        when(entry.getWidget()).thenReturn(widget);
+        when(entry.getItemId()).thenReturn(879);
+
+        assertTrue(AScriptClick.occupiesInventorySlot(entry, 4, 879));
+        assertFalse("another slot must not match",
+                AScriptClick.occupiesInventorySlot(entry, 5, 879));
     }
 
     // ── objects ────────────────────────────────────────────

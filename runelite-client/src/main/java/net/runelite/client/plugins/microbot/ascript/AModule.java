@@ -35,8 +35,10 @@ public interface AModule {
     boolean needsBank(AScriptConfig config);
 
     /**
-     * True only when the needed item is missing from <em>both</em> inventory
-     * and bank. Used by the orchestrator to decide between banking and stopping.
+     * True only when the needed item cannot be supplied for the bank cycle: missing from the
+     * inventory (unnoted <b>and</b> noted — a banknote is un-noted by depositing it) and from
+     * the bank. Used by the orchestrator to decide between banking and stopping. Prefer
+     * {@code AScriptBank.bankableAtLeast(...)} over hand-written inventory/bank pairs.
      */
     boolean isBankMissingMaterials(AScriptConfig config);
 

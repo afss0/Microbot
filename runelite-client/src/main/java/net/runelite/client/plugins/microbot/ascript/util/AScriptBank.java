@@ -15,6 +15,7 @@ import net.runelite.client.plugins.microbot.util.settings.Rs2Settings;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
@@ -38,6 +39,12 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntilTrue;
  *       {@code Rs2Bank.isLockedSlot(slot)} before a deposit runs around it, and a cycle
  *       that needs locking refuses to start when the bank's slot locking cannot be
  *       enabled — see {@link #ensureSlotLockingCapability()}.</li>
+ *   <li>Never treat a banknote as usable material. {@link #hasUnnotedItem} is the
+ *       "usable now" check; {@link #bankableAtLeast} is the missing-materials check and
+ *       counts notes because the toolbar deposit converts them back to the base item.
+ *       Withdrawals always run in "Withdraw as item" mode
+ *       ({@link #ensureItemWithdrawMode()}); the note-blind inventory lookup means a noted
+ *       withdrawal can never verify as success.</li>
  * </ul>
  * New modules should call these instead of re-implementing the pattern.
  * <p>
@@ -62,6 +69,12 @@ public final class AScriptBank {
 
     /** Total dispatch attempts for one withdraw call (1 initial + retries with backoff). */
     private static final int WITHDRAW_MAX_ATTEMPTS = 3;
+
+    /**
+     * Set when a bank phase changed the player's withdraw mode from "note" to "item"; cleared by
+     * {@link #restoreWithdrawMode()} when the phase ends.
+     */
+    private static boolean restoreWithdrawAsNote;
 
     /**
      * Exponential backoff base between failed attempts when an attempt is unconfirmed:
@@ -372,6 +385,14 @@ public final class AScriptBank {
             // retry (the caller returns false and re-runs the cycle, reopening the bank), with a
             // line naming the cause — never a silent miss.
             log.warn("[AScriptBank] Cannot withdraw {} — the bank window is closed; retrying next cycle",
+                    describe);
+            return false;
+        }
+        // aScript can never use a banknote. Ensure item mode here as the last line of defence,
+        // not only in the orchestrator's bank phase: a module that withdraws mid-action must
+        // get the base item too.
+        if (!ensureItemWithdrawMode()) {
+            log.warn("[AScriptBank] Cannot withdraw {} — bank is not in 'Withdraw as item' mode",
                     describe);
             return false;
         }
@@ -863,6 +884,109 @@ public final class AScriptBank {
     }
 
     /**
+     * True when the inventory holds {@code baseId} as a banknote. A banknote is a certificate for
+     * the base item with a different item id; {@link Rs2ItemModel#getUnNotedId()} maps it back to
+     * the base id, so this does not rely on any id-offset convention. Stackable items cannot be
+     * noted, so only non-stackable materials can match.
+     */
+    public static boolean hasNotedItem(int baseId) {
+        return Rs2Inventory.items().anyMatch(item ->
+                item.isNoted() && item.getUnNotedId() == baseId);
+    }
+
+    /** Name-based variant of {@link #hasNotedItem(int)} (substring, case-insensitive). */
+    public static boolean hasNotedItem(String name) {
+        return Rs2Inventory.items().anyMatch(item ->
+                item.isNoted() && item.getName() != null
+                        && item.getName().toLowerCase().contains(name.toLowerCase()));
+    }
+
+    /** True when the inventory holds any banknote at all. */
+    public static boolean hasNotedItems() {
+        return Rs2Inventory.items().anyMatch(Rs2ItemModel::isNoted);
+    }
+
+    /**
+     * True when a bank cycle can supply {@code amount} units of {@code baseId}: unnoted
+     * inventory + noted inventory + bank.
+     * <p>
+     * A noted unit counts because the cycle's toolbar deposit stores its base item in the bank —
+     * a banknote is never usable directly, but it is fully recoverable by banking it. This is the
+     * check for the <b>missing-materials verdict</b> only; {@code needsBank} must keep using
+     * {@link #hasUnnotedItem} so a note still triggers the bank trip.
+     */
+    public static boolean bankableAtLeast(int baseId, int amount) {
+        if (amount <= 0) {
+            return true;
+        }
+        int held = Rs2Inventory.items()
+                .filter(Objects::nonNull)
+                .filter(item -> item.isNoted() ? item.getUnNotedId() == baseId
+                        : item.getId() == baseId)
+                .mapToInt(Rs2ItemModel::getQuantity)
+                .sum();
+        if (held >= amount) {
+            return true;
+        }
+        return Rs2Bank.hasBankItem(baseId, amount - held);
+    }
+
+    /**
+     * Name-based {@link #bankableAtLeast(int, int)} for the modules that still resolve materials
+     * by display name. The inventory part counts banknotes too (they share the display name);
+     * numeric strings route to the id-exact overload.
+     */
+    public static boolean bankableAtLeast(String nameOrId, int amount) {
+        if (amount <= 0) {
+            return true;
+        }
+        if (isNumeric(nameOrId)) {
+            return bankableAtLeast(Integer.parseInt(nameOrId), amount);
+        }
+        int held = inventoryQuantity(nameOrId, true);
+        if (held >= amount) {
+            return true;
+        }
+        return Rs2Bank.hasBankItem(nameOrId, amount - held);
+    }
+
+    /**
+     * Ensure this bank phase withdraws base items rather than banknotes. aScript modules can
+     * never use a note, so "Withdraw as item" is the only mode the bank cycle may run in.
+     * <p>
+     * A player setting of "Withdraw as note" is remembered and restored by
+     * {@link #restoreWithdrawMode()} when the bank phase ends.
+     *
+     * @return true when the bank is in (or was switched to) item mode
+     */
+    public static boolean ensureItemWithdrawMode() {
+        if (Rs2Bank.hasWithdrawAsItem()) {
+            return true;
+        }
+        if (!Rs2Bank.setWithdrawAsItem()) {
+            log.warn("[AScriptBank] could not switch the bank to 'Withdraw as item'");
+            return false;
+        }
+        restoreWithdrawAsNote = true;
+        log.info("[AScriptBank] bank switched to 'Withdraw as item' for this cycle");
+        return true;
+    }
+
+    /**
+     * Restore a "Withdraw as note" setting remembered by {@link #ensureItemWithdrawMode()}.
+     * No-op when this phase did not change the mode or when the bank is already closed.
+     */
+    public static void restoreWithdrawMode() {
+        if (!restoreWithdrawAsNote) {
+            return;
+        }
+        restoreWithdrawAsNote = false;
+        if (Rs2Bank.isOpen() && !Rs2Bank.setWithdrawAsNote()) {
+            log.warn("[AScriptBank] could not restore the bank's 'Withdraw as note' setting");
+        }
+    }
+
+    /**
      * Free inventory slots right now — the reservation basis for every multi-material withdraw.
      * <p>
      * Locked slots (held tools, the mould, the XP lamp) count as OCCUPIED, which is the point:
@@ -940,18 +1064,32 @@ public final class AScriptBank {
         return Rs2Bank.withdrawX(nameOrId, quantity);
     }
 
+    /**
+     * Inventory presence for a withdraw/slot-lock check. Banknotes are excluded: they share the
+     * base item's display name, and a note is not the item a module can use (the old name-based
+     * {@code Rs2Inventory.hasItem(name)} made a noted withdrawal verify as a success and let
+     * {@code ensureToolLocked} lock a certificate).
+     */
     private static boolean hasInventoryItem(String nameOrId) {
-        if (isNumeric(nameOrId)) {
-            return Rs2Inventory.hasItem(Integer.parseInt(nameOrId));
-        }
-        return Rs2Inventory.hasItem(nameOrId);
+        return getInventoryItem(nameOrId) != null;
     }
 
+    /**
+     * Unnoted inventory model for {@code nameOrId} — the only form a withdraw or a slot lock can
+     * use. Numeric strings are id-exact; names keep the existing substring match.
+     */
     private static Rs2ItemModel getInventoryItem(String nameOrId) {
         if (isNumeric(nameOrId)) {
-            return Rs2Inventory.get(Integer.parseInt(nameOrId));
+            int id = Integer.parseInt(nameOrId);
+            return Rs2Inventory.get(item -> item != null && !item.isNoted() && item.getId() == id);
         }
-        return Rs2Inventory.get(nameOrId, false);
+        String needle = nameOrId.toLowerCase();
+        // Same shortest-display-name rule as Rs2Inventory.get(name, false), but note-blind.
+        return Rs2Inventory.getList(item -> item != null && !item.isNoted()
+                        && item.getName() != null && item.getName().toLowerCase().contains(needle))
+                .stream()
+                .min(Comparator.comparingInt(item -> item.getName().length()))
+                .orElse(null);
     }
 
     /**
