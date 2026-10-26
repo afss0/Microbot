@@ -111,6 +111,11 @@ public class CannoningScript implements AModule {
     }
 
     @Override
+    public String runKey(AScriptConfig config) {
+        return "CANNONING:" + currentPhase + ":" + config.cannonBallType();
+    }
+
+    @Override
     public void resetExitFlag() {
         exitRequested = false;
         consecutiveFailures = 0;

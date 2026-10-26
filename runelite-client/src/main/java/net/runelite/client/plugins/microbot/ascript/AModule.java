@@ -35,6 +35,18 @@ public interface AModule {
     boolean needsBank(AScriptConfig config);
 
     /**
+     * Identifies the module's current sub-selection (activity, item, location, ...).
+     * <p>
+     * A change between ticks while the module stays active starts a NEW run scope: the
+     * orchestrator calls {@link #resetExitFlag()} so a finished batch latch, a previous
+     * activity's anchors or failure streak cannot leak into the newly selected activity.
+     * Modules without sub-selections keep the default (selection-level) key.
+     */
+    default String runKey(AScriptConfig config) {
+        return "";
+    }
+
+    /**
      * True only when the needed item cannot be supplied for the bank cycle: missing from the
      * inventory (unnoted <b>and</b> noted — a banknote is un-noted by depositing it) and from
      * the bank. Used by the orchestrator to decide between banking and stopping. Prefer

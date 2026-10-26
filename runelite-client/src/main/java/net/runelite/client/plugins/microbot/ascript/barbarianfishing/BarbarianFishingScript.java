@@ -12,6 +12,7 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -25,11 +26,9 @@ import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
-import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
-import java.awt.Rectangle;
 import java.util.Arrays;
 import java.util.List;
 
@@ -142,6 +141,12 @@ public class BarbarianFishingScript implements AModule {
     @Override
     public boolean isActive() {
         return currentPhase != Phase.NONE;
+    }
+
+    @Override
+    public String runKey(AScriptConfig config) {
+        // currentPhase is runtime (walking/fishing/dropping), so it must not participate.
+        return "BARBARIAN_FISHING:" + config.barbarianFishingActivity();
     }
 
     @Override
@@ -336,33 +341,20 @@ public class BarbarianFishingScript implements AModule {
     }
 
     /**
-     * Clicks the fishing spot through the client mouse ("Use-rod" entry) and waits
-     * (bounded) for the session's first catch — a free inventory-slot count change
-     * is the pass signal. Do NOT wait on animating/interacting here: the interaction
-     * engages (and the spot keeps churning) seconds before any catch, so either
-     * signal returns immediately and the caller re-clicks the spot every ~3 s until
-     * fishing starts (observed spam clicks). The caller has already ensured the
-     * spot is on screen.
+     * Clicks the fishing spot through the shared verified actor recipe (the same one BVF and
+     * Ammonite Crabs use): camera first, the NPC's real clickbox, the hover menu verified so a
+     * player standing on the spot cannot steal the click. The catch-evidence wait stays the
+     * module's own gate.
      */
     private boolean clickFishingSpot(Rs2NpcModel spot) {
         if (spot == null || spot.getNpc() == null) return false;
 
-        // Canvas size is read off the lambda: calling Client#getCanvasWidth/Height from
-        // inside a clientThread.invoke lambda registers them with the ClientThreadGuardrailTest
-        // inference and would flag unrelated pre-existing util/api callers (ammonite recipe).
-        final int canvasWidth = Microbot.getClient().getCanvasWidth();
-        final int canvasHeight = Microbot.getClient().getCanvasHeight();
-        Rectangle clickbox = Microbot.getClientThread().invoke(() -> {
-            Rectangle box = Rs2UiHelper.getActorClickbox(spot.getNpc());
-            if (box == null || box.getWidth() <= 0 || box.getHeight() <= 0) return null;
-            // Canvas-sized fallback rectangle = no real clickbox — never click it blindly.
-            if (box.getWidth() >= canvasWidth - 2 || box.getHeight() >= canvasHeight - 2) return null;
-            return box;
-        });
-        if (clickbox == null) return false;
+        AScriptClick.Target clicked = AScriptClick.clickActor(spot.getNpc());
+        if (!clicked.clicked()) {
+            return false;
+        }
 
         final int freeSlotsBefore = Rs2Inventory.emptySlotCount();
-        Microbot.getMouse().click(clickbox);
         // The bound covers the whole start: walk to the spot + engage + first catch.
         // A timeout means the click did not produce a live session (caller retries).
         return sleepUntil(() -> Rs2Inventory.emptySlotCount() != freeSlotsBefore,

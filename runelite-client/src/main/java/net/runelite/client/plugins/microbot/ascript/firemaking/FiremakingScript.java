@@ -152,6 +152,13 @@ public class FiremakingScript implements AModule {
         return currentPhase != Phase.NONE;
     }
 
+    @Override
+    public String runKey(AScriptConfig config) {
+        return "FIREMAKING:" + currentPhase
+                + ":" + config.firemakingLog()
+                + ":" + config.firemakingLocation();
+    }
+
     // ── Selection validation ──────────────────────────────
 
     @Override

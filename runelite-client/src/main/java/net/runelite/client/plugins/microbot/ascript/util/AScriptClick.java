@@ -325,19 +325,6 @@ public final class AScriptClick {
     }
 
     /**
-     * @deprecated use {@link #clickActor(Actor, String)} — the verified recipe. Kept as a
-     * delegate for the call sites that still name the old entry point.
-     */
-    @Deprecated
-    public static Target clickActorOp(Actor actor, String option) {
-        if (option == null || option.isBlank()) {
-            log.warn("[AScriptClick] no option to pick — not clicking");
-            return notRendered();
-        }
-        return clickActor(actor, option);
-    }
-
-    /**
      * First half of the actor recipe — camera first, then the actor's real clickbox,
      * without clicking.
      *
@@ -506,6 +493,13 @@ public final class AScriptClick {
      */
     public static boolean dropAtSlot(int slot, int itemId) {
         ensureInventoryVisible();
+        // An open menu freezes the hover: a press at the slot point would land on whatever
+        // row the menu shows there. Every other recipe closes it first; the drop recipe must
+        // too, or a menu left by a previous action can turn a Drop into an arbitrary row.
+        if (menuOpen() && !closeMenu()) {
+            log.error("[AScriptClick] an option menu is open and will not close — not dropping slot {}", slot);
+            return false;
+        }
         Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
         if (item == null || item.getId() != itemId) {
             return false;
@@ -553,6 +547,15 @@ public final class AScriptClick {
         menuSwapItemId = -1;
         menuSwapSlot = -1;
         menuSwapOption = null;
+    }
+
+    /**
+     * Drop any pending menu swap and cancel the recipe state at a script/plugin boundary.
+     * A swap left armed by an interrupted run would keep reordering that item's Drop/Use row
+     * for the whole session; the plugin shutdown/start hooks call this.
+     */
+    public static void reset() {
+        clearMenuSwap();
     }
 
     /**
@@ -1131,6 +1134,15 @@ public final class AScriptClick {
      */
     private static void cancelSelectionOnOwnSlot(Rs2ItemModel item, String why) {
         log.warn("[AScriptClick] {} — not pressing", why);
+        if (!Rs2Inventory.isItemSelected()) {
+            return; // already gone — clicking the slot now would dispatch its default op
+        }
+        if (menuOpen()) {
+            // An open menu captures a click at the slot point; leave the selection for the
+            // next recipe attempt instead of pressing an arbitrary menu row.
+            log.warn("[AScriptClick] the selection stays pending while an option menu is open");
+            return;
+        }
         Rectangle bounds = item == null ? null : Rs2Inventory.itemBounds(item);
         if (bounds == null) {
             clearSelection(); // last resort — the pre-existing click-at-current-position idiom
@@ -1183,7 +1195,7 @@ public final class AScriptClick {
             return false;
         }
         int[] scene = sceneCoords(object);
-        return entry.getParam0() == scene[0] && entry.getParam1() == scene[1];
+        return scene != null && entry.getParam0() == scene[0] && entry.getParam1() == scene[1];
     }
 
     /**
@@ -1224,6 +1236,10 @@ public final class AScriptClick {
     private static final Set<MenuAction> NPC_OPTIONS = Set.of(
             MenuAction.NPC_FIRST_OPTION, MenuAction.NPC_SECOND_OPTION, MenuAction.NPC_THIRD_OPTION,
             MenuAction.NPC_FOURTH_OPTION, MenuAction.NPC_FIFTH_OPTION);
+    private static final Set<MenuAction> PLAYER_OPTIONS = Set.of(
+            MenuAction.PLAYER_FIRST_OPTION, MenuAction.PLAYER_SECOND_OPTION,
+            MenuAction.PLAYER_THIRD_OPTION, MenuAction.PLAYER_FOURTH_OPTION,
+            MenuAction.PLAYER_FIFTH_OPTION);
     private static final Set<MenuAction> GROUND_ITEM_OPTIONS = Set.of(
             MenuAction.GROUND_ITEM_FIRST_OPTION, MenuAction.GROUND_ITEM_SECOND_OPTION,
             MenuAction.GROUND_ITEM_THIRD_OPTION, MenuAction.GROUND_ITEM_FOURTH_OPTION,
@@ -1262,14 +1278,19 @@ public final class AScriptClick {
     }
 
     /**
-     * The actor's own plain interaction row: {@code NPC_*} family + option/identity. Identity
-     * is the client's actor reference, with the NPC index as an always-available fallback —
-     * callers may pass a model wrapper ({@code Rs2NpcModel}) whose identity differs from the
-     * client's NPC instance, and an NPC index is unique among live NPCs.
+     * The actor's own plain interaction row: the {@code NPC_*} family for NPCs (or
+     * {@code PLAYER_*} for players) + option/identity. Identity is the client's actor
+     * reference, with the NPC index as an always-available fallback — callers may pass a
+     * model wrapper ({@code Rs2NpcModel}) whose identity differs from the client's NPC
+     * instance, and an NPC index is unique among live NPCs.
      * Only ever evaluated on the client thread, inside the menu reads.
      */
     static boolean isOwnActorAction(MenuEntry entry, Actor actor, String action) {
-        if (entry == null || actor == null || !NPC_OPTIONS.contains(entry.getType())) {
+        if (entry == null || actor == null) {
+            return false;
+        }
+        Set<MenuAction> families = actor instanceof Player ? PLAYER_OPTIONS : NPC_OPTIONS;
+        if (!families.contains(entry.getType())) {
             return false;
         }
         if (!optionMatches(entry, action)) {
@@ -1366,32 +1387,36 @@ public final class AScriptClick {
         if (!select(item)) {
             return false;
         }
+        // select() closes an open menu, but a menu can appear between the two presses (a
+        // human, another plugin): an open menu freezes the hover and would swallow the
+        // target press.
+        if (menuOpen() && !closeMenu()) {
+            cancelSelectionOnOwnSlot(item, "an option menu is open and will not close");
+            return false;
+        }
         if (target != null && target.isNoted()) {
-            log.warn("[AScriptClick] use target {} is a banknote — bank it to un-note first", target.getId());
-            clearSelection();
+            cancelSelectionOnOwnSlot(item,
+                    "the use target " + target.getId() + " is a banknote — bank it to un-note first");
             return false;
         }
         // The selection can be dropped between the select and the target click. Clicking the
         // target then dispatches ITS default op (bolts: Wield) instead of the item-on-item use.
         if (!Rs2Inventory.isItemSelected() || Rs2Inventory.getSelectedItemId() != item.getId()) {
-            log.warn("[AScriptClick] the use selection was lost before the target click (slot {})",
-                    target == null ? -1 : target.getSlot());
-            clearSelection();
+            cancelSelectionOnOwnSlot(item, "the use selection was lost before the target click (slot "
+                    + (target == null ? -1 : target.getSlot()) + ")");
             return false;
         }
         Rectangle bounds = target == null ? null : Rs2Inventory.itemBounds(target);
         if (bounds == null) {
-            log.warn("[AScriptClick] no inventory bounds for the use target (slot {})",
-                    target == null ? -1 : target.getSlot());
-            clearSelection();
+            cancelSelectionOnOwnSlot(item, "no inventory bounds for the use target (slot "
+                    + (target == null ? -1 : target.getSlot()) + ")");
             return false;
         }
         // Re-read the target slot at the click site: a stale slot can hold another item now.
         Rs2ItemModel liveTarget = Rs2Inventory.getItemInSlot(target.getSlot());
         if (liveTarget == null || liveTarget.getId() != target.getId()) {
-            log.warn("[AScriptClick] the use target changed under its slot (slot {})",
-                    target.getSlot());
-            clearSelection();
+            cancelSelectionOnOwnSlot(item, "the use target changed under its slot (slot "
+                    + target.getSlot() + ")");
             return false;
         }
         Microbot.getMouse().click(bounds);
@@ -1399,9 +1424,11 @@ public final class AScriptClick {
         // selected, and the next inventory action then applies it somewhere else.
         if (!sleepUntil(() -> !Rs2Inventory.isItemSelected(),
                 Rs2Random.logNormalBounded(600, 1200))) {
-            log.warn("[AScriptClick] use-on-item click did not consume the selection (slot {})",
-                    target.getSlot());
-            clearSelection();
+            // The cursor is over the TARGET here: clicking at the current position would
+            // apply the source to the target again (or press the target's default op).
+            // Cancel on the source item's own slot, never at the last press point.
+            cancelSelectionOnOwnSlot(item, "the use-on-item click did not consume the selection (slot "
+                    + target.getSlot() + ")");
             return false;
         }
         if (recoverIfWorn(target, "the use-on-item click wore the target instead of using it")) {
@@ -1422,7 +1449,32 @@ public final class AScriptClick {
         if (!Rs2Inventory.isItemSelected()) {
             return true;
         }
-        Microbot.getMouse().click();
+        if (menuOpen()) {
+            // An open menu freezes the hover; a click on the selected widget can land on a
+            // menu row instead. Let the caller close/retry rather than press blindly.
+            log.warn("[AScriptClick] cannot cancel the cursor selection while an option menu is open");
+            return false;
+        }
+        // Click the selected WIDGET (the inventory item's own slot or the spellbook icon).
+        // Clicking at the current cursor position — the old eatReady idiom — can apply the
+        // selection to whatever happens to be under the pointer (or cast the spell there).
+        Rectangle bounds = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget selected = Microbot.getClient().getSelectedWidget();
+            return selected == null ? null : selected.getBounds();
+        }).orElse(null);
+        if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+            // No bounds on the selected widget (a parent/layer): fall back to the selected
+            // inventory slot, which cancels an item selection.
+            int index = Rs2Inventory.getSelectedItemIndex();
+            Rs2ItemModel selectedItem = index >= 0 ? Rs2Inventory.getItemInSlot(index) : null;
+            bounds = selectedItem == null ? null : Rs2Inventory.itemBounds(selectedItem);
+        }
+        if (bounds != null && bounds.width > 0 && bounds.height > 0) {
+            Microbot.getMouse().click(bounds);
+        } else {
+            // Last resort only: nothing identifies where the selection lives.
+            Microbot.getMouse().click();
+        }
         return sleepUntil(() -> !Rs2Inventory.isItemSelected(),
                 Rs2Random.logNormalBounded(400, 900));
     }
@@ -1471,6 +1523,10 @@ public final class AScriptClick {
             return false;
         }
         ensureInventoryVisible();
+        if (menuOpen() && !closeMenu()) {
+            log.error("[AScriptClick] an option menu is open and will not close — not selecting an item");
+            return false;
+        }
         if (Rs2Inventory.isItemSelected() && !clearSelection()) {
             log.warn("[AScriptClick] could not clear a stale selection — not clicking an item");
             return false;

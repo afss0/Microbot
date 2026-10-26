@@ -7,6 +7,7 @@ import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.NpcID;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
@@ -28,6 +29,7 @@ import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
+import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.security.Login;
@@ -233,6 +235,15 @@ public class MiningScript implements AModule {
         return currentPhase != Phase.NONE;
     }
 
+    @Override
+    public String runKey(AScriptConfig config) {
+        return "MINING:" + currentPhase
+                + ":" + config.miningOre()
+                + ":" + config.miningAction()
+                + ":" + config.miningProgressive()
+                + ":" + config.miningRadius();
+    }
+
     // ── Selection validation ──────────────────────────────
 
     @Override
@@ -349,7 +360,16 @@ public class MiningScript implements AModule {
                 AScriptNotify.notify("Banking Failed", "No pickaxe in bank");
                 return false;
             }
-            Rs2Bank.withdrawAndEquip(best.getItemId());
+            // Verified amount withdraw, not withdrawAndEquip: the latter's withdrawOne maps
+            // the bank quantity setting to op 1/2 (Withdraw-5 unless the setting is "1") and
+            // was a dead dispatch on at least one live client. Wear through the bank's own
+            // wear op; the verification below still owns the outcome, and a failed wear keeps
+            // the tool as a locked inventory tool.
+            if (!AScriptBank.withdrawVerified(String.valueOf(best.getItemId()), 1)) {
+                log.warn("[Mining] could not withdraw the best pickaxe {}", best.getItemName());
+                return false;
+            }
+            Rs2Bank.wearItem(best.getItemId());
             if (!sleepUntil(MiningScript::wearingAnyPickaxe,
                     Rs2Random.logNormalBounded(2000, 3500, weatherMultiplier))) {
                 if (Rs2Inventory.hasItem(best.getItemId())) {
@@ -504,6 +524,7 @@ public class MiningScript implements AModule {
                 && !Rs2Equipment.isWearing(ItemID.JEWL_BRACELET_OF_CLAY)
                 && Rs2Inventory.hasItem(ItemID.JEWL_BRACELET_OF_CLAY)) {
             if (Rs2Bank.isOpen()) return; // wait for the orchestrator to close the bank
+            Rs2Tab.switchTo(InterfaceTab.INVENTORY);
             Rs2ItemModel bracelet = AScriptPick.pick(ItemID.JEWL_BRACELET_OF_CLAY);
             Rectangle bounds = bracelet == null ? null : Rs2Inventory.itemBounds(bracelet);
             if (bounds == null) {
@@ -677,6 +698,7 @@ public class MiningScript implements AModule {
         }
         Rs2ItemModel openBag = AScriptPick.pick(ItemID.GEM_BAG_OPEN);
         if (openBag != null) {
+            Rs2Tab.switchTo(InterfaceTab.INVENTORY);
             Rectangle bounds = Rs2Inventory.itemBounds(openBag);
             if (bounds != null) {
                 int before = countProduct(MiningOre.GEM);

@@ -4,7 +4,6 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.GameState;
 import net.runelite.api.Skill;
-import net.runelite.api.Varbits;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabsScript;
@@ -21,23 +20,21 @@ import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantSc
 import net.runelite.client.plugins.microbot.ascript.mining.MiningScript;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptFood;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
-import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
-import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
-import net.runelite.client.plugins.microbot.util.misc.Rs2Food;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * aScript — AIO orchestrator (standard Script, no state machine).
@@ -73,6 +70,8 @@ public class AScript extends Script {
 
     /** Previous tick's active state per module — for NONE → active transition detection. */
     private final Map<AModule, Boolean> wasActive = new IdentityHashMap<>();
+    /** Previous tick's sub-selection key per module — a change starts a new run scope. */
+    private final Map<AModule, String> runKeys = new IdentityHashMap<>();
 
     // ── State ───────────────────────────────────────────────
     private AScriptConfig config;
@@ -143,6 +142,9 @@ public class AScript extends Script {
         this.config = config;
         this.playerWasLoggedIn = false;
         this.logoutHandled = false;
+        // A previous run must not leave a slot-lock capability failure or a menu swap armed.
+        AScriptBank.resetSessionState();
+        AScriptClick.reset();
         log.info("[AScript] Starting AIO script");
 
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
@@ -190,11 +192,13 @@ public class AScript extends Script {
 
     private void tick() {
         ScriptType selection = config == null ? ScriptType.NONE : config.scriptSelection();
+        ScriptType previousSelection = lastSelection;
         if (selection != lastSelection) {
             // A different module starts from zero: a bank/missing/eat streak earned by the
             // previous selection must never decide the new one's fate.
             lastSelection = selection;
             lastSelectionError = null;
+            AScriptBank.resetSessionState();
             resetRunCounters();
         }
 
@@ -207,6 +211,17 @@ public class AScript extends Script {
             // reselect would never clear its exit flag (doAction would return forever).
             for (AModule mod : MODULES) {
                 wasActive.put(mod, false);
+            }
+            runKeys.clear();
+            // A module self-stop sets scriptSelection = NONE while the bank may still be open
+            // and the withdraw mode may still be "item". Restore the setting and close a bank
+            // this run left open; a bank the user opened while the script was already idle is
+            // left alone.
+            AScriptBank.restoreWithdrawMode();
+            AScriptBank.resetSessionState();
+            if (previousSelection != ScriptType.NONE && Rs2Bank.isOpen()) {
+                Rs2Bank.closeBank();
+                sleepUntil(() -> !Rs2Bank.isOpen(), 3000);
             }
             resetRunCounters();
             return;
@@ -247,13 +262,23 @@ public class AScript extends Script {
             }
         }
 
-        // 2. Resolve all module phases + detect NONE → active transitions
+        // 2. Resolve all module phases + detect NONE → active and sub-selection transitions
         for (AModule mod : MODULES) {
             boolean prevActive = wasActive.getOrDefault(mod, false);
             mod.resolvePhase(config);
             boolean active = mod.isActive();
-            if (active && !prevActive) {
-                mod.resetExitFlag();
+            if (active) {
+                String runKey = mod.runKey(config);
+                String previousKey = runKeys.put(mod, runKey);
+                if (!prevActive) {
+                    mod.resetExitFlag();
+                } else if (previousKey != null && !previousKey.equals(runKey)) {
+                    // The same module but a different activity/item/location: the previous
+                    // batch latch, anchor and failure streak belong to the old scope.
+                    mod.resetExitFlag();
+                }
+            } else {
+                runKeys.remove(mod);
             }
             wasActive.put(mod, active);
         }
@@ -523,35 +548,19 @@ public class AScript extends Script {
      * <p>
      * {@link Rs2Player#eatAt(int)} delegates to {@code useFood()}, which eats the FIRST food in
      * slot order — a shark in slot 3 always wins over a summer pie in slot 20, whatever the
-     * heal. The selection here mirrors {@code useFood()}'s rules (unnoted items only, blighted
-     * food first in the Wilderness, "jug of wine" is drunk rather than eaten) and takes the
-     * per-bite heal priority from {@link Rs2Food} — the biggest heal always goes first — but the
-     * INSTANCE within the top-heal group is DRAWN by {@link AScriptPick#pickFood(java.util.List)}
-     * with the same log-normal rank as every other click target (toward the first occurrences,
-     * occasionally the last), never the lowest slot every time.
+     * heal. {@link AScriptFood#bestFood()} mirrors {@code useFood()}'s rules (unnoted items
+     * only, blighted food first in the Wilderness, "jug of wine" is drunk rather than eaten)
+     * and takes the per-bite heal priority from {@code Rs2Food} — the biggest heal always goes
+     * first — but the INSTANCE within the top-heal group is DRAWN by
+     * {@link AScriptPick#pickFood(java.util.List)} with the same log-normal rank as every
+     * other click target (toward the first occurrences, occasionally the last), never the
+     * lowest slot every time.
      *
      * @return true when the Eat/Drink op was dispatched — see {@link #waitForBite()} for the
      *         confirmation, the dispatch itself proves nothing
      */
     private boolean eatBestFood() {
-        List<Rs2ItemModel> foods = Rs2Inventory.getInventoryFood().stream()
-                .filter(food -> !food.isNoted())
-                .collect(Collectors.toList());
-        if (foods.isEmpty()) return false;
-
-        if (Microbot.getVarbitValue(Varbits.IN_WILDERNESS) == 1) {
-            List<Rs2ItemModel> blighted = foods.stream()
-                    .filter(food -> food.getName().toLowerCase().contains("blighted"))
-                    .collect(Collectors.toList());
-            if (!blighted.isEmpty()) foods = blighted;
-        }
-
-        Rs2ItemModel food = AScriptPick.pickFood(foods);
-        if (food == null) return false;
-
-        return food.getName().toLowerCase().contains("jug of wine")
-                ? Rs2Inventory.interact(food, "drink")
-                : Rs2Inventory.interact(food, "eat");
+        return AScriptFood.dispatch(AScriptFood.bestFood());
     }
 
     /**
@@ -560,11 +569,11 @@ public class AScript extends Script {
      * {@code Rs2Inventory.invokeMenu()} flips the op to {@code WIDGET_TARGET_ON_WIDGET}
      * whenever {@code isWidgetSelected()} is true — with a spell selected the "Eat" is sent
      * as "cast the selected spell at the food", so the food is never eaten. The pending
-     * selection is cancelled with the same idiom the bank / deposit box / GE utils use
-     * ({@code if (isItemSelected()) mouse.click()}: a click at the current position drops
-     * it), then confirmed gone. When it cannot be cancelled the attempt is skipped rather
-     * than dispatched as a wrong action — counting it would burn the
-     * {@link #MAX_EAT_FAILURES} budget against a state the food cannot fix.
+     * selection is cancelled through {@link AScriptClick#clearSelection()} (a click on the
+     * selected widget/item slot, not at the current cursor position), then confirmed gone.
+     * When it cannot be cancelled the attempt is skipped rather than dispatched as a wrong
+     * action — counting it would burn the {@link #MAX_EAT_FAILURES} budget against a state
+     * the food cannot fix.
      * <p>
      * Note: {@code Rs2Inventory.deselect()} is NOT usable here — it re-uses the selected
      * widget's item id, which is -1 for a spell, so it no-ops.
@@ -572,14 +581,13 @@ public class AScript extends Script {
      * @return true when it is safe to dispatch the Eat
      */
     private boolean eatReady() {
-        if (!Rs2Inventory.isItemSelected()) return true;
-        Microbot.getMouse().click();
-        boolean cleared = sleepUntil(() -> !Rs2Inventory.isItemSelected(),
-                Rs2Random.logNormalBounded(400, 900));
-        if (!cleared) {
-            log.debug("[AScript] Auto-eat skipped: a spell/item is still selected on the cursor");
+        // The shared selection canceller clicks the selected widget (item slot or spell icon)
+        // rather than wherever the cursor happens to be.
+        if (AScriptClick.clearSelection()) {
+            return true;
         }
-        return cleared;
+        log.debug("[AScript] Auto-eat skipped: a spell/item is still selected on the cursor");
+        return false;
     }
 
     /**
@@ -594,23 +602,15 @@ public class AScript extends Script {
      * @return true when the bite is visible in game state
      */
     private boolean waitForBite() {
-        int foodBefore = edibleFoodCount();
+        int foodBefore = AScriptFood.edibleCount();
         if (foodBefore <= 0) return false; // nothing edible — the dispatch could not have landed
         int hpBefore = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
 
         WeatherModulation.ensureFresh();
         double weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
         return sleepUntil(() -> Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS) > hpBefore
-                        || edibleFoodCount() < foodBefore,
+                        || AScriptFood.edibleCount() < foodBefore,
                 Rs2Random.logNormalBounded(1200, 2500, weatherMultiplier));
-    }
-
-    /** Total quantity of UNNOTED food in the inventory (banknotes cannot be eaten). */
-    private int edibleFoodCount() {
-        return Rs2Inventory.getInventoryFood().stream()
-                .filter(food -> !food.isNoted())
-                .mapToInt(Rs2ItemModel::getQuantity)
-                .sum();
     }
 
     /**
@@ -664,9 +664,14 @@ public class AScript extends Script {
         logoutHandled = false;
         for (AModule mod : MODULES) {
             wasActive.put(mod, false);
+            runKeys.remove(mod);
             mod.resetExitFlag();
         }
+        // Restore the player's bank setting while the window is still open (the request stays
+        // pending if it is closed), then drop the rest of the session state.
         AScriptBank.restoreWithdrawMode();
+        AScriptBank.resetSessionState();
+        AScriptClick.reset();
         currentPhase = Phase.DISABLED;
         super.shutdown();
     }
