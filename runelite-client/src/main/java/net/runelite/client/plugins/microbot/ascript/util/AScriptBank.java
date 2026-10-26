@@ -3,6 +3,7 @@ package net.runelite.client.plugins.microbot.ascript.util;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ItemID;
 import net.runelite.api.TileObject;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
@@ -10,6 +11,8 @@ import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.npc.Rs2Npc;
+import net.runelite.client.plugins.microbot.util.npc.Rs2NpcModel;
 import net.runelite.client.plugins.microbot.util.settings.Rs2Settings;
 
 import java.util.ArrayList;
@@ -72,9 +75,9 @@ public final class AScriptBank {
 
     /**
      * Set when a bank phase changed the player's withdraw mode from "note" to "item"; cleared by
-     * {@link #restoreWithdrawMode()} when the phase ends.
+     * {@link #restoreWithdrawMode()} once the player's setting has actually been restored.
      */
-    private static boolean restoreWithdrawAsNote;
+    private static volatile boolean restoreWithdrawAsNote;
 
     /**
      * Exponential backoff base between failed attempts when an attempt is unconfirmed:
@@ -283,7 +286,11 @@ public final class AScriptBank {
             return false;
         }
         int missing = quantity - held;
-        int available = availableBankQuantity(name);
+        // bankQuantity() retries a zero read once before concluding the bank holds none: the
+        // mirror is refreshed by container events, so a bare read right after the bank opens
+        // (or right after a deposit) can be stale. This also matters for tool withdrawals now
+        // that withdrawOneVerified routes through this amount path.
+        int available = bankQuantity(name);
         if (available <= 0) {
             log.warn("[AScriptBank] Cannot withdraw {} x{}: the bank holds none [{}]",
                     name, quantity, resolution(name));
@@ -324,7 +331,13 @@ public final class AScriptBank {
      *         lacks it or the withdraw didn't land (caller should return false)
      */
     public static boolean withdrawVerified(String name) {
-        return withdrawWithRetry(name, () -> withdrawBankItem(name, true), name);
+        // Presence alone is not a landing: when the item is already in the inventory (a held
+        // tool, a kept anchor), a silently failed withdraw would verify on the copy already
+        // there. Pin the resolved type first and require the count to RISE.
+        final String resolvedType = isNumeric(name) ? null : bankResolvedName(name);
+        final int before = countResolvedType(resolvedType, name);
+        return withdrawWithRetry(name, () -> withdrawBankItem(name, true), name,
+                () -> countResolvedType(resolvedType, name) > before);
     }
 
     /**
@@ -336,39 +349,18 @@ public final class AScriptBank {
      * @return true if one was withdrawn and is now in the inventory
      */
     public static boolean withdrawOneVerified(String name) {
-        return withdrawWithRetry(name, () -> withdrawBankItemOne(name), "one " + name);
+        // Use the amount-aware path (Withdraw-X with a prompt) rather than
+        // Rs2Bank.withdrawOne: the latter maps the player's bank quantity setting to menu op
+        // 1/2, which is Withdraw-5 whenever the setting is not "1" (and it was a dead dispatch
+        // on at least one live client), and it cannot be verified by a count delta.
+        return withdrawVerified(name, 1);
     }
 
     /**
-     * Shared withdraw core: dispatch, verify, grace re-check, retry with exponential backoff.
-     * <p>
-     * Each attempt verifies in two windows — the main {@link #WITHDRAW_VERIFY_TIMEOUT_MS}
-     * window, then a {@link #WITHDRAW_GRACE_TIMEOUT_MS} grace window that confirms merely-late
-     * landings (transient lag) before the attempt counts as failed. Unconfirmed attempts are
-     * retried up to {@link #WITHDRAW_MAX_ATTEMPTS} total dispatches, spaced by an exponential
-     * backoff.
-     * <p>
-     * A retry waits the backoff FIRST and re-checks the inventory BEFORE re-dispatching, so a
-     * slow landing in flight is confirmed instead of double-clicked. The bank window is left
-     * exactly as it is across attempts — the loop never closes or re-opens it (typical
-     * scripting behavior); the caller keeps the window open for the whole call.
-     *
-     * @param nameOrId item name (or numeric id as a string) to withdraw
-     * @param dispatch performs one withdraw dispatch and reports whether it had an item to click
-     *                 (the retry loop owns the verification)
-     * @param describe label for the log lines (e.g. "bow string x14", "one mould")
-     * @return true once the item is verified in the inventory; false when every attempt
-     *         failed or the bank lacks the item
-     */
-    private static boolean withdrawWithRetry(String nameOrId, BooleanSupplier dispatch, String describe) {
-        return withdrawWithRetry(nameOrId, dispatch, describe, () -> hasInventoryItem(nameOrId));
-    }
-
-    /**
-     * {@link #withdrawWithRetry(String, BooleanSupplier, String)} with a caller-supplied success
-     * predicate: the amount-based withdraw confirms on a count delta, the all/one variants on
-     * presence. Everything else (bank-presence pre-check, main + grace windows, backoff before
-     * re-checking, never re-opening the bank) is shared.
+     * Shared withdraw core with a caller-supplied success predicate: the amount-based withdraw
+     * and the all variant both confirm on a count delta. Everything else (bank-presence
+     * pre-check, main + grace windows, backoff before re-checking, never re-opening the bank)
+     * is shared.
      *
      * @param nameOrId item name (or numeric id as a string) to withdraw
      * @param dispatch performs one withdraw dispatch and reports whether it had an item to click
@@ -974,16 +966,36 @@ public final class AScriptBank {
 
     /**
      * Restore a "Withdraw as note" setting remembered by {@link #ensureItemWithdrawMode()}.
-     * No-op when this phase did not change the mode or when the bank is already closed.
+     * No-op when this phase did not change the mode. When the bank is closed the request stays
+     * pending: closing the flag without the bank would silently leave the player's setting on
+     * "Withdraw as item" forever, so the next open bank phase restores it.
      */
     public static void restoreWithdrawMode() {
         if (!restoreWithdrawAsNote) {
             return;
         }
-        restoreWithdrawAsNote = false;
-        if (Rs2Bank.isOpen() && !Rs2Bank.setWithdrawAsNote()) {
+        if (!Rs2Bank.isOpen()) {
+            log.debug("[AScriptBank] withdraw-mode restore pending until the bank is open again");
+            return;
+        }
+        if (Rs2Bank.setWithdrawAsNote()) {
+            restoreWithdrawAsNote = false;
+        } else {
             log.warn("[AScriptBank] could not restore the bank's 'Withdraw as note' setting");
         }
+    }
+
+    /**
+     * Clear per-session static state at a script/plugin boundary. The remembered withdraw mode
+     * is deliberately NOT cleared here: {@link #restoreWithdrawMode()} must get its chance
+     * first (the caller restores before resetting on shutdown), otherwise the player's setting
+     * is lost with the flag.
+     */
+    public static void resetSessionState() {
+        bankCapabilityFailure = null;
+        bankCapabilityFailureAtMs = 0L;
+        // restoreWithdrawAsNote intentionally survives: a restore that could not run while the
+        // bank was closed must still happen the next time a bank opens.
     }
 
     /**
@@ -1048,13 +1060,6 @@ public final class AScriptBank {
             return Rs2Bank.withdrawAll(Integer.parseInt(nameOrId));
         }
         return Rs2Bank.withdrawAll(checkInv, nameOrId);
-    }
-
-    private static boolean withdrawBankItemOne(String nameOrId) {
-        if (isNumeric(nameOrId)) {
-            return Rs2Bank.withdrawOne(Integer.parseInt(nameOrId));
-        }
-        return Rs2Bank.withdrawOne(nameOrId);
     }
 
     private static boolean withdrawBankItemX(String nameOrId, int quantity) {
@@ -1290,7 +1295,17 @@ public final class AScriptBank {
      */
     public static boolean bankVisible() {
         TileObject bank = findBankObject();
-        return bank != null && Rs2Camera.isTileOnScreen(bank);
+        if (bank != null && Rs2Camera.isTileOnScreen(bank)) {
+            return true;
+        }
+        // Rs2Bank.openBank() also falls back to a banker NPC. A banker-only bank would
+        // otherwise never report ready and a module that gates on this would walk forever.
+        Rs2NpcModel banker = Rs2Npc.getBankerNPC();
+        if (banker == null) {
+            return false;
+        }
+        LocalPoint local = Microbot.getClientThread().invoke(banker::getLocalLocation);
+        return local != null && Rs2Camera.isTileOnScreen(local);
     }
 
     /**
