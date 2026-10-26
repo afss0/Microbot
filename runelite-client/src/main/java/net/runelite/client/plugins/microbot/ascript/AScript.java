@@ -131,6 +131,17 @@ public class AScript extends Script {
     private ScriptType lastSelection = ScriptType.NONE;
     /** Last "waiting for configuration" message logged — the hold logs once per change. */
     private String lastSelectionError = null;
+    /**
+     * True while the last tick actually ran automation (config enabled + a module selected).
+     * The disabled branch uses it to close only a bank THIS run may have left open — and clears
+     * it on that close, so the cleanup is a one-shot on the running → idle transition.
+     * <p>
+     * Never infer that from {@link #lastSelection}: the selection persists across ticks even
+     * while the script is disabled, so {@code selection != NONE} stays true with the Enabled
+     * checkbox off and the cleanup closed every bank the player opened, every 600 ms (live
+     * 2026-10-26).
+     */
+    private boolean runWasActive = false;
     /** Track if the player was logged in at least once — triggers the logout watcher. */
     private boolean playerWasLoggedIn = false;
     /** Prevent repeated logout notifications. */
@@ -142,6 +153,7 @@ public class AScript extends Script {
         this.config = config;
         this.playerWasLoggedIn = false;
         this.logoutHandled = false;
+        this.runWasActive = false;
         // A previous run must not leave a slot-lock capability failure or a menu swap armed.
         AScriptBank.resetSessionState();
         AScriptClick.reset();
@@ -192,7 +204,6 @@ public class AScript extends Script {
 
     private void tick() {
         ScriptType selection = config == null ? ScriptType.NONE : config.scriptSelection();
-        ScriptType previousSelection = lastSelection;
         if (selection != lastSelection) {
             // A different module starts from zero: a bank/missing/eat streak earned by the
             // previous selection must never decide the new one's fate.
@@ -216,16 +227,26 @@ public class AScript extends Script {
             // A module self-stop sets scriptSelection = NONE while the bank may still be open
             // and the withdraw mode may still be "item". Restore the setting and close a bank
             // this run left open; a bank the user opened while the script was already idle is
-            // left alone.
+            // left alone. The close is gated on runWasActive and clears it: with the Enabled
+            // checkbox off no tick ever runs automation, so a bank the player opens must stay
+            // open — the old {@code previousSelection != NONE} test was true on every tick
+            // merely because a module was selected, and closed the bank every 600 ms.
             AScriptBank.restoreWithdrawMode();
             AScriptBank.resetSessionState();
-            if (previousSelection != ScriptType.NONE && Rs2Bank.isOpen()) {
-                Rs2Bank.closeBank();
-                sleepUntil(() -> !Rs2Bank.isOpen(), 3000);
+            if (runWasActive) {
+                runWasActive = false;
+                if (Rs2Bank.isOpen()) {
+                    Rs2Bank.closeBank();
+                    sleepUntil(() -> !Rs2Bank.isOpen(), 3000);
+                }
             }
             resetRunCounters();
             return;
         }
+
+        // From here on this tick runs automation: a later disable/self-stop is the running →
+        // idle transition that owns the one-shot bank cleanup in the branch above.
+        runWasActive = true;
 
         // 1b. QOL: keep the camera zoomed out (rate-limited)
         if (config.autoZoomOut()
@@ -660,6 +681,7 @@ public class AScript extends Script {
         consecutiveTickErrors = 0;
         lastSelection = ScriptType.NONE;
         lastSelectionError = null;
+        runWasActive = false;
         playerWasLoggedIn = false;
         logoutHandled = false;
         for (AModule mod : MODULES) {
