@@ -1,8 +1,10 @@
 package net.runelite.client.plugins.microbot.ascript.jewellenchant;
 
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Point;
 import net.runelite.api.Skill;
 import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetUtil;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
@@ -15,11 +17,13 @@ import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.skillcalculator.skills.MagicAction;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
+import net.runelite.client.plugins.microbot.util.input.PointerState;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.magic.Rs2Magic;
 import net.runelite.client.plugins.microbot.util.magic.Runes;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
@@ -57,6 +61,11 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  * mould in {@code CraftingScript}) so the banking deposit never removes it —
  * {@link AScriptBank#ensureStackLocked(String)} withdraws the whole stack when
  * it runs out and re-locks it.
+ * <p>
+ * The game auto-recasts an enchantment spell every 7 game ticks after a cast. The cast path
+ * treats that as progress: it baselines the enchanted count at tick start, re-reads the target
+ * slot and the armed spell immediately before the press, and never clicks a piece the
+ * auto-cast already converted.
  * <p>
  * Adapted from Microbot Hub JewelleryEnchantPlugin.
  */
@@ -465,6 +474,10 @@ public class JewelEnchantScript implements AModule {
             postBatchBreak(config);
             return;
         }
+        // Baseline at the START of the tick: the game's auto-recast (every 7 game ticks) can
+        // convert a piece while the spell is being armed or the tab is switching. A rise from
+        // this baseline is progress, not a failed manual click.
+        int enchantedAtStart = enchantedCount(item);
         jewelEnchantPostBatchBreakDone = false; // jewellery present again — the next empty state is a new batch end
         batchRanSinceBank = true;               // a batch is being worked — its end earns the closing break
 
@@ -498,6 +511,15 @@ public class JewelEnchantScript implements AModule {
             return;
         }
 
+        // The game auto-recasts every 7 ticks; it may have converted a piece while the spell
+        // was armed / the tab switched. A count rise is progress — never click a piece that
+        // the auto-cast may already have consumed.
+        if (enchantedCount(item) > enchantedAtStart) {
+            consecutiveEnchantFailures = 0;
+            log.debug("[JewelEnchant] auto-enchant progressed while arming — skipping manual cast");
+            return;
+        }
+
         // Resolve the target slot HERE, immediately before the click — never at the
         // top of doAction. The enchant spell consumes the FIRST inventory item of
         // the type it finds regardless of which item was selected, so a piece
@@ -516,23 +538,33 @@ public class JewelEnchantScript implements AModule {
             consecutiveEnchantFailures = 0;
             return;
         }
-        int enchantedBefore = enchantedCount(item);
-        if (!clickInventoryItem(jewellery)) {
-            failEnchant("no clickable inventory slot for " + item.getName());
+        Point castPoint = prepareJewelleryClick(jewellery, spell, item.getUnenchantedId());
+        if (castPoint == null) {
+            // The auto-cast consumed the target, or the spell/pointer was lost while
+            // hovering. That is progress/retry, never a failed cast.
+            consecutiveEnchantFailures = 0;
             return;
         }
+        Microbot.getMouse().click(castPoint);
 
         // 3. Confirm the enchant landed — the ENCHANTED side count rises (all known
-        //    charge variants), or the player animates while a queued conversion lands.
-        //    A bare "raw count dropped" would also fire when a misclick WORE a piece
-        //    (the 2026-10-16 report): the raw count drops and the piece sits worn.
-        //    Anything else is a failed attempt, counted so a broken run stops instead
-        //    of spinning forever.
+        //    charge variants) against the TICK-START baseline, or the player animates.
+        //    The tick-start baseline makes an auto-cast that landed during this tick count
+        //    as success; a bare raw-count drop is still not success (it can be a wear).
         boolean enchanted = sleepUntil(
-                () -> enchantedCount(item) > enchantedBefore
+                () -> enchantedCount(item) > enchantedAtStart
                         || Rs2Player.isAnimating(),
                 Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier));
         if (!enchanted) {
+            // A consumed target is progress too: the auto-cast may have enchanted the piece
+            // between the last re-read and the press. Only an unchanged slot that still
+            // holds an unenchanted item, with no conversion, is a genuine missed cast.
+            Rs2ItemModel after = Rs2Inventory.getItemInSlot(jewellery.getSlot());
+            if (after == null || after.getId() != item.getUnenchantedId()
+                    || Rs2Inventory.getLast(item.getUnenchantedId()) == null) {
+                consecutiveEnchantFailures = 0;
+                return;
+            }
             failEnchant("no enchant conversion for " + item.getName());
             return;
         }
@@ -584,6 +616,21 @@ public class JewelEnchantScript implements AModule {
         // sprite lookup below would find nothing.
         Rs2Magic.oneTimeSpellBookCheck();
 
+        // The auto-recast does not disarm the spell: between casts the correct icon is still
+        // on the cursor. Re-arm only when it is not, which both shortens the race window and
+        // avoids a needless icon click.
+        if (isSpellArmed(spell)) {
+            return true;
+        }
+        // A stale item / different spell on the cursor is not the enchant spell. Click the
+        // selected widget itself to cancel it — never an arbitrary inventory item, which an
+        // armed spell would cast on / use the item against.
+        if (Rs2Inventory.isItemSelected() && !clearCursorSelection()) {
+            log.warn("[JewelEnchant] could not clear a stale cursor selection before arming {}",
+                    spell.getName());
+            return false;
+        }
+
         if (!Rs2Tab.switchTo(InterfaceTab.MAGIC)) {
             log.warn("[JewelEnchant] Could not open the magic tab");
             return false;
@@ -602,20 +649,68 @@ public class JewelEnchantScript implements AModule {
             return false;
         }
 
-        // Click, then VERIFY the spell actually armed: a click that does not land
-        // (lag, sub-tab still opening) would leave the next inventory left-click
-        // meaning WEAR under the cursor — the misclick class of the 2026-10-16
-        // report. One bounded re-click keeps a single lost click from failing the
-        // tick; still unarmed counts as a failed attempt.
-        Microbot.getMouse().click(bounds);
-        if (!sleepUntil(Rs2Inventory::isItemSelected, 1200)) {
+        // Click, then VERIFY the SPECIFIC spell actually armed. "Something is selected" is not
+        // enough: a stale item or another spell also satisfies it, and the next inventory
+        // left-click would then wear/use the jewellery instead of enchanting it. One bounded
+        // re-click keeps a single lost click from failing the tick.
+        for (int attempt = 0; attempt < 2; attempt++) {
             Microbot.getMouse().click(bounds);
-            if (!sleepUntil(Rs2Inventory::isItemSelected, 1200)) {
-                log.warn("[JewelEnchant] {} click did not arm the spell", spell.getName());
-                return false;
+            if (sleepUntil(() -> isSpellArmed(spell), 1200)) {
+                return true;
             }
         }
-        return true;
+        log.warn("[JewelEnchant] {} click did not arm the spell", spell.getName());
+        return false;
+    }
+
+    /**
+     * Cancel a stale cursor selection by clicking the selected widget itself: an inventory
+     * item's own slot cancels the item, and clicking the selected spell icon again deselects
+     * the spell. Never click an arbitrary inventory item here — an armed spell would cast on
+     * it instead of cancelling.
+     */
+    private boolean clearCursorSelection() {
+        Rectangle bounds = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget selected = Microbot.getClient().getSelectedWidget();
+            return selected == null ? null : selected.getBounds();
+        }).orElse(null);
+        if (bounds == null || bounds.width <= 0 || bounds.height <= 0) {
+            return false;
+        }
+        Microbot.getMouse().click(bounds);
+        return sleepUntil(() -> !Rs2Inventory.isItemSelected(),
+                Rs2Random.logNormalBounded(400, 900, weatherMultiplier));
+    }
+
+    /**
+     * Cheap check that {@code spell}'s icon is the widget currently on the cursor.
+     * <p>
+     * The common path is one client-thread read + sprite/interface comparison. The widget-id
+     * fallback scans the spellbook's static children only when the selected widget does not
+     * expose the expected sprite (e.g. a frame where the sprite read is not settled), so the
+     * auto-recast's "spell stays armed" state is detected without re-arming.
+     */
+    private boolean isSpellArmed(MagicAction spell) {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget selected = Microbot.getClient().getSelectedWidget();
+            if (selected == null) {
+                return false;
+            }
+            if (selected.getSpriteId() == spell.getSprite()
+                    && WidgetUtil.componentToInterface(selected.getId()) == SPELLBOOK_PARENT_ID) {
+                return true;
+            }
+            Widget spellbook = Microbot.getClient().getWidget(SPELLBOOK_PARENT_ID, SPELLBOOK_CHILD_ID);
+            if (spellbook == null || spellbook.getStaticChildren() == null) {
+                return false;
+            }
+            for (Widget child : spellbook.getStaticChildren()) {
+                if (child != null && child.getSpriteId() == spell.getSprite()) {
+                    return selected.getId() == child.getId();
+                }
+            }
+            return false;
+        }).orElse(false);
     }
 
     /**
@@ -636,18 +731,42 @@ public class JewelEnchantScript implements AModule {
     }
 
     /**
-     * Left-click an inventory item's slot with the client mouse. The inventory
-     * tab must be open — {@link Rs2Inventory#itemBounds} resolves the dynamic
-     * slot widget bounds only for the visible inventory container.
+     * Move the cursor to the resolved jewellery slot and re-verify the two things the game's
+     * auto-recast can invalidate between target resolution and the press:
+     * <ul>
+     *   <li>the slot still holds the <b>unenchanted</b> id — the auto-recast (every 7 game
+     *       ticks) can consume the piece while the spell is armed;</li>
+     *   <li>the enchant spell is still on the cursor — an inventory left-click with no spell
+     *       armed <b>wears</b> the jewellery instead of casting.</li>
+     * </ul>
+     * A {@code null} result means "skip this tick": progress or a retry, never a failed cast,
+     * so the caller must not spend a failure life.
      */
-    private boolean clickInventoryItem(Rs2ItemModel item) {
-        Rectangle bounds = Rs2Inventory.itemBounds(item);
+    private Point prepareJewelleryClick(Rs2ItemModel jewellery, MagicAction spell, int unenchantedId) {
+        Rectangle bounds = Rs2Inventory.itemBounds(jewellery);
         if (bounds == null) {
-            log.warn("[JewelEnchant] No bounds for {} (slot {})", item.getName(), item.getSlot());
-            return false;
+            log.warn("[JewelEnchant] No bounds for {} (slot {})", jewellery.getName(), jewellery.getSlot());
+            return null;
         }
-        Microbot.getMouse().click(bounds);
-        return true;
+        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
+        Microbot.getMouse().move(point);
+        if (!sleepUntil(() -> PointerState.isAt(point.getX(), point.getY()),
+                Rs2Random.logNormalBounded(400, 900, weatherMultiplier))) {
+            log.debug("[JewelEnchant] cursor did not settle on {} — retrying next tick",
+                    jewellery.getName());
+            return null;
+        }
+        Rs2ItemModel live = Rs2Inventory.getItemInSlot(jewellery.getSlot());
+        if (live == null || live.getId() != unenchantedId) {
+            log.debug("[JewelEnchant] {} was enchanted/moved before the click — skipping",
+                    jewellery.getName());
+            return null;
+        }
+        if (!isSpellArmed(spell)) {
+            log.debug("[JewelEnchant] enchantment spell lost before the click — re-arming next tick");
+            return null;
+        }
+        return point;
     }
 
     /**
