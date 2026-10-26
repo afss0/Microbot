@@ -4,6 +4,7 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import net.runelite.api.Skill;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
@@ -115,9 +116,8 @@ public enum Pickaxe {
     }
 
     /**
-     * Check if any pickaxe is available in the bank. The read is the retrying
-     * {@code Rs2Bank.hasBankItem} family: this feeds the module's missing-materials
-     * verdict, and the bare mirror read can report a pickaxe the bank no longer lists.
+     * Check if any pickaxe is available in the bank. ONE snapshot pass: a per-tier
+     * {@code hasBankItem} scan pays the retrying-read miss cost for every absent tier.
      */
     public static boolean hasAnyPickaxeInBank() {
         int miningLevel = Rs2Player.getBoostedSkillLevel(Skill.MINING);
@@ -128,6 +128,17 @@ public enum Pickaxe {
                 .collect(java.util.stream.Collectors.toSet());
         for (Pickaxe p : values()) {
             if (bankIds.contains(p.getItemId()) && p.isUsableAt(miningLevel)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True when a pickaxe is held only as a banknote. Such a pickaxe is not usable directly
+     * but is recovered by depositing it into the bank, so it must not read as "missing".
+     */
+    public static boolean hasNotedPickaxeInInventory() {
+        for (Pickaxe p : values()) {
+            if (AScriptBank.hasNotedItem(p.getItemId())) return true;
         }
         return false;
     }

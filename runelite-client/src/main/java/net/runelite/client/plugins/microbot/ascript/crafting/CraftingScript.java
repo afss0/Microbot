@@ -123,6 +123,20 @@ public class CraftingScript implements AModule {
         }
     }
 
+    @Override
+    public String runKey(AScriptConfig config) {
+        return "CRAFTING:" + currentPhase
+                + ":" + config.craftingActivity()
+                + ":" + config.gemType()
+                + ":" + config.glassType()
+                + ":" + config.staffType()
+                + ":" + config.flaxSpinLocation()
+                + ":" + config.dragonLeatherType()
+                + ":" + config.jewelryItem()
+                + ":" + config.jewelryLocation()
+                + ":" + config.useCostumeNeedle();
+    }
+
     // ── Selection validation ────────────────────────────────────
 
     /**

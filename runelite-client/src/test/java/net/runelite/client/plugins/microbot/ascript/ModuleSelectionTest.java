@@ -2,6 +2,7 @@ package net.runelite.client.plugins.microbot.ascript;
 
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
 import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingScript;
+import net.runelite.client.plugins.microbot.ascript.fletching.FletchingActivity;
 import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
 import net.runelite.client.plugins.microbot.ascript.mining.MiningScript;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MotherloadMineScript;
@@ -9,6 +10,7 @@ import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingScrip
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -52,5 +54,19 @@ public class ModuleSelectionTest {
         assertNull(new MotherloadMineScript().validateSelection(selection(ScriptType.WOODCUTTING)));
         assertNull(new CraftingScript().validateSelection(selection(ScriptType.FIREMAKING)));
         assertNull(new FletchingScript().validateSelection(selection(ScriptType.MINING)));
+    }
+
+    @Test
+    public void runKeyChangesWithTheConfiguredActivity() {
+        AScriptConfig darts = mock(AScriptConfig.class);
+        when(darts.fletchingActivity()).thenReturn(FletchingActivity.DARTS);
+        AScriptConfig bows = mock(AScriptConfig.class);
+        when(bows.fletchingActivity()).thenReturn(FletchingActivity.BOWS);
+
+        FletchingScript module = new FletchingScript();
+        assertNotEquals("a different activity must start a fresh run scope",
+                module.runKey(darts), module.runKey(bows));
+        assertEquals("the same activity must keep the scope stable",
+                module.runKey(darts), module.runKey(darts));
     }
 }

@@ -1,6 +1,7 @@
 package net.runelite.client.plugins.microbot.ascript.ammonitecrabs;
 
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Skill;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.NpcID;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -9,6 +10,7 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptFood;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.api.npc.models.Rs2NpcModel;
@@ -18,6 +20,7 @@ import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.security.Login;
@@ -116,6 +119,16 @@ public class AmmoniteCrabsScript implements AModule {
     }
 
     @Override
+    public String runKey(AScriptConfig config) {
+        return "AMMONITE:" + config.ammoniteCrabLocation()
+                + ":" + config.ammoniteCrabFood()
+                + ":" + config.ammoniteCrabPotion()
+                + ":" + config.ammoniteCrabUseFood()
+                + ":" + config.ammoniteCrabUsePotions()
+                + ":" + config.ammoniteCrabPotionAmount();
+    }
+
+    @Override
     public void resetExitFlag() {
         exitRequested = false;
         consecutiveFailures = 0;
@@ -196,9 +209,26 @@ public class AmmoniteCrabsScript implements AModule {
         // Potions first: they need dedicated slots before food fills the rest.
         if (config.ammoniteCrabUsePotions()
                 && Rs2Inventory.getFilteredPotionItemsInInventory(config.ammoniteCrabPotion().getPotionName()).isEmpty()) {
-            if (!AScriptBank.withdrawVerified(String.valueOf(config.ammoniteCrabPotion().getId()),
-                    config.ammoniteCrabPotionAmount())) {
+            // Withdraw what the bank can actually serve, capped by the configured amount: a
+            // verdict that accepts one potion must not make doBank demand four, or the bank
+            // cycle fails forever on a legitimate partial restock.
+            int potionId = config.ammoniteCrabPotion().getId();
+            int available = AScriptBank.bankQuantity(String.valueOf(potionId));
+            int toWithdraw = Math.min(config.ammoniteCrabPotionAmount(), available);
+            if (toWithdraw < 1) {
+                log.warn("[AmmoniteCrabs] bank holds no {} potion to withdraw",
+                        config.ammoniteCrabPotion().getPotionName());
                 return false;
+            }
+            if (!AScriptBank.withdrawVerified(String.valueOf(potionId), toWithdraw)) {
+                // A partial restock is still a usable trip: the verdict only requires one
+                // potion, and the next bank visit tops the stack up. Fail only when nothing
+                // arrived at all (closed window, failed dispatch).
+                if (Rs2Inventory.getFilteredPotionItemsInInventory(
+                        config.ammoniteCrabPotion().getPotionName()).isEmpty()) {
+                    return false;
+                }
+                log.info("[AmmoniteCrabs] partial potion restock — continuing with what landed");
             }
         }
         if (config.ammoniteCrabUseFood() && Rs2Inventory.getInventoryFood().isEmpty()) {
@@ -265,6 +295,31 @@ public class AmmoniteCrabsScript implements AModule {
         }
     }
 
+    /**
+     * Eat the best food the inventory holds through the shared food helper: the largest
+     * per-bite heal wins and the instance inside that group is drawn (not always the first
+     * slot). The bite is confirmed before the next attempt; an unconfirmed one spends the
+     * module's action-failure budget instead of silently eating nothing while HP drains.
+     */
+    private void eatBestFood() {
+        Rs2ItemModel food = AScriptFood.bestFood();
+        if (food == null) {
+            return;
+        }
+        int foodBefore = AScriptFood.edibleCount();
+        int hpBefore = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
+        if (!AScriptFood.dispatch(food)) {
+            return;
+        }
+        boolean confirmed = sleepUntil(
+                () -> Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS) > hpBefore
+                        || AScriptFood.edibleCount() < foodBefore,
+                Rs2Random.logNormalBounded(1200, 2500, weatherMultiplier));
+        if (!confirmed) {
+            fail("eat was not confirmed");
+        }
+    }
+
     private void handleFighting(AScriptConfig config) {
         AmmoniteCrabLocation loc = config.ammoniteCrabLocation();
         Microbot.status = "FIGHTING";
@@ -291,8 +346,8 @@ public class AmmoniteCrabsScript implements AModule {
         // here unconditionally so an early return below never leaves a stale edge armed.
         boolean killEdge = !inCombat && wasInCombat;
         wasInCombat = inCombat;
-        if (config.ammoniteCrabUseFood()) {
-            Rs2Player.eatAt(EAT_AT_HP);
+        if (config.ammoniteCrabUseFood() && AScriptFood.belowHpPercent(EAT_AT_HP)) {
+            eatBestFood();
         }
         if (config.ammoniteCrabUsePotions() && inCombat) {
             Rs2Player.drinkCombatPotionAt(config.ammoniteCrabPotion().getSkill());

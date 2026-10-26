@@ -19,6 +19,8 @@ import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
+import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
+import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.depositbox.Rs2DepositBox;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
@@ -97,6 +99,10 @@ public class MotherloadMineScript implements AModule {
     private double weatherMultiplier = 1.0;
     /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
     private long lastAfkTime = 0L;
+    /** Pickaxe-recovery walk: last observed position and when it last changed. */
+    private WorldPoint lastBankWalkPos = null;
+    private long lastBankWalkAt = 0L;
+    private static final long BANK_WALK_STAGNATION_MS = 120_000L;
 
     // ── Phase enum ─────────────────────────────────────────────
 
@@ -110,6 +116,8 @@ public class MotherloadMineScript implements AModule {
         shouldEmptySack = false;
         shouldRepairWaterwheel = false;
         pickedUpHammer = false;
+        lastBankWalkPos = null;
+        lastBankWalkAt = 0L;
         idleSince = 0;
         noVeinSinceMs = 0L;
         idleThreshold = 0;
@@ -128,6 +136,12 @@ public class MotherloadMineScript implements AModule {
     // ── Selection validation ───────────────────────────────────
 
     @Override
+    public String runKey(AScriptConfig config) {
+        // A different mining area is a different trip scope.
+        return "MLM:" + config.mlmMiningArea();
+    }
+
+    @Override
     public String validateSelection(AScriptConfig config) {
         // Motherload Mine selected but not active → visible error
         if (currentPhase == Phase.NONE && config.scriptSelection() == ScriptType.MOTHERLOAD_MINE)
@@ -140,10 +154,11 @@ public class MotherloadMineScript implements AModule {
     @Override
     public boolean needsBank(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
-        // Ask for a bank trip only when the bank can actually supply the tool: with no
-        // pickaxe anywhere, doAction stops once with a clear message instead of the
-        // orchestrator retrying openBank at a mine that has no bank.
-        return !Pickaxe.hasAnyPickaxe() && Pickaxe.hasAnyPickaxeInBank();
+        // A bank trip is needed whenever no usable pickaxe is held, even if the bank mirror
+        // says nothing: the mirror is refreshed only by an open bank, so reading it here can
+        // turn a first-run trip into a false "no pickaxe" stop. readyForBank()/doAction() own
+        // the walk; the missing-materials verdict owns "the bank really has none".
+        return !Pickaxe.hasAnyPickaxe();
     }
 
     /** The bank phase gate: the bank must be loaded and on camera before openBank runs. */
@@ -158,7 +173,10 @@ public class MotherloadMineScript implements AModule {
     public boolean isBankMissingMaterials(AScriptConfig config) {
         if (currentPhase == Phase.NONE || !Microbot.isLoggedIn()) return false;
         if (!needsBank(config)) return false;
-        return !Pickaxe.hasAnyPickaxe() && !Pickaxe.hasAnyPickaxeInBank();
+        // A noted pickaxe is recoverable by depositing it at the bank; it is not a missing tool.
+        return !Pickaxe.hasAnyPickaxe()
+                && !Pickaxe.hasAnyPickaxeInBank()
+                && !Pickaxe.hasNotedPickaxeInInventory();
     }
 
     // ── Missing-materials description ──────────────────────────
@@ -191,20 +209,17 @@ public class MotherloadMineScript implements AModule {
         // lamp: the lamp cannot be deposited and must not make this wait time out every cycle.
         sleepUntil(AScriptBank::isEmptyExceptLocksAndLamp, 5000);
 
-        // Withdraw best pickaxe
+        // Withdraw best pickaxe. Use the verified amount path, not Rs2Bank.withdrawItem/
+        // withdrawOne: the latter maps the bank quantity setting to menu op 1/2 (Withdraw-5
+        // for every setting except "1") and was a dead dispatch on at least one live client.
         Pickaxe best = Pickaxe.getBestPickaxeFromBank();
         if (best == null) {
-            AScriptNotify.notify("Banking Failed", "No pickaxe in bank");
+            log.warn("[MotherloadMineScript] no usable pickaxe in the bank snapshot");
             return false;
         }
 
-        if (!Rs2Bank.withdrawItem(best.getItemId())) {
+        if (!AScriptBank.withdrawVerified(String.valueOf(best.getItemId()), 1)) {
             log.warn("[MotherloadMineScript] Failed to withdraw pickaxe: {}", best.getItemName());
-            return false;
-        }
-
-        if (!sleepUntil(() -> Rs2Inventory.hasItem(best.getItemId()), 3000)) {
-            AScriptNotify.notify("Banking Failed", "Pickaxe withdraw did not land in inventory");
             return false;
         }
 
@@ -212,6 +227,49 @@ public class MotherloadMineScript implements AModule {
     }
 
     // ── Mining actions ────────────────────────────────────────
+
+    /**
+     * Move toward a bank that can supply a pickaxe. Returns true while the trip is in
+     * progress (the module should return and let the next tick continue); false only when no
+     * reachable bank exists, so the caller stops with a missing-tool message.
+     * <p>
+     * A bank object already loaded in the scene is TURNED TO, not walked at; the walker only
+     * runs while no bank is loaded. Progress is measured as "the player moved", never as the
+     * distance shrinking (a teleport may legitimately move farther away first).
+     */
+    private boolean approachBankForPickaxe() {
+        if (AScriptBank.bankVisible()) {
+            return true; // the orchestrator's bank phase opens it on the next tick
+        }
+        TileObject bankObject = AScriptBank.findBankObject();
+        if (bankObject != null) {
+            Microbot.status = "MLM — turning to bank";
+            Rs2Camera.turnTo(bankObject);
+            return true;
+        }
+        BankLocation nearest = Rs2Bank.getNearestBank();
+        if (nearest == null) {
+            return false;
+        }
+        WorldPoint here = Rs2Player.getWorldLocation();
+        if (here == null) {
+            return true;
+        }
+        long now = System.currentTimeMillis();
+        if (lastBankWalkPos == null || !here.equals(lastBankWalkPos)) {
+            lastBankWalkPos = here;
+            lastBankWalkAt = now;
+        } else if (now - lastBankWalkAt > BANK_WALK_STAGNATION_MS) {
+            log.warn("[MotherloadMineScript] bank walk made no progress for {}s",
+                    BANK_WALK_STAGNATION_MS / 1000);
+            return false;
+        }
+        Microbot.status = "MLM — walking to bank";
+        if (!Rs2Player.isMoving()) {
+            Rs2Walker.walkTo(nearest.getWorldPoint(), 8);
+        }
+        return true;
+    }
 
     @Override
     public void doAction(AScriptConfig config) {
@@ -222,11 +280,17 @@ public class MotherloadMineScript implements AModule {
         WeatherModulation.ensureFresh();
         weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
 
-        // Ensure we have a pickaxe
+        // No usable pickaxe: a bank trip must fetch one. readyForBank() gates the orchestrator
+        // on a clickable bank, so while the bank is not in reach this method owns the walk —
+        // bounded; a stalled recovery stops loudly instead of failing at the mine forever.
         if (!Pickaxe.hasAnyPickaxe()) {
-            log.warn("[MotherloadMineScript] No pickaxe, need bank");
+            if (approachBankForPickaxe()) {
+                return;
+            }
+            log.warn("[MotherloadMineScript] No pickaxe and no reachable bank");
             exitRequested = true;
-            AScriptNotify.notify("aScript Stopped", "Motherload Mine: no pickaxe");
+            AScriptNotify.notify("aScript Stopped — Motherload Mine",
+                    "no pickaxe (not worn, not in the inventory or noted, not in the bank)");
             Microbot.getConfigManager().setConfiguration(
                     AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
             return;
