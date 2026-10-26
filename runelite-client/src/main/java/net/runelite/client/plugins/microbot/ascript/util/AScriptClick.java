@@ -18,6 +18,7 @@ import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
+import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.input.PointerState;
@@ -514,8 +515,12 @@ public final class AScriptClick {
             armMenuSwap(slot, itemId, "Drop");
             try {
                 // Hover first: the client builds the real menu for this slot, PostMenuSort reorders
-                // it, and only then does the press mean "Drop".
-                Microbot.getMouse().move(point);
+                // it, and only then does the press mean "Drop". NaturalMouse owns the travel; a
+                // direct VirtualMouse.move would teleport and make the press instantaneous.
+                if (!moveNaturally(point)) {
+                    log.warn("[AScriptClick] the cursor did not settle on the Drop slot — retrying");
+                    return false;
+                }
                 if (!sleepUntil(() -> isMenuSwapOnTop(slot, itemId, "Drop"),
                         Rs2Random.logNormalBounded(400, 800))) {
                     log.warn("[AScriptClick] the Drop row never reached the top of the menu");
@@ -865,6 +870,40 @@ public final class AScriptClick {
         }
         if (!PointerState.isAt(point.getX(), point.getY())) {
             Microbot.getMouse().move(point);
+        }
+        return sleepUntil(() -> PointerState.isAt(point.getX(), point.getY()),
+                Rs2Random.logNormalBounded(400, 900));
+    }
+
+    /**
+     * Move the cursor to {@code point} along the NaturalMouse path, including its weather
+     * speed modulation. Unlike {@link #arriveAt}, this never falls back to a corrective
+     * teleport when NaturalMouse is available: if the pointer does not settle, the caller
+     * retries on a later tick. (With NaturalMouse unavailable, the direct virtual-mouse move
+     * is the only path left.)
+     * <p>
+     * {@code VirtualMouse.move(Point)} only emits a single MOVED event, and
+     * {@code NaturalMouse.moveTo} early-returns when the pointer is already there — so a
+     * pre-click teleport silently turns the following click into an instantaneous press.
+     * Every recipe that pre-hovers a slot (drops, item-on-X selection, Jewel Enchant's cast)
+     * must use this instead.
+     *
+     * @return true when the pointer is resting on {@code point}
+     */
+    public static boolean moveNaturally(Point point) {
+        if (point == null) {
+            return false;
+        }
+        WeatherModulation.ensureFresh();
+        if (Microbot.getNaturalMouse() != null) {
+            Microbot.getNaturalMouse().moveTo(point.getX(), point.getY());
+        } else {
+            Microbot.getMouse().move(point);
+        }
+        // NaturalMouse.moveTo is synchronous on the script thread, so the pointer normally
+        // rests on the point immediately; only wait when the tracked state lagged behind.
+        if (PointerState.isAt(point.getX(), point.getY())) {
+            return true;
         }
         return sleepUntil(() -> PointerState.isAt(point.getX(), point.getY()),
                 Rs2Random.logNormalBounded(400, 900));
@@ -1545,7 +1584,13 @@ public final class AScriptClick {
         synchronized (MENU_SWAP_LOCK) {
             armMenuSwap(item.getSlot(), item.getId(), USE_OPTION);
             try {
-                Microbot.getMouse().move(point);
+                // NaturalMouse owns the pre-hover travel; a direct VirtualMouse.move would
+                // teleport and make the following press instantaneous.
+                if (!moveNaturally(point)) {
+                    log.warn("[AScriptClick] the cursor did not settle on the item to select (slot {})",
+                            item.getSlot());
+                    return false;
+                }
                 if (!sleepUntil(() -> isMenuSwapOnTop(item.getSlot(), item.getId(), USE_OPTION),
                         Rs2Random.logNormalBounded(400, 800))) {
                     log.warn("[AScriptClick] the Use row never reached the top of the item menu "

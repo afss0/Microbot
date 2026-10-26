@@ -10,6 +10,7 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -17,7 +18,6 @@ import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.skillcalculator.skills.MagicAction;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.input.PointerState;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.magic.Rs2Magic;
@@ -743,9 +743,10 @@ public class JewelEnchantScript implements AModule {
             return null;
         }
         Point point = Rs2UiHelper.getClickingPoint(bounds, true);
-        Microbot.getMouse().move(point);
-        if (!sleepUntil(() -> PointerState.isAt(point.getX(), point.getY()),
-                Rs2Random.logNormalBounded(400, 900, weatherMultiplier))) {
+        // NaturalMouse owns the travel (including weather speed modulation). The old direct
+        // VirtualMouse.move teleported the cursor and made the following click instantaneous:
+        // NaturalMouse.moveTo early-returns when the pointer is already at the destination.
+        if (!AScriptClick.moveNaturally(point)) {
             log.debug("[JewelEnchant] cursor did not settle on {} — retrying next tick",
                     jewellery.getName());
             return null;
