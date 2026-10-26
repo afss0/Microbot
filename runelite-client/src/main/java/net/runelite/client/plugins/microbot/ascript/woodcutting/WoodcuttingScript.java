@@ -161,6 +161,14 @@ public class WoodcuttingScript implements AModule {
         return currentPhase != Phase.NONE;
     }
 
+    @Override
+    public String runKey(AScriptConfig config) {
+        return "WOODCUTTING:" + currentPhase
+                + ":" + config.woodcuttingTree()
+                + ":" + config.woodcuttingAction()
+                + ":" + config.woodcuttingRadius();
+    }
+
     // ── Selection validation ──────────────────────────────
 
     @Override
@@ -286,7 +294,16 @@ public class WoodcuttingScript implements AModule {
                         "No axe in bank usable at Woodcutting " + Rs2Player.getBoostedSkillLevel(Skill.WOODCUTTING));
                 return false;
             }
-            Rs2Bank.withdrawAndEquip(best.getItemId());
+            // Verified amount withdraw, not withdrawAndEquip: the latter's withdrawOne maps
+            // the bank quantity setting to op 1/2 (Withdraw-5 unless the setting is "1") and
+            // was a dead dispatch on at least one live client. Wear through the bank's own
+            // wear op; the verification below still owns the outcome, and a failed wear keeps
+            // the axe as a locked inventory tool.
+            if (!AScriptBank.withdrawVerified(String.valueOf(best.getItemId()), 1)) {
+                log.warn("[Woodcutting] could not withdraw the best axe {} (id {})", best, best.getItemId());
+                return false;
+            }
+            Rs2Bank.wearItem(best.getItemId());
             if (!sleepUntil(WoodcuttingScript::wearingAnyAxe,
                     Rs2Random.logNormalBounded(2000, 3500, weatherMultiplier))) {
                 if (Rs2Inventory.hasItem(best.getItemId())) {

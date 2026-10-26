@@ -134,6 +134,11 @@ public class CannonballSmelterScript implements AModule {
         return currentPhase != Phase.NONE;
     }
 
+    @Override
+    public String runKey(AScriptConfig config) {
+        return "CANNONBALL:" + currentPhase + ":" + config.cannonballFurnace();
+    }
+
     // ── Selection validation ──────────────────────────────
 
     @Override

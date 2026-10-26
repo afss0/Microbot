@@ -167,6 +167,14 @@ public class BarbarianVillageFisherScript implements AModule {
     }
 
     @Override
+    public String runKey(AScriptConfig config) {
+        // currentPhase is runtime (walking/fishing/cooking), not a sub-selection: including it
+        // here would reset the module on every phase transition.
+        return "BVF:" + config.barbarianVillageFisherType()
+                + ":" + config.barbarianVillageFisherFunction();
+    }
+
+    @Override
     public void resetExitFlag() {
         exitRequested = false;
         consecutiveFailures = 0;
