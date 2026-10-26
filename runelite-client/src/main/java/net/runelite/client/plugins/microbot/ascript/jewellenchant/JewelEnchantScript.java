@@ -130,6 +130,13 @@ public class JewelEnchantScript implements AModule {
         return currentPhase != Phase.NONE;
     }
 
+    @Override
+    public String runKey(AScriptConfig config) {
+        return "JEWEL_ENCHANT:" + config.jewelEnchantActivity()
+                + ":" + config.jewelEnchantItem()
+                + ":" + config.jewelEnchantUseStaff();
+    }
+
     // ── Selection validation ──────────────────────────────
 
     @Override
@@ -146,9 +153,12 @@ public class JewelEnchantScript implements AModule {
             // within one tick with a visible message, instead of walking to a bank
             // first and writing status from a banking method.
             JewelEnchantLevel level = item.getEnchantLevel();
-            if (!Rs2Player.getSkillRequirement(Skill.MAGIC, level.getRequiredLevel())) {
+            int magic = Rs2Player.getRealSkillLevel(Skill.MAGIC);
+            // A real-level read of 0 means skill data has not loaded yet (or the
+            // client-thread read timed out) — that is "retry", not a locked spell.
+            if (magic > 0 && magic < level.getRequiredLevel()) {
                 return "need level " + level.getRequiredLevel() + " Magic for " + level.getName()
-                        + " (current: " + Rs2Player.getRealSkillLevel(Skill.MAGIC) + ")";
+                        + " (current: " + magic + ")";
             }
         }
         return null;
@@ -210,7 +220,7 @@ public class JewelEnchantScript implements AModule {
         if (!AScriptBank.bankableAtLeast(item.getUnenchantedId(), 1)) {
             return true;
         }
-        if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId()) && !Rs2Bank.hasBankItem(Runes.COSMIC.getItemId(), 1)) {
+        if (!AScriptBank.bankableAtLeast(Runes.COSMIC.getItemId(), 1)) {
             return true;
         }
 
@@ -227,11 +237,12 @@ public class JewelEnchantScript implements AModule {
             return true;
         }
 
-        // Runes the staff will not supply must be in the bank in full-cast
-        // quantity: a partial stack would bank forever — the withdraw succeeds
-        // while every cast keeps failing on the missing runes.
+        // Runes the staff will not supply must be obtainable for a full cast from the
+        // inventory + bank combined: a partial inventory stack (3 of 5) plus a partial bank
+        // stack (2 of 5) is enough, and doBank withdraws all of them. Requiring the bank
+        // ALONE to hold the full amount produced a false "No Materials" stop.
         for (Map.Entry<Runes, Integer> entry : runesNeededInInventory(config, level).entrySet()) {
-            if (!Rs2Bank.hasBankItem(entry.getKey().getItemId(), entry.getValue())) {
+            if (!AScriptBank.bankableAtLeast(entry.getKey().getItemId(), entry.getValue())) {
                 return true;
             }
         }
@@ -248,8 +259,7 @@ public class JewelEnchantScript implements AModule {
         if (!AScriptBank.bankableAtLeast(item.getUnenchantedId(), 1)) {
             sb.append("jewellery (not in bank), ");
         }
-        if (!Rs2Inventory.hasItem(Runes.COSMIC.getItemId())
-                && !Rs2Bank.hasBankItem(Runes.COSMIC.getItemId(), 1)) {
+        if (!AScriptBank.bankableAtLeast(Runes.COSMIC.getItemId(), 1)) {
             sb.append("cosmic runes (not in bank), ");
         }
         JewelEnchantLevel level = item.getEnchantLevel();
@@ -262,7 +272,7 @@ public class JewelEnchantScript implements AModule {
             sb.append("no usable elemental staff (not worn, not held, not in bank), ");
         }
         for (Map.Entry<Runes, Integer> entry : runesNeededInInventory(config, level).entrySet()) {
-            if (!Rs2Bank.hasBankItem(entry.getKey().getItemId(), entry.getValue())) {
+            if (!AScriptBank.bankableAtLeast(entry.getKey().getItemId(), entry.getValue())) {
                 sb.append(entry.getKey().name()).append(" runes (need ")
                         .append(entry.getValue()).append(" per cast), ");
             }
@@ -376,7 +386,7 @@ public class JewelEnchantScript implements AModule {
         //    dispatching into nothing, and the cycle ended with a misleading "no
         //    materials" stop (2026-10-14). The retry/stop verdicts for genuinely
         //    missing materials belong to the orchestrator's missing-materials path.
-        if (!ensureBankOpen()) return false;
+        if (!AScriptBank.ensureBankOpen()) return false;
         for (Map.Entry<Runes, Integer> entry : runesNeededInInventory(config, level).entrySet()) {
             if (!AScriptBank.withdrawVerified(String.valueOf(entry.getKey().getItemId()))) {
                 log.warn("[JewelEnchant] {} rune withdraw failed (bank open: {}) — retrying next cycle",
@@ -386,7 +396,7 @@ public class JewelEnchantScript implements AModule {
         }
 
         // 4. Withdraw unenchanted jewellery (fill remaining inventory)
-        if (!ensureBankOpen()) return false;
+        if (!AScriptBank.ensureBankOpen()) return false;
         if (!AScriptBank.withdrawVerified(String.valueOf(item.getUnenchantedId()))) {
             log.warn("[JewelEnchant] {} withdraw failed (bank open: {}) — retrying next cycle",
                     item.getName(), Rs2Bank.isOpen());
@@ -417,22 +427,6 @@ public class JewelEnchantScript implements AModule {
         // Fresh batch scope — the next empty state only earns its closing break after a
         // batch runs on these materials.
         batchRanSinceBank = false;
-        return true;
-    }
-
-    /**
-     * True when the bank window is open, reopening it once when it is not. Guards the
-     * withdraw steps against a mid-cycle close — the failure that stopped a live run
-     * with a misleading "No Sapphire ring in bank" (2026-10-14): the withdraws below
-     * dispatch into nothing while the window is closed, and AScriptBank has no
-     * reopen logic of its own by design.
-     */
-    private boolean ensureBankOpen() {
-        if (Rs2Bank.isOpen()) return true;
-        if (!Rs2Bank.openBank()) {
-            log.warn("[JewelEnchant] Bank closed mid-cycle and could not be reopened — retrying next cycle");
-            return false;
-        }
         return true;
     }
 

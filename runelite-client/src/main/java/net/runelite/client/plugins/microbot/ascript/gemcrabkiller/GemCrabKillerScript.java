@@ -12,6 +12,7 @@ import net.runelite.client.plugins.microbot.ascript.eventdismiss.LampUtility;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.Pickaxe;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptFood;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -33,7 +34,6 @@ import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleep;
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
@@ -189,8 +189,15 @@ public class GemCrabKillerScript implements AModule {
         Microbot.status = "DEPOSITING";
         // Keep the tools and supplies the trip is supposed to bring back: every pickaxe id,
         // the Dharok lowering items (never deposited), and any potion the inventory holds —
-        // depositAll() would bank them and never restore them.
-        AScriptBank.depositAllExcept(bankKeepIds());
+        // depositAll() would bank them and never restore them. A refused sweep (keeper lock
+        // unavailable) deposited NOTHING; failing the trip is the honest answer, otherwise
+        // the loot/tools stay in the bag while the module withdraws food over them.
+        if (!AScriptBank.depositAllExcept(bankKeepIds())) {
+            log.warn("[GemCrabKiller] keeper sweep failed — bank trip will retry");
+            AScriptBank.restoreWithdrawMode();
+            Rs2Bank.closeBank();
+            return false;
+        }
 
         boolean useFood = config.gemCrabUseFood();
         boolean isDharok = config.gemCrabDharokMode();
@@ -595,14 +602,7 @@ public class GemCrabKillerScript implements AModule {
      * {@code Rs2Player.eatAt}, which always eats the first food in slot order.
      */
     private boolean eatBestFood() {
-        List<Rs2ItemModel> foods = Rs2Inventory.getInventoryFood().stream()
-                .filter(food -> !food.isNoted())
-                .collect(Collectors.toList());
-        Rs2ItemModel food = AScriptPick.pickFood(foods);
-        if (food == null) return false;
-        return food.getName().toLowerCase().contains("jug of wine")
-                ? Rs2Inventory.interact(food, "drink")
-                : Rs2Inventory.interact(food, "eat");
+        return AScriptFood.dispatch(AScriptFood.bestFood());
     }
 
     private void handlePotions(AScriptConfig config) {

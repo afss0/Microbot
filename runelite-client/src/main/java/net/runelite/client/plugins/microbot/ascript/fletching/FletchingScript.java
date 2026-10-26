@@ -105,6 +105,23 @@ public class FletchingScript implements AModule {
         }
     }
 
+    @Override
+    public String runKey(AScriptConfig config) {
+        // A different activity or sub-type is a different batch scope: clear the previous
+        // batch latch, progress stamps and failure streak.
+        return "FLETCHING:" + currentPhase
+                + ":" + config.fletchingActivity()
+                + ":" + config.fletchingDartType()
+                + ":" + config.fletchingBoltType()
+                + ":" + config.fletchingBoltTipType()
+                + ":" + config.fletchingArrowType()
+                + ":" + config.fletchingBowType()
+                + ":" + config.fletchingShaftType()
+                + ":" + config.fletchingStockType()
+                + ":" + config.fletchingShieldType()
+                + ":" + config.fletchIntoBoltTips();
+    }
+
     // ── Selection validation ────────────────────────────────────
 
     @Override
