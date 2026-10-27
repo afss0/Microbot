@@ -148,7 +148,7 @@ public class BarbarianVillageFisherScript implements AModule {
         }
         // Runtime state (inventory, proximity) is resolved in doAction each tick —
         // here we only need a non-NONE "selected" answer. Use the current bank/spot
-        // proximity so the overlay and the NONE → active resetExitFlag() transition
+        // proximity so the overlay and the IDLE → active resetExitFlag() transition
         // see a real phase instead of a hardcoded placeholder.
         if (Rs2Inventory.isFull()
                 || !Rs2Inventory.hasItem(getRodId(config))
@@ -269,7 +269,7 @@ public class BarbarianVillageFisherScript implements AModule {
             AScriptNotify.notify("aScript Stopped", "Barbarian Village Fisher: " + consecutiveBankFailures
                     + " consecutive bank failures");
             Microbot.getConfigManager().setConfiguration(
-                    AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                    AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             return false;
         }
 
@@ -650,7 +650,7 @@ public class BarbarianVillageFisherScript implements AModule {
                 AScriptNotify.notify("aScript Stopped — Barbarian Village Fisher",
                         "cooking dispatch failed");
                 Microbot.getConfigManager().setConfiguration(
-                        AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                        AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             }
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
         }
@@ -903,7 +903,7 @@ public class BarbarianVillageFisherScript implements AModule {
             Microbot.status = "STOPPED — " + reason;
             AScriptNotify.notify("aScript Stopped — Barbarian Village Fisher", reason);
             Microbot.getConfigManager().setConfiguration(
-                    AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                    AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
         }
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1100, weatherMultiplier));
     }

@@ -48,7 +48,7 @@ public class ModuleSelectionTest {
 
     @Test
     public void unselectedModulesDoNotBlockTheRun() {
-        assertNull(new MiningScript().validateSelection(selection(ScriptType.NONE)));
+        assertNull(new MiningScript().validateSelection(selection(ScriptType.IDLE)));
         assertNull(new FiremakingScript().validateSelection(selection(ScriptType.CRAFTING)));
         assertNull(new WoodcuttingScript().validateSelection(selection(ScriptType.MINING)));
         assertNull(new MotherloadMineScript().validateSelection(selection(ScriptType.WOODCUTTING)));

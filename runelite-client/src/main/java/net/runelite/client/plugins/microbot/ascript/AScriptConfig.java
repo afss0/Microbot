@@ -43,8 +43,8 @@ public interface AScriptConfig extends Config {
 
     @ConfigItem(
             keyName = "enabled",
-            name = "Enabled",
-            description = "Enable / disable the script",
+            name = "Enable automation",
+            description = "Grant permission to run the selected script. QOL features stay active while this is off",
             position = 0,
             section = automationSection
     )
@@ -55,12 +55,12 @@ public interface AScriptConfig extends Config {
     @ConfigItem(
             keyName = "scriptSelection",
             name = "Script",
-            description = "Select which automation script to run",
+            description = "Automation script to run. Idle = no script selected",
             position = 1,
             section = automationSection
     )
     default ScriptType scriptSelection() {
-        return ScriptType.NONE;
+        return ScriptType.IDLE;
     }
 
     // ── Crafting ────────────────────────────────────────────────
@@ -989,7 +989,7 @@ public interface AScriptConfig extends Config {
 
     @ConfigSection(
             name = "QOL",
-            description = "Quality of Life settings",
+            description = "Quality of Life settings — these run whenever the plugin is enabled, independently of the automation switch",
             position = 13
     )
     String qolSection = "qol";
@@ -1008,7 +1008,7 @@ public interface AScriptConfig extends Config {
     @ConfigItem(
             keyName = "autoEat",
             name = "Auto eat",
-            description = "Automatically eats food from the inventory when hitpoints fall below a randomly rolled threshold (re-rolled after every bite)",
+            description = "Eats food from the inventory when hitpoints fall below a randomly rolled threshold (re-rolled after every bite). Runs independently of Enable automation — turn it off while deliberately holding low HP (e.g. Dharok)",
             position = 1,
             section = qolSection
     )

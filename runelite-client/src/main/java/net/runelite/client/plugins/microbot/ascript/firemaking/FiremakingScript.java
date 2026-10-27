@@ -493,6 +493,6 @@ public class FiremakingScript implements AModule {
         Microbot.status = "STOPPED — " + message;
         log.warn("[Firemaking] Stopping: {}", message);
         AScriptNotify.notify("aScript Stopped — Firemaking", message);
-        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
     }
 }

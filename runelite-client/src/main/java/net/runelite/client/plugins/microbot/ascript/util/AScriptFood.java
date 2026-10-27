@@ -21,6 +21,21 @@ import java.util.stream.Collectors;
  */
 public final class AScriptFood {
 
+    /**
+     * Outcome of a consume dispatch. Only {@link #ISSUED} means a press was made; the bite
+     * itself is confirmed asynchronously by the caller.
+     */
+    public enum Dispatch {
+        /** The Eat/Drink press was issued (effect unverified). */
+        ISSUED,
+        /** No edible item was supplied. */
+        NO_FOOD,
+        /** The visible inventory container exposes no Eat/Drink row for this item. */
+        NO_ACTION,
+        /** A pending cursor selection or an open menu prevented the press. */
+        BLOCKED
+    }
+
     private AScriptFood() {
     }
 
@@ -48,22 +63,38 @@ public final class AScriptFood {
     }
 
     /**
-     * Dispatch the Eat/Drink op for {@code food}. A {@code true} answer means the click was
-     * dispatched, not that the bite landed — callers that must verify use
-     * {@link #edibleCount()} / hitpoints before and after.
+     * Dispatch the Eat/Drink op for {@code food} through the shared client-mouse recipe
+     * ({@link AScriptClick#inventoryOptionAtSlot}): hover the real slot, promote the item's
+     * own {@code Eat}/{@code Drink} row with the MES-style swap, verify it is on top, then
+     * press. No fabricated menu entry and no {@code Rs2Inventory.invokeMenu}.
+     * <p>
+     * With the bank open the item's default left click is {@code Deposit}, so the swap is
+     * mandatory there — a plain slot click would bank the food instead of eating it.
+     * <p>
+     * A {@link Dispatch#NO_ACTION} answer means the visible container exposed no consume row
+     * (for example a shop or the Grand Exchange); the caller decides whether to close the
+     * interface. The bite itself is never confirmed here — count/HP tracking stays with the
+     * caller.
      */
-    public static boolean dispatch(Rs2ItemModel food) {
+    public static Dispatch dispatch(Rs2ItemModel food) {
         if (food == null || food.getName() == null) {
-            return false;
+            return Dispatch.NO_FOOD;
         }
         // A pending spell/item selection turns the next inventory op into "use the selected
         // thing on the food" (casting at it) instead of an Eat/Drink.
         if (Rs2Inventory.isItemSelected() && !AScriptClick.clearSelection()) {
-            return false;
+            return Dispatch.BLOCKED;
         }
-        return food.getName().toLowerCase().contains("jug of wine")
-                ? Rs2Inventory.interact(food, "drink")
-                : Rs2Inventory.interact(food, "eat");
+        String option = food.getName().toLowerCase().contains("jug of wine") ? "Drink" : "Eat";
+        AScriptClick.ItemClickResult result =
+                AScriptClick.inventoryOptionAtSlot(food.getSlot(), food.getId(), option);
+        if (result == AScriptClick.ItemClickResult.ISSUED) {
+            return Dispatch.ISSUED;
+        }
+        if (result == AScriptClick.ItemClickResult.NO_ACTION) {
+            return Dispatch.NO_ACTION;
+        }
+        return Dispatch.BLOCKED;
     }
 
     /** Total quantity of unnoted food in the inventory (banknotes cannot be eaten). */

@@ -14,6 +14,7 @@ import net.runelite.api.TileItem;
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.ComponentID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
@@ -63,6 +64,11 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *       reach the default op, so a non-default row is matched on its option text and pressed
  *       in the open menu; an action that already ranks top is still dispatched with a plain
  *       click.</li>
+ *   <li><b>Inventory action</b> ({@link #inventoryOptionAtSlot}) — press an item's own
+ *       non-default option through the same swap/verify/press tail (the auto-eat QOL uses it
+ *       for {@code Eat}/{@code Drink}). A plain slot click can only dispatch the container's
+ *       default op — {@code Deposit} while the bank is open — so the real row is promoted
+ *       first.</li>
  *   <li><b>Item-on-X</b> ({@link #useItemOnObject(Rs2ItemModel, TileObject)} /
  *       {@link #useItemOnNpc} / {@link #useItemOnPlayer} / {@link #useItemOnItem}) —
  *       select the first item with a physical click on its inventory slot, verify the game
@@ -160,6 +166,20 @@ public final class AScriptClick {
         HOVER_GONE,
         /** The open option menu would not close — nothing may be clicked until a human closes it. */
         MENU_STUCK
+    }
+
+    /**
+     * Outcome of an inventory item action press ({@link #inventoryOptionAtSlot}). A physical
+     * press returns nothing, so only {@link #ISSUED} means the press happened — confirming the
+     * effect stays with the caller.
+     */
+    public enum ItemClickResult {
+        /** The press was issued (the effect is the caller's to confirm). */
+        ISSUED,
+        /** The container exposed no such action, or the slot changed under the cursor. */
+        NO_ACTION,
+        /** A cursor selection/menu could not be cleared or the pointer did not settle. */
+        BLOCKED
     }
 
     /**
@@ -540,6 +560,117 @@ public final class AScriptClick {
             }
         }
         return dropped;
+    }
+
+    /**
+     * Press one of an inventory item's own actions through the client mouse — the generalised
+     * form of {@link #dropAtSlot} and {@link #select}, used by the auto-eat QOL for
+     * {@code Eat}/{@code Drink}.
+     * <p>
+     * A physical slot click dispatches the item's <b>default</b> op, which differs by
+     * container: {@code Use} for logs, {@code Wield} for bolts, and {@code Deposit} for an
+     * inventory item while the bank is open. The MES-style swap therefore promotes the
+     * client's own row for {@code option} to the top, the recipe waits until that is verified,
+     * and only then presses. A row that never appears means this container does not expose
+     * the action ({@link ItemClickResult#NO_ACTION}) — the caller can close the interface
+     * instead of clicking blindly. The effect is not confirmed here: the press may land a tick
+     * later, and the caller's tracking owns that confirmation.
+     *
+     * @param slot   inventory slot (0-27)
+     * @param itemId item expected in the slot; a stale/different slot is a no-op
+     * @param option exact action name, e.g. {@code "Eat"} or {@code "Drink"}
+     */
+    public static ItemClickResult inventoryOptionAtSlot(int slot, int itemId, String option) {
+        if (option == null || option.isBlank()) {
+            return ItemClickResult.BLOCKED;
+        }
+        // A closed inventory tab has no bounds; an external container (bank/GE/shop/deposit
+        // box) is already visible and must not have a tab hotkey pressed at it.
+        if (Rs2Inventory.getInventory() == null) {
+            ensureInventoryVisible();
+        }
+        if (menuOpen() && !closeMenu()) {
+            log.error("[AScriptClick] an option menu is open and will not close — not pressing '{}'", option);
+            return ItemClickResult.BLOCKED;
+        }
+        Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+        if (item == null || item.getId() != itemId) {
+            return ItemClickResult.NO_ACTION;
+        }
+        // The normal inventory's widget actions are the item's own actions, so an absent row
+        // is definitive there. Other containers (bank, shop, GE, deposit box) build their menu
+        // from the container context — the bank's left-click default is Deposit while Eat is a
+        // real right-click row — so let the hover/swap verification below decide.
+        Widget container = Rs2Inventory.getInventory();
+        if (container != null
+                && container.getId() == ComponentID.INVENTORY_CONTAINER
+                && optionAvailability(item, option) == OptionAvailability.ABSENT) {
+            return ItemClickResult.NO_ACTION;
+        }
+        Rectangle bounds = Rs2Inventory.itemBounds(item);
+        if (bounds == null) {
+            return ItemClickResult.NO_ACTION;
+        }
+        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
+        synchronized (MENU_SWAP_LOCK) {
+            armMenuSwap(slot, itemId, option);
+            try {
+                // NaturalMouse owns the pre-hover travel; a direct VirtualMouse.move would
+                // teleport and make the following press instantaneous.
+                if (!moveNaturally(point)) {
+                    log.warn("[AScriptClick] the cursor did not settle on the '{}' slot", option);
+                    return ItemClickResult.BLOCKED;
+                }
+                if (!sleepUntil(() -> isMenuSwapOnTop(slot, itemId, option),
+                        Rs2Random.logNormalBounded(400, 800))) {
+                    log.warn("[AScriptClick] the '{}' row never reached the top of the item menu", option);
+                    return ItemClickResult.NO_ACTION;
+                }
+                Microbot.getMouse().click(point);
+                return ItemClickResult.ISSUED;
+            } finally {
+                clearMenuSwap();
+            }
+        }
+    }
+
+    private enum OptionAvailability { PRESENT, ABSENT, UNKNOWN }
+
+    /**
+     * Whether the visible inventory container's widget exposes {@code option} for this slot.
+     * {@link OptionAvailability#UNKNOWN} (no widget/children/actions) falls through to the
+     * hover verification rather than refusing a dispatch on missing metadata.
+     */
+    private static OptionAvailability optionAvailability(Rs2ItemModel item, String option) {
+        if (item == null || option == null) {
+            return OptionAvailability.UNKNOWN;
+        }
+        Widget container = Rs2Inventory.getInventory();
+        if (container == null) {
+            return OptionAvailability.UNKNOWN;
+        }
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget[] children = container.getDynamicChildren();
+            if (children == null) {
+                return OptionAvailability.UNKNOWN;
+            }
+            for (Widget child : children) {
+                if (child == null || child.getIndex() != item.getSlot()) {
+                    continue;
+                }
+                String[] actions = child.getActions();
+                if (actions == null || actions.length == 0) {
+                    return OptionAvailability.UNKNOWN;
+                }
+                for (String action : actions) {
+                    if (action != null && Text.removeTags(action).trim().equalsIgnoreCase(option.trim())) {
+                        return OptionAvailability.PRESENT;
+                    }
+                }
+                return OptionAvailability.ABSENT;
+            }
+            return OptionAvailability.UNKNOWN;
+        }).orElse(OptionAvailability.UNKNOWN);
     }
 
     private static void armMenuSwap(int slot, int itemId, String option) {

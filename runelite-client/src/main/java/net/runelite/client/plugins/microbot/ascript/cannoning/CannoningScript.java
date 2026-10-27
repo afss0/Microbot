@@ -425,6 +425,6 @@ public class CannoningScript implements AModule {
         Microbot.status = "STOPPED — " + message;
         log.warn("[Cannoning] Stopping: {}", message);
         AScriptNotify.notify("aScript Stopped — Cannoning", message);
-        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
     }
 }

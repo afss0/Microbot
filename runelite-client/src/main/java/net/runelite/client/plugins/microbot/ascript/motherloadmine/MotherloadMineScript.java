@@ -292,7 +292,7 @@ public class MotherloadMineScript implements AModule {
             AScriptNotify.notify("aScript Stopped — Motherload Mine",
                     "no pickaxe (not worn, not in the inventory or noted, not in the bank)");
             Microbot.getConfigManager().setConfiguration(
-                    AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                    AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             return;
         }
 
@@ -366,7 +366,7 @@ public class MotherloadMineScript implements AModule {
                 AScriptNotify.notify("aScript Stopped", "Motherload Mine: " + consecutiveMineFailures
                         + " consecutive failures");
                 Microbot.getConfigManager().setConfiguration(
-                        AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                        AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             }
         }
     }
