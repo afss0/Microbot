@@ -42,7 +42,8 @@ public class AScriptOverlay extends OverlayPanel {
                 titleColor = Color.RED;
             } else if (!automationOn) {
                 titleColor = new Color(255, 170, 0);
-            } else if (idle || script.getCurrentPhase() == AScript.Phase.IDLE) {
+            } else if (idle || script.getCurrentPhase() == AScript.Phase.IDLE
+                    || script.getCurrentPhase() == AScript.Phase.WAITING) {
                 titleColor = Color.YELLOW;
             } else {
                 titleColor = Color.GREEN;
