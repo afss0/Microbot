@@ -772,6 +772,6 @@ public class WoodcuttingScript implements AModule {
         Microbot.status = "STOPPED — " + message;
         log.warn("[Woodcutting] Stopping: {}", message);
         AScriptNotify.notify("aScript Stopped — Woodcutting", message);
-        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
     }
 }

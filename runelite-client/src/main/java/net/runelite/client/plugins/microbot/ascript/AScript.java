@@ -4,6 +4,8 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.GameState;
 import net.runelite.api.Skill;
+import net.runelite.api.widgets.ComponentID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
 import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabsScript;
@@ -23,14 +25,21 @@ import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptFood;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingScript;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
+import net.runelite.client.plugins.microbot.util.depositbox.Rs2DepositBox;
+import net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
+import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
+import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
+import net.runelite.client.plugins.microbot.util.settings.Rs2Settings;
+import net.runelite.client.plugins.microbot.util.shop.Rs2Shop;
 
+import java.awt.event.KeyEvent;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +48,20 @@ import java.util.concurrent.TimeUnit;
 /**
  * aScript — AIO orchestrator (standard Script, no state machine).
  * <p>
- * Each tick: check config → resolve phase → bank if needed → craft.
+ * Three independent layers control what runs:
+ * <ol>
+ *   <li>the RuneLite plugin toggle — the master switch: the loop, the overlay and the
+ *       random-event handlers exist only while it is on;</li>
+ *   <li>{@code AScriptConfig#enabled()} — <b>automation</b> permission: may a module
+ *       dispatch at all;</li>
+ *   <li>{@code AScriptConfig#scriptSelection()} — <b>which</b> module; {@link ScriptType#IDLE}
+ *       means "none selected".</li>
+ * </ol>
+ * QOL features are not automation: they run on every tick regardless of the automation
+ * switch and the selection, each gated only by its own config toggle. The random-event
+ * handler is registered at plugin start-up and is already independent of {@code enabled}.
+ * <p>
+ * Each tick: QOL → automation gate → resolve phase → bank if needed → dispatch.
  * Sub-modules implement {@link AModule}; the orchestrator dispatches generically.
  * <p>
  * Adding a module = implement AModule + add to {@link #MODULES}. No tick() changes needed.
@@ -47,8 +69,11 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class AScript extends Script {
 
-    /** High-level phase exposed to the overlay. */
-    public enum Phase { DISABLED, IDLE, BANKING, CRAFTING, ERROR }
+    /**
+     * High-level <b>automation</b> phase exposed to the overlay. QOL state is not represented
+     * here — it runs independently and the overlay reports it on its own line.
+     */
+    public enum Phase { DISABLED, IDLE, BANKING, RUNNING, ERROR }
 
     // ── Module registry ─────────────────────────────────────
     /** All modules, in dispatch priority order. First active module wins. */
@@ -68,7 +93,7 @@ public class AScript extends Script {
             new MiningScript()
     );
 
-    /** Previous tick's active state per module — for NONE → active transition detection. */
+    /** Previous tick's active state per module — for IDLE → active transition detection. */
     private final Map<AModule, Boolean> wasActive = new IdentityHashMap<>();
     /** Previous tick's sub-selection key per module — a change starts a new run scope. */
     private final Map<AModule, String> runKeys = new IdentityHashMap<>();
@@ -81,11 +106,27 @@ public class AScript extends Script {
 
     private boolean stopRequested;
     private long lastZoomOutTime;
-    /** Current auto-eat HP% threshold (0 = needs a roll; re-rolled after every successful bite). */
+    /** Current auto-eat HP% threshold (0 = needs a roll; re-rolled after every confirmed bite). */
     private int eatThreshold;
-    /** Consecutive auto-eat attempts that did not consume food — stops the script after the threshold. */
-    private int consecutiveEatFailures = 0;
-    private static final int MAX_EAT_FAILURES = 3;
+    /**
+     * QOL auto-eat confirmation state. The bite is confirmed asynchronously over the following
+     * ticks (food count drop or HP rise) — the tick never blocks waiting for it, so human
+     * takeovers, pauses and lag cannot masquerade as a failed bite.
+     */
+    private final EatTracker eatTracker = new EatTracker();
+    /** Rate limit for the auto-eat miss WARN. Diagnostic only — there is no strike system. */
+    private long lastEatMissLogAt;
+    /** Cooldown after an interface-close attempt, so a stuck interface is not hammered. */
+    private long nextInterfaceCloseAt;
+    /**
+     * Reason from the last orchestrator stop, shown by the overlay while automation is
+     * disabled. QOL actions overwrite {@code Microbot.status} constantly, so the stop reason
+     * needs its own field.
+     */
+    @Getter
+    private String lastStopMessage;
+    /** True once the "no script selected" idle hold has been logged for this configuration. */
+    private boolean idleHoldAnnounced;
     /** Consecutive doBank failures — stops script after threshold. */
     private int consecutiveBankFailures = 0;
     private static final int MAX_BANK_FAILURES = 3;
@@ -128,18 +169,18 @@ public class AScript extends Script {
     private int consecutiveTickErrors = 0;
     private static final int MAX_TICK_ERRORS = 5;
     /** Selection the run counters belong to — a switch must start them from zero. */
-    private ScriptType lastSelection = ScriptType.NONE;
+    private ScriptType lastSelection = ScriptType.IDLE;
     /** Last "waiting for configuration" message logged — the hold logs once per change. */
     private String lastSelectionError = null;
     /**
      * True while the last tick actually ran automation (config enabled + a module selected).
-     * The disabled branch uses it to close only a bank THIS run may have left open — and clears
+     * The idle branch uses it to close only a bank THIS run may have left open — and clears
      * it on that close, so the cleanup is a one-shot on the running → idle transition.
      * <p>
      * Never infer that from {@link #lastSelection}: the selection persists across ticks even
-     * while the script is disabled, so {@code selection != NONE} stays true with the Enabled
-     * checkbox off and the cleanup closed every bank the player opened, every 600 ms (live
-     * 2026-10-26).
+     * while automation is disabled, so {@code selection != IDLE} stays true with the
+     * automation switch off and the cleanup closed every bank the player opened, every
+     * 600 ms (live 2026-10-26).
      */
     private boolean runWasActive = false;
     /** Track if the player was logged in at least once — triggers the logout watcher. */
@@ -154,6 +195,9 @@ public class AScript extends Script {
         this.playerWasLoggedIn = false;
         this.logoutHandled = false;
         this.runWasActive = false;
+        this.lastStopMessage = null;
+        this.idleHoldAnnounced = false;
+        resetQolState();
         // A previous run must not leave a slot-lock capability failure or a menu swap armed.
         AScriptBank.resetSessionState();
         AScriptClick.reset();
@@ -203,87 +247,56 @@ public class AScript extends Script {
     }
 
     private void tick() {
-        ScriptType selection = config == null ? ScriptType.NONE : config.scriptSelection();
+        ScriptType selection = config == null ? ScriptType.IDLE : config.scriptSelection();
         if (selection != lastSelection) {
-            // A different module starts from zero: a bank/missing/eat streak earned by the
-            // previous selection must never decide the new one's fate.
+            // A different module starts from zero: a bank/missing streak earned by the
+            // previous selection must never decide the new one's fate. QOL state is
+            // independent of the selection and is deliberately left alone.
             lastSelection = selection;
             lastSelectionError = null;
+            lastStopMessage = null;
             AScriptBank.resetSessionState();
             resetRunCounters();
         }
 
-        // 1. Config check
-        if (config == null || !config.enabled() || selection == ScriptType.NONE) {
-            currentPhase = Phase.DISABLED;
-            stopRequested = false;
-            // No phase resolution runs on this path, so the NONE -> active edge is armed here:
-            // a self-stopped module leaves wasActive == true, and without this the user's
-            // reselect would never clear its exit flag (doAction would return forever).
-            for (AModule mod : MODULES) {
-                wasActive.put(mod, false);
-            }
-            runKeys.clear();
-            // A module self-stop sets scriptSelection = NONE while the bank may still be open
-            // and the withdraw mode may still be "item". Restore the setting and close a bank
-            // this run left open; a bank the user opened while the script was already idle is
-            // left alone. The close is gated on runWasActive and clears it: with the Enabled
-            // checkbox off no tick ever runs automation, so a bank the player opens must stay
-            // open — the old {@code previousSelection != NONE} test was true on every tick
-            // merely because a module was selected, and closed the bank every 600 ms.
-            AScriptBank.restoreWithdrawMode();
-            AScriptBank.resetSessionState();
-            if (runWasActive) {
-                runWasActive = false;
-                if (Rs2Bank.isOpen()) {
-                    Rs2Bank.closeBank();
-                    sleepUntil(() -> !Rs2Bank.isOpen(), 3000);
-                }
-            }
-            resetRunCounters();
+        if (config == null) {
             return;
         }
 
-        // From here on this tick runs automation: a later disable/self-stop is the running →
-        // idle transition that owns the one-shot bank cleanup in the branch above.
-        runWasActive = true;
+        // 1. QOL — not automation: runs whenever the plugin is on, regardless of the
+        //    automation switch and the selected script. Each feature owns its own toggle.
+        runQol(config);
 
-        // 1b. QOL: keep the camera zoomed out (rate-limited)
-        if (config.autoZoomOut()
-                && System.currentTimeMillis() - lastZoomOutTime > 60_000) {
-            lastZoomOutTime = System.currentTimeMillis();
-            Rs2Camera.zoomOutFully();
+        // 2. Automation gate. The switch grants permission to run a module; IDLE means the
+        //    permission is granted but no module is selected. Both are distinct from the
+        //    plugin being off, where this loop does not run at all.
+        if (!config.enabled()) {
+            currentPhase = Phase.DISABLED;
+            stopRequested = false;
+            idleHoldAnnounced = false;
+            enterAutomationIdle();
+            return;
         }
-
-        // 1c. QOL: auto-eat when hitpoints fall below the rolled threshold.
-        if (!autoEatEnabled(config)) {
-            // Auto-eat off, or a module that owns its own food: drop the rolled threshold
-            // (re-enabling must roll fresh from the current slider values, not reuse a
-            // threshold rolled under the old settings) and clear the strike count.
-            eatThreshold = 0;
-            consecutiveEatFailures = 0;
-        } else {
-            if (eatThreshold <= 0) rollEatThreshold();
-            // Hitpoint check FIRST: eatReady() below has a side effect (it clicks to cancel a
-            // pending selection) and must not run on ticks where no bite is due.
-            if (belowEatThreshold()
-                    && eatReady()
-                    && eatBestFood()) {
-                // The Eat/Drink op being dispatched proves nothing: the dispatch routes through
-                // Rs2Inventory.interact(), which returns true unconditionally and can bail
-                // silently inside invokeMenu. Confirm the bite landed before re-rolling the
-                // threshold; an unconfirmed bite is counted so a dead auto-eat stops the
-                // script loudly instead of stalling the loop forever.
-                if (waitForBite()) {
-                    consecutiveEatFailures = 0;
-                    rollEatThreshold();
-                } else {
-                    failEat();
-                }
+        // Re-enabling automation clears the previous stop banner, even before a script is
+        // picked (the banner belongs to the stopped run, not to the idle selection).
+        lastStopMessage = null;
+        if (selection == ScriptType.IDLE) {
+            currentPhase = Phase.IDLE;
+            stopRequested = false;
+            if (!idleHoldAnnounced) {
+                idleHoldAnnounced = true;
+                log.info("[AScript] Automation idle — no script selected");
             }
+            enterAutomationIdle();
+            return;
         }
+        idleHoldAnnounced = false;
 
-        // 2. Resolve all module phases + detect NONE → active and sub-selection transitions
+        // From here on this tick is automation. `runWasActive` is armed only after the
+        // selection validates (below): a configuration hold never opens a bank, so it must not
+        // make the idle branch close one the player opened.
+
+        // 3. Resolve all module phases + detect IDLE → active and sub-selection transitions
         for (AModule mod : MODULES) {
             boolean prevActive = wasActive.getOrDefault(mod, false);
             mod.resolvePhase(config);
@@ -304,7 +317,7 @@ public class AScript extends Script {
             wasActive.put(mod, active);
         }
 
-        // 3. Validate the selection (first error wins). Every module is asked, not only the
+        // 4. Validate the selection (first error wins). Every module is asked, not only the
         //    active ones: a module whose activity is unset resolves to NONE, and that is
         //    precisely the state its validateSelection reports on (the activity enums default
         //    to NONE, so this is the first-run state of a freshly selected module).
@@ -336,7 +349,12 @@ public class AScript extends Script {
         }
         lastSelectionError = null;
 
-        // 4. Find the active module that needs the bank (at most one). A module may
+        // The selection is valid, so this tick may reach the bank/dispatch steps: a later
+        // disable/self-stop is the running → idle transition that owns the one-shot bank
+        // cleanup in enterAutomationIdle().
+        runWasActive = true;
+
+        // 5. Find the active module that needs the bank (at most one). A module may
         //    report that it is not ready for the bank cycle yet (readyForBank): it still
         //    has preparation to do, e.g. walk to the bank area. The tick then falls
         //    through to its doAction() so the module can prepare, and the open/cache
@@ -447,7 +465,7 @@ public class AScript extends Script {
             consecutiveBankCloseFailures = 0;
         }
 
-        // 5. Dispatch
+        // 6. Dispatch
         if (bankModule != null) {
             // A bank cycle that needs a locked anchor (tool, mould, rune stack, keeper set) cannot
             // run without bank slot locking: AScriptBank refuses those cycles and records why, so
@@ -488,11 +506,11 @@ public class AScript extends Script {
             }
         } else {
             // Assume no module runs this tick; only an actual dispatch promotes the phase. This
-            // also clears a sticky CRAFTING left behind by a module that just became inactive.
+            // also clears a sticky RUNNING left behind by a module that just became inactive.
             currentPhase = Phase.IDLE;
             for (AModule mod : MODULES) {
                 if (mod.isActive()) {
-                    currentPhase = Phase.CRAFTING;
+                    currentPhase = Phase.RUNNING;
                     mod.doAction(config);
                     break;
                 }
@@ -500,15 +518,46 @@ public class AScript extends Script {
         }
     }
 
-    /** Zeroes every run counter — on a selection change, a disable, and in {@link #shutdown()}. */
+    /**
+     * Leave the automation dispatch path. Clears the IDLE → active edge state, restores the
+     * player's bank settings, and closes a bank THIS run may have left open.
+     * <p>
+     * The close is gated on {@link #runWasActive} and clears it: with automation off no tick
+     * enters the dispatch path, so a bank the player opens must stay open. Never infer "a run
+     * left the bank open" from the selection — it persists across the automation switch.
+     * <p>
+     * QOL state is intentionally untouched: QOL keeps running while automation is off.
+     */
+    private void enterAutomationIdle() {
+        // A self-stopped module leaves wasActive == true; clearing it here arms the user's
+        // reselect to run the IDLE → active edge that calls resetExitFlag().
+        for (AModule mod : MODULES) {
+            wasActive.put(mod, false);
+        }
+        runKeys.clear();
+        AScriptBank.restoreWithdrawMode();
+        AScriptBank.resetSessionState();
+        if (runWasActive) {
+            runWasActive = false;
+            if (Rs2Bank.isOpen()) {
+                Rs2Bank.closeBank();
+                sleepUntil(() -> !Rs2Bank.isOpen(), 3000);
+            }
+        }
+        resetRunCounters();
+    }
+
+    /**
+     * Zeroes every <b>automation</b> run counter — on a selection change, on entering the idle
+     * state, and in {@link #shutdown()}. QOL state (the eat threshold and tracker) is owned by
+     * {@link #resetQolState()} and deliberately survives automation stops.
+     */
     private void resetRunCounters() {
         consecutiveBankFailures = 0;
         consecutiveBankOpenFailures = 0;
         consecutiveBankCloseFailures = 0;
         consecutiveWithdrawModeFailures = 0;
         consecutiveMissingVerdicts = 0;
-        consecutiveEatFailures = 0;
-        eatThreshold = 0;
     }
 
     // ── QOL: auto-eat ───────────────────────────────────────
@@ -546,55 +595,203 @@ public class AScript extends Script {
     }
 
     /**
-     * True when the auto-eat QOL may run for the current selection: the user enabled
-     * it, and the active module does not own its own food logic.
+     * QOL features are intentionally outside the automation gate: enabling the plugin is the
+     * only master switch, and each feature is gated by its own config toggle. The random-event
+     * handler is plugin-scoped already (registered in {@code AScriptPlugin.startUp()}); this
+     * covers the tick-driven QOL features.
+     */
+    private void runQol(AScriptConfig config) {
+        if (config.autoZoomOut()
+                && System.currentTimeMillis() - lastZoomOutTime > 60_000) {
+            lastZoomOutTime = System.currentTimeMillis();
+            Rs2Camera.zoomOutFully();
+        }
+        runAutoEat(config);
+    }
+
+    /**
+     * Auto-eat QOL, asynchronous and automation-independent.
      * <p>
-     * Gem Crab Killer keeps HP management to itself — its own eat thresholds (50%
-     * normal, 2% emergency), its own bank-for-food trip at 25% and the Dharok mode
-     * that deliberately holds HP at 10 for the set effect. A global 35–60% eat would
-     * double-eat in normal mode and silently break Dharok mode, so the QOL stays out.
-     * Ammonite Crabs owns its food the same way (eats at 50 and banks when empty).
+     * A dispatched Eat/Drink is confirmed over the following ticks by the {@link EatTracker}:
+     * the food count dropped or hitpoints rose. Nothing blocks this 600 ms loop, so a human
+     * takeover, a pause, lag or a late bite cannot be mistaken for a failed bite.
+     * <p>
+     * There is no strike system and no suspension: an unconfirmed attempt only schedules a
+     * log-normal retry. The feature is skipped while a food-owning combat module is running
+     * (see {@link #autoEatEnabled}) and on ticks where no bite is due.
+     */
+    private void runAutoEat(AScriptConfig config) {
+        if (!autoEatEnabled(config)) {
+            resetQolState();
+            return;
+        }
+
+        WeatherModulation.ensureFresh();
+        double weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
+        long now = System.currentTimeMillis();
+
+        EatTracker.Outcome outcome = eatTracker.resolve(now,
+                AScriptFood.edibleCount(),
+                Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS));
+        if (outcome == EatTracker.Outcome.IN_FLIGHT) {
+            return; // one attempt at a time; never double-dispatch while unconfirmed
+        }
+        if (outcome == EatTracker.Outcome.SUCCESS) {
+            rollEatThreshold();
+            // Fall through: a second bite may be due immediately if HP is still low.
+        } else if (outcome == EatTracker.Outcome.TIMED_OUT) {
+            long retry = Rs2Random.logNormalBounded(600, 2000, weatherMultiplier);
+            eatTracker.scheduleRetry(now, retry);
+            logEatMiss(now, retry);
+        }
+
+        if (eatThreshold <= 0) {
+            rollEatThreshold();
+        }
+        if (!eatTracker.ready(now)) return;
+        // Hitpoint check FIRST: eatReady() has a side effect (it clicks to cancel a pending
+        // selection) and must not run on ticks where no bite is due.
+        if (!belowEatThreshold()) return;
+        if (!eatReady()) return;
+
+        int foodBefore = AScriptFood.edibleCount();
+        if (foodBefore <= 0) return;
+        int hpBefore = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
+        if (hpBefore <= 0) return; // skill data not loaded — retry, never baseline on 0
+        Rs2ItemModel food = AScriptFood.bestFood();
+        if (food == null) return;
+
+        AScriptFood.Dispatch dispatch = AScriptFood.dispatch(food);
+        if (dispatch == AScriptFood.Dispatch.ISSUED) {
+            // Baselines were captured BEFORE the dispatch; the confirmation window starts
+            // after the press so hover travel does not eat into it.
+            eatTracker.begin(System.currentTimeMillis(), foodBefore, hpBefore,
+                    Rs2Random.logNormalBounded(1200, 2500, weatherMultiplier));
+            return;
+        }
+        if (dispatch == AScriptFood.Dispatch.NO_ACTION) {
+            // The dispatch may have spent time hovering; the close cooldown starts after it.
+            handleBlockedEatInterface(System.currentTimeMillis(), weatherMultiplier);
+        } else if (dispatch == AScriptFood.Dispatch.BLOCKED) {
+            // A menu/selection/pointer state prevented the press. Do not hammer every tick;
+            // the retry gate is short and is not a strike.
+            eatTracker.scheduleRetry(System.currentTimeMillis(),
+                    Rs2Random.logNormalBounded(600, 1500, weatherMultiplier));
+        }
+        // NO_FOOD: nothing to dispatch; retry next tick.
+    }
+
+    /**
+     * The food is in the inventory, but the visible container exposed no Eat/Drink row.
+     * Close the interface and eat from the normal inventory on a later tick. The bank and
+     * the deposit box are supported by the game (9 Jan 2020, "Eating in the Bank"), so they
+     * are never closed here — a missing row there is a dispatch bug, not an interface.
+     * A close/retry is not an eat attempt: no tracker attempt is opened. Only a short retry
+     * gate stops a stuck interface from being hammered every 600 ms.
+     */
+    private void handleBlockedEatInterface(long now, double weatherMultiplier) {
+        if (Rs2Bank.isBankPinWidgetVisible()) {
+            log.debug("[AScript] Auto-eat skipped: the bank PIN interface is open");
+            eatTracker.scheduleRetry(now, Rs2Random.logNormalBounded(1000, 3000, weatherMultiplier));
+            return;
+        }
+        if (Rs2Bank.isOpen()) {
+            log.debug("[AScript] Auto-eat: the bank inventory exposed no Eat row");
+            eatTracker.scheduleRetry(now, Rs2Random.logNormalBounded(1000, 3000, weatherMultiplier));
+            return;
+        }
+        if (Rs2DepositBox.isOpen()) {
+            log.debug("[AScript] Auto-eat: the deposit-box inventory exposed no Eat row");
+            eatTracker.scheduleRetry(now, Rs2Random.logNormalBounded(1000, 3000, weatherMultiplier));
+            return;
+        }
+        if (now < nextInterfaceCloseAt) {
+            return; // a close was just issued — let it render before judging it
+        }
+        if (Rs2GrandExchange.isOpen()) {
+            log.debug("[AScript] Auto-eat: closing the Grand Exchange to eat");
+            nextInterfaceCloseAt = now + 1000;
+            Rs2GrandExchange.closeExchange();
+            return;
+        }
+        if (Rs2Shop.isOpen()) {
+            log.debug("[AScript] Auto-eat: closing the shop to eat");
+            nextInterfaceCloseAt = now + 1000;
+            Rs2Shop.closeShop();
+            return;
+        }
+
+        Widget inventory = Rs2Inventory.getInventory();
+        if (inventory == null) {
+            // The inventory tab is closed and no interface is open; the next tick retries
+            // after the recipe's tab switch. There is nothing to close.
+            long retry = Rs2Random.logNormalBounded(600, 1200, weatherMultiplier);
+            eatTracker.scheduleRetry(now, retry);
+            return;
+        }
+        if (inventory.getId() == ComponentID.INVENTORY_CONTAINER) {
+            // Nothing to close: this food genuinely exposes no Eat/Drink action.
+            long retry = Rs2Random.logNormalBounded(2000, 5000, weatherMultiplier);
+            eatTracker.scheduleRetry(now, retry);
+            log.debug("[AScript] Auto-eat: the selected food exposes no consume action; retrying in {} ms", retry);
+            return;
+        }
+
+        // Some other interface is showing its own inventory container.
+        if (Rs2Settings.isEscCloseInterfaceSettingEnabled()) {
+            log.debug("[AScript] Auto-eat: closing an interface with ESC to eat");
+            nextInterfaceCloseAt = now + 1000;
+            Rs2Keyboard.keyPress(KeyEvent.VK_ESCAPE);
+        } else {
+            nextInterfaceCloseAt = now + 3000;
+            log.debug("[AScript] Auto-eat: an interface blocks the inventory and ESC-close is disabled");
+        }
+    }
+
+    /** Rate-limited miss log: diagnostic only, the attempt is always retried. */
+    private void logEatMiss(long now, long retryMs) {
+        if (now - lastEatMissLogAt >= 30_000) {
+            lastEatMissLogAt = now;
+            log.warn("[AScript] Auto-eat: no bite observed within the confirmation window — retrying in {} ms", retryMs);
+        } else {
+            log.debug("[AScript] Auto-eat: no bite observed — retrying in {} ms", retryMs);
+        }
+    }
+
+    /** Clear every QOL-owned state. Called when the feature is off and at lifecycle boundaries. */
+    private void resetQolState() {
+        eatThreshold = 0;
+        lastEatMissLogAt = 0;
+        nextInterfaceCloseAt = 0;
+        eatTracker.reset();
+    }
+
+    /**
+     * True when the auto-eat QOL may run for the current selection.
+     * <p>
+     * QOL is not automation: it runs while the automation switch is off, even when a
+     * food-owning module is selected — that module is not ticking and owns nothing then.
+     * While automation is on, Gem Crab Killer and Ammonite Crabs own their HP management
+     * (GCK: 50% normal eat, 2% emergency, Dharok mode holding 10 HP; Ammonite: 50% eat and
+     * bank restock), so the global eat stays out to avoid double-eating or healing a
+     * deliberately low-HP setup. With automation off the user's QOL toggle decides.
      */
     private boolean autoEatEnabled(AScriptConfig config) {
         if (!config.autoEat()) return false;
-        // Combat modules own their HP management: GCK (50% normal eat, 2% emergency,
-        // Dharok mode holds HP at 10) and Ammonite Crabs (eatAt 50 + bank restock).
-        // A global 35-60% eat would double-eat for either.
+        if (!config.enabled()) return true;
         return config.scriptSelection() != ScriptType.GEM_CRAB_KILLER
                 && config.scriptSelection() != ScriptType.AMMONITE_CRABS;
     }
 
     /**
-     * Eat the best food in the inventory, preferring the largest heal per bite.
-     * <p>
-     * {@link Rs2Player#eatAt(int)} delegates to {@code useFood()}, which eats the FIRST food in
-     * slot order — a shark in slot 3 always wins over a summer pie in slot 20, whatever the
-     * heal. {@link AScriptFood#bestFood()} mirrors {@code useFood()}'s rules (unnoted items
-     * only, blighted food first in the Wilderness, "jug of wine" is drunk rather than eaten)
-     * and takes the per-bite heal priority from {@code Rs2Food} — the biggest heal always goes
-     * first — but the INSTANCE within the top-heal group is DRAWN by
-     * {@link AScriptPick#pickFood(java.util.List)} with the same log-normal rank as every
-     * other click target (toward the first occurrences, occasionally the last), never the
-     * lowest slot every time.
-     *
-     * @return true when the Eat/Drink op was dispatched — see {@link #waitForBite()} for the
-     *         confirmation, the dispatch itself proves nothing
-     */
-    private boolean eatBestFood() {
-        return AScriptFood.dispatch(AScriptFood.bestFood());
-    }
-
-    /**
      * True when an Eat op can actually land: no spell/item is left selected on the cursor.
      * <p>
-     * {@code Rs2Inventory.invokeMenu()} flips the op to {@code WIDGET_TARGET_ON_WIDGET}
-     * whenever {@code isWidgetSelected()} is true — with a spell selected the "Eat" is sent
-     * as "cast the selected spell at the food", so the food is never eaten. The pending
-     * selection is cancelled through {@link AScriptClick#clearSelection()} (a click on the
-     * selected widget/item slot, not at the current cursor position), then confirmed gone.
-     * When it cannot be cancelled the attempt is skipped rather than dispatched as a wrong
-     * action — counting it would burn the {@link #MAX_EAT_FAILURES} budget against a state
-     * the food cannot fix.
+     * With a spell/item selected the next inventory op becomes "use the selected thing on
+     * the food" instead of Eat/Drink. The pending selection is cancelled through
+     * {@link AScriptClick#clearSelection()} (a click on the selected widget/item slot, not
+     * at the current cursor position), then confirmed gone. When it cannot be cancelled the
+     * attempt is skipped rather than dispatched as a wrong action — there is no strike
+     * system to burn.
      * <p>
      * Note: {@code Rs2Inventory.deselect()} is NOT usable here — it re-uses the selected
      * widget's item id, which is -1 for a spell, so it no-ops.
@@ -611,54 +808,21 @@ public class AScript extends Script {
         return false;
     }
 
-    /**
-     * Confirm an auto-eat actually landed: inventory food was consumed, or hitpoints
-     * rose. {@link Rs2Player#eatAt(int)} only proves the Eat op was dispatched.
-     * <p>
-     * Bounded by {@link Rs2Random} timing and NOT by {@link Rs2Player#waitForAnimation()}:
-     * that helper waits for ANY animation to start (the module's own mining/crafting/combat
-     * animation is usually already running) and can hold this 600 ms loop for up to ~10 s
-     * per bite, stalling bank trips and click verification with it.
-     *
-     * @return true when the bite is visible in game state
-     */
-    private boolean waitForBite() {
-        int foodBefore = AScriptFood.edibleCount();
-        if (foodBefore <= 0) return false; // nothing edible — the dispatch could not have landed
-        int hpBefore = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
-
-        WeatherModulation.ensureFresh();
-        double weatherMultiplier = 1.0 / WeatherModulation.combinedSpeedFactor();
-        return sleepUntil(() -> Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS) > hpBefore
-                        || AScriptFood.edibleCount() < foodBefore,
-                Rs2Random.logNormalBounded(1200, 2500, weatherMultiplier));
-    }
-
-    /**
-     * Count a dispatched-but-unconfirmed bite and stop the script (status, log, Discord
-     * notification, config reset) after {@link #MAX_EAT_FAILURES} in a row: a broken
-     * safety net must be loud, not a silent wait every tick while hitpoints drain.
-     */
-    private void failEat() {
-        consecutiveEatFailures++;
-        log.warn("[AScript] Auto-eat not confirmed ({}/{})", consecutiveEatFailures, MAX_EAT_FAILURES);
-        if (consecutiveEatFailures >= MAX_EAT_FAILURES) {
-            consecutiveEatFailures = 0;
-            stopWithMessage("aScript Stopped — Auto Eat Failed",
-                    "Auto-eat sent \"Eat\" " + MAX_EAT_FAILURES
-                            + " times without the food being consumed — check the food in the inventory");
-        }
-    }
-
     // ── Lifecycle ───────────────────────────────────────────
 
-    /** Stop script, notify Discord, and reset config. */
+    /**
+     * Stop <b>automation</b>: notify Discord, clear the automation switch, and close a bank
+     * this run left open. QOL features keep running — they are not automation. A module
+     * self-stop is different: it writes {@link ScriptType#IDLE} to the selection and leaves
+     * this switch alone.
+     */
     private void stopWithMessage(String title, String message) {
         if (stopRequested) return; // already stopping
         stopRequested = true;
         consecutiveBankFailures = 0;
         consecutiveBankOpenFailures = 0;
         consecutiveBankCloseFailures = 0;
+        lastStopMessage = message;
         Microbot.status = "STOPPED — " + message;
         log.warn("[AScript] {}: {}", title, message);
         AScriptNotify.notify(title, message);
@@ -678,9 +842,12 @@ public class AScript extends Script {
     public void shutdown() {
         stopRequested = false;
         resetRunCounters();
+        resetQolState();
         consecutiveTickErrors = 0;
-        lastSelection = ScriptType.NONE;
+        lastSelection = ScriptType.IDLE;
         lastSelectionError = null;
+        lastStopMessage = null;
+        idleHoldAnnounced = false;
         runWasActive = false;
         playerWasLoggedIn = false;
         logoutHandled = false;

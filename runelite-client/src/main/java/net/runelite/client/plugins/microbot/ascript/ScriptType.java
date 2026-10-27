@@ -6,7 +6,7 @@ import lombok.RequiredArgsConstructor;
 @Getter
 @RequiredArgsConstructor
 public enum ScriptType {
-    NONE("None"),
+    IDLE("Idle"),
     CRAFTING("Crafting"),
     FLETCHING("Fletching"),
     MOTHERLOAD_MINE("Motherload Mine"),
