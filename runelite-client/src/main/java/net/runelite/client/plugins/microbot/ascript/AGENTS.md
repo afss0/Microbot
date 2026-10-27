@@ -70,6 +70,7 @@ Follow the Crafting/Fletching packages as the reference template. Steps:
 3. Add module-specific enums in the same package (activities, items, locations). Every enum value shown in a RuneLite config dropdown needs a `toString()`.
 4. Add a `ScriptType` entry in `ScriptType.java` (e.g. `MYMODULE("My Module")`).
 5. Add config items in `AScriptConfig.java` under a new `@ConfigSection(closedByDefault = true)`:
+   - **Section order:** keep `Automation` at `position = 0` and `QOL` at `position = 1`; every module section then follows in **alphabetical order by its `@ConfigSection(name = ...)` display name**, starting at `position = 2`. The config panel sorts sections by `position` (not source order), so renumber the module positions when inserting a new one.
    - `ScriptType <module>Activity()` (module activity enums keep their own `NONE` default; the shared dropdown default is `ScriptType.IDLE`)
    - sub-type configs (`<module>FooType()`, `<module>Afk()`, locations, etc.)
 6. In `AScript.java`: add the module to the `MODULES` list — that is the entire wiring, `tick()` does not change. The orchestrator already handles per-module phase resolution, the IDLE → active `resetExitFlag()` call, the `runKey` scope change, the `validateSelection` stop, the `readyForBank` gate on the bank phase, opening the bank, the `isBankMissingMaterials` stop, the `consecutiveBankFailures`/bank-open-failure counters and the `doBank`/`doAction` dispatch. The orchestrator's own stops use `AScript.stopWithMessage(title, message)`; a module self-stop sets `scriptSelection = IDLE` through its local stop helper, and the orchestrator's idle branch restores the bank withdraw mode and closes a bank the run left open **once**, on the running → idle transition (`runWasActive`, cleared by that close). Never infer "a run left the bank open" from the selection: it persists while the automation switch is off, so a selection-based test closes every bank the player opens.
@@ -261,19 +262,20 @@ public class MyModuleScript implements AModule {
 ```java
 @ConfigGroup("aScript")
 public interface AScriptConfig {
-    // Automation section
+    // Automation section — position 0
     boolean enabled();            // Automation permission — may a module dispatch?
     ScriptType scriptSelection(); // Which module; default ScriptType.IDLE (none)
 
-    // <Module> section (one per module, closedByDefault = true)
-    // ... module-specific settings ...
-
-    // QOL section — independent of the automation switch
+    // QOL section — position 1, independent of the automation switch
     // autoZoomOut(), autoEat(), eventDismiss*()
+
+    // <Module> sections (one per module, closedByDefault = true) —
+    // positions 2..N, alphabetical by @ConfigSection name
+    // ... module-specific settings ...
 }
 ```
 
-When a module's section is `closedByDefault = true`, the user expands it manually in the config panel. The orchestrator reads the config and dispatches to the correct module.
+When a module's section is `closedByDefault = true`, the user expands it manually in the config panel. The orchestrator reads the config and dispatches to the correct module. Section display order is `position`-driven: `Automation` (0) → `QOL` (1) → module sections (2+) alphabetically by display name.
 
 ## Rules
 

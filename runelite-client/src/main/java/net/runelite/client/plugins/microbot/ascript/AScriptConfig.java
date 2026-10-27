@@ -68,7 +68,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "AutoCrafting",
             description = "AutoCrafting settings",
-            position = 1,
+            position = 3,
             closedByDefault = true
     )
     String craftingSection = "crafting";
@@ -177,7 +177,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Jewelry",
             description = "Jewelry crafting settings",
-            position = 2,
+            position = 12,
             closedByDefault = true
     )
     String jewelrySection = "jewelry";
@@ -209,7 +209,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "AutoFletching",
             description = "AutoFletching settings",
-            position = 3,
+            position = 4,
             closedByDefault = true
     )
     String fletchingSection = "fletching";
@@ -329,7 +329,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Motherload Mine",
             description = "Motherload Mine settings",
-            position = 4,
+            position = 14,
             closedByDefault = true
     )
     String motherloadMineSection = "motherloadmine";
@@ -383,7 +383,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Gem Crab Killer",
             description = "Gem Crab Killer settings",
-            position = 5,
+            position = 10,
             closedByDefault = true
     )
     String gemCrabKillerSection = "gemcrabkiller";
@@ -448,7 +448,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Jewel Enchant",
             description = "Jewellery enchanting settings",
-            position = 14,
+            position = 11,
             closedByDefault = true
     )
     String jewelEnchantSection = "jewelenchant";
@@ -532,7 +532,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Cannoning",
             description = "Dwarf multicannon maintenance — place the cannon before starting and keep cannonballs in the inventory",
-            position = 10,
+            position = 8,
             closedByDefault = true
     )
     String cannoningSection = "cannoning";
@@ -618,7 +618,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Ammonite Crabs",
             description = "Ammonite crab killer settings",
-            position = 15,
+            position = 2,
             closedByDefault = true
     )
     String ammoniteCrabsSection = "ammonitecrabs";
@@ -728,7 +728,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Firemaking",
             description = "Firemaking settings",
-            position = 8,
+            position = 9,
             closedByDefault = true
     )
     String firemakingSection = "firemaking";
@@ -771,7 +771,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Barbarian Fishing",
             description = "Barbarian fishing settings",
-            position = 9,
+            position = 5,
             closedByDefault = true
     )
     String barbarianFishingSection = "barbarianfishing";
@@ -814,7 +814,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Woodcutting",
             description = "Woodcutting settings",
-            position = 11,
+            position = 15,
             closedByDefault = true
     )
     String woodcuttingSection = "woodcutting";
@@ -891,7 +891,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Mining",
             description = "Mining settings",
-            position = 12,
+            position = 13,
             closedByDefault = true
     )
     String miningSection = "mining";
@@ -990,7 +990,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "QOL",
             description = "Quality of Life settings — these run whenever the plugin is enabled, independently of the automation switch",
-            position = 13
+            position = 1
     )
     String qolSection = "qol";
 
