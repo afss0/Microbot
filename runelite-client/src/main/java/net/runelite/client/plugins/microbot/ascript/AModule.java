@@ -69,7 +69,7 @@ public interface AModule {
     /** Execute the module's main action (craft, mine, fight, etc.). */
     void doAction(AScriptConfig config);
 
-    /** Clear self-stop flags on NONE → active transition. */
+    /** Clear self-stop flags on IDLE → active transition. */
     void resetExitFlag();
 
     /**

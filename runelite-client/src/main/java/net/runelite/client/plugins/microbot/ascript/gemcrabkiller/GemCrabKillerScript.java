@@ -308,7 +308,7 @@ public class GemCrabKillerScript implements AModule {
                                     "Bank trip failed " + MAX_BANK_FAILURES
                                             + " times — no edible food in the bank");
                             Microbot.getConfigManager().setConfiguration(
-                                    AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                                    AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
                         }
                     }
                     break;
@@ -328,7 +328,7 @@ public class GemCrabKillerScript implements AModule {
                     AScriptNotify.notify("Gem Crab Killer Stopped",
                             "No crabs found after " + MAX_CONSECUTIVE_FIGHT_FAILURES + " attempts");
                     Microbot.getConfigManager().setConfiguration(
-                            AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                            AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
                 }
             } else {
                 consecutiveFightFailures = 0;
@@ -602,7 +602,7 @@ public class GemCrabKillerScript implements AModule {
      * {@code Rs2Player.eatAt}, which always eats the first food in slot order.
      */
     private boolean eatBestFood() {
-        return AScriptFood.dispatch(AScriptFood.bestFood());
+        return AScriptFood.dispatch(AScriptFood.bestFood()) == AScriptFood.Dispatch.ISSUED;
     }
 
     private void handlePotions(AScriptConfig config) {

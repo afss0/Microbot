@@ -1043,6 +1043,6 @@ public class MiningScript implements AModule {
         Microbot.status = "STOPPED — " + message;
         log.warn("[Mining] Stopping: {}", message);
         AScriptNotify.notify("aScript Stopped — Mining", message);
-        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
     }
 }

@@ -10,9 +10,10 @@ ascript/
 ├── AModule.java              # The contract every module implements
 ├── AScriptConfig.java        # Config with Automation / <Module> / QOL sections
 ├── AScriptPlugin.java        # Plugin descriptor, Guice wiring, start/stop
-├── AScriptOverlay.java       # HUD overlay — shows the orchestrator phase + status
-├── ScriptType.java           # Dropdown enum — which module to run
-├── util/                     # Shared banking / notify / sleep helpers
+├── AScriptOverlay.java       # HUD overlay — shows automation state + QOL + status
+├── ScriptType.java           # Dropdown enum — which module to run (IDLE = none)
+├── EatTracker.java           # Async auto-eat confirmation (no blocking wait)
+├── util/                     # Shared banking / notify / click / sleep helpers
 └── <module>/                 # Each module is a sub-package
     ├── <Module>Script.java   # implements AModule — phase resolution, bank, action
     └── <enums>.java          # Module-specific enums (activities, items, locations)
@@ -20,11 +21,33 @@ ascript/
 
 ## How it works
 
-1. **AScript** extends `Script`. Its `Phase` enum (`DISABLED, IDLE, BANKING, CRAFTING, ERROR`) describes the *orchestrator* state for the overlay — modules keep their own private phase enums.
+1. **AScript** extends `Script`. Its `Phase` enum (`DISABLED, IDLE, BANKING, RUNNING, ERROR`) describes the *automation* state for the overlay — modules keep their own private phase enums. QOL state is not in this enum; the overlay reports it separately.
 2. All modules live in one registry, in dispatch priority order: `AScript.MODULES = List.of(new CraftingScript(), ..., new <Module>Script())`.
-3. Each tick: config check → `resolvePhase(config)` on every module (each stores its own phase) → `validateSelection` (first error stops the script) → find the single module that `needsBank` (open bank, stop when `isBankMissingMaterials`, otherwise `doBank`) → otherwise `doAction` on the first active module.
-4. Each module is a plain class implementing `AModule` (not a `Script` subclass, no Guice, no lifecycle). The registry holds one instance for the whole session, so per-run mutable state (resolved phase, exit-once flags, failure counters) lives on that instance — keep it minimal and clear it in `resetExitFlag()`, which the orchestrator calls on every NONE → active transition.
+3. Each tick: **QOL** (independent of automation) → **automation gate** (`enabled` + a non-`IDLE` selection) → `resolvePhase(config)` on every module (each stores its own phase) → `validateSelection` (first error stops automation) → find the single module that `needsBank` (open bank, stop when `isBankMissingMaterials`, otherwise `doBank`) → otherwise `doAction` on the first active module.
+4. Each module is a plain class implementing `AModule` (not a `Script` subclass, no Guice, no lifecycle). The registry holds one instance for the whole session, so per-run mutable state (resolved phase, exit-once flags, failure counters) lives on that instance — keep it minimal and clear it in `resetExitFlag()`, which the orchestrator calls on every IDLE → active transition.
 5. The orchestrator never sees module-specific phase values: every `AModule` method takes the config and reads the module's own stored phase.
+
+## Run state model (automation vs QOL)
+
+Three layers, each with exactly one meaning:
+
+| Layer | Stored in | Meaning |
+|---|---|---|
+| RuneLite plugin toggle | `runelite.<plugin>` | **Master switch** — the loop, overlay and random-event handlers exist only while it is on |
+| `enabled()` | `aScript.enabled` | **Automation permission** — may a module dispatch? |
+| `scriptSelection()` | `aScript.scriptSelection` | **Which** module; `ScriptType.IDLE` = none selected (the dropdown default) |
+
+| plugin | `enabled` | selection | Automation | QOL |
+|---|---|---|---|---|
+| off | – | – | – | – |
+| on | false | any (remembered) | `DISABLED` | runs (auto-eat, auto-zoom, events) |
+| on | true | `IDLE` | `IDLE` — "select a script" hold | runs |
+| on | true | module | `BANKING` / `RUNNING` / `ERROR` | runs |
+
+- **QOL is not automation.** Auto-zoom and auto-eat run on every tick (each gated only by its own toggle) regardless of `enabled` and the selection; the random-event handler is plugin-scoped already. Do not put a QOL feature behind the automation gate.
+- **Two stop paths, deliberately different:** a module self-stop writes `ScriptType.IDLE` and leaves `enabled` as the user set it (reselection then runs the IDLE → active edge that clears `exitRequested`); an orchestrator failure (`stopWithMessage`) clears `enabled` and leaves the selection for the user to see. QOL keeps running after either.
+- `runWasActive` is set only when a tick actually enters the automation dispatch path. The idle/disabled branch uses it to close a bank THIS run may have left open, once. Never infer "a run left the bank open" from the selection — it persists across the automation switch.
+- `AScript.Phase.IDLE` also covers the "selected module not configured" hold raised by `validateSelection`; the status line distinguishes it from "no script selected".
 
 ## Adding a new module
 
@@ -42,14 +65,14 @@ Follow the Crafting/Fletching packages as the reference template. Steps:
    - `String describeMissing(AScriptConfig config)` — human-readable list of what is missing (for the Discord stop message).
    - `boolean doBank(AScriptConfig config)` — banking; `false` on any failure (bank didn't open, withdraw didn't land, the configured tool is unavailable). The tick dispatches `doAction()` on a later tick, never in the same bank-dispatch branch; returning `true` while `needsBank()` stays true creates a BANKING loop, so the state must actually change (materials landed, tool held).
    - `void doAction(AScriptConfig config)` — the action. Guard with an `exitRequested` flag so stop/notify fires once, verify the action actually landed, and count consecutive failures so a broken run stops instead of spinning forever.
-   - `void resetExitFlag()` — clear `exitRequested`/counters when the module is re-enabled. AScript calls this automatically when it observes the module's phase transition NONE → active, so a module that self-stopped (e.g. "furnace not found") un-sticks on re-select without extra wiring. It is also called when `runKey(config)` changes while the module stays active — a different activity/item/location starts a new run scope, so batch latches, anchors and failure streaks from the old scope are cleared.
+   - `void resetExitFlag()` — clear `exitRequested`/counters when the module is re-enabled. AScript calls this automatically when it observes the module's phase transition IDLE → active, so a module that self-stopped (e.g. "furnace not found") un-sticks on re-select without extra wiring. It is also called when `runKey(config)` changes while the module stays active — a different activity/item/location starts a new run scope, so batch latches, anchors and failure streaks from the old scope are cleared.
    - `String runKey(AScriptConfig config)` — optional (default stable). Return the activity/item/location values that define a batch scope for this module (e.g. activity + sub-type + location). Do NOT include runtime phases (walking/fighting/dropping): they change every tick and would reset the module continuously.
 3. Add module-specific enums in the same package (activities, items, locations). Every enum value shown in a RuneLite config dropdown needs a `toString()`.
 4. Add a `ScriptType` entry in `ScriptType.java` (e.g. `MYMODULE("My Module")`).
 5. Add config items in `AScriptConfig.java` under a new `@ConfigSection(closedByDefault = true)`:
-   - `ScriptType <module>Activity()` (default can be the `NONE` enum value)
+   - `ScriptType <module>Activity()` (module activity enums keep their own `NONE` default; the shared dropdown default is `ScriptType.IDLE`)
    - sub-type configs (`<module>FooType()`, `<module>Afk()`, locations, etc.)
-6. In `AScript.java`: add the module to the `MODULES` list — that is the entire wiring, `tick()` does not change. The orchestrator already handles per-module phase resolution, the NONE → active `resetExitFlag()` call, the `runKey` scope change, the `validateSelection` stop, the `readyForBank` gate on the bank phase, opening the bank, the `isBankMissingMaterials` stop, the `consecutiveBankFailures`/bank-open-failure counters and the `doBank`/`doAction` dispatch. The orchestrator's own stops use `AScript.stopWithMessage(title, message)`; a module self-stop sets `scriptSelection = NONE` through its local stop helper, and the orchestrator's disabled branch restores the bank withdraw mode and closes a bank the run left open **once**, on the running → idle transition (`runWasActive`, cleared by that close). Never infer "a run left the bank open" from the selection: it persists while the Enabled checkbox is off, so a selection-based test closes every bank the player opens.
+6. In `AScript.java`: add the module to the `MODULES` list — that is the entire wiring, `tick()` does not change. The orchestrator already handles per-module phase resolution, the IDLE → active `resetExitFlag()` call, the `runKey` scope change, the `validateSelection` stop, the `readyForBank` gate on the bank phase, opening the bank, the `isBankMissingMaterials` stop, the `consecutiveBankFailures`/bank-open-failure counters and the `doBank`/`doAction` dispatch. The orchestrator's own stops use `AScript.stopWithMessage(title, message)`; a module self-stop sets `scriptSelection = IDLE` through its local stop helper, and the orchestrator's idle branch restores the bank withdraw mode and closes a bank the run left open **once**, on the running → idle transition (`runWasActive`, cleared by that close). Never infer "a run left the bank open" from the selection: it persists while the automation switch is off, so a selection-based test closes every bank the player opens.
 7. Mouse speed is global (fork customization): `Rs2Antiban.activityIntensity` is pinned to `VERY_LOW` and `setActivityIntensity` is a no-op (`Rs2AntibanIntensityLockTest` guardrail). Modules carry no mouse-speed code — the old per-module `isPrecisionModule()` machinery was removed.
 8. **Update this AGENTS.md** — add the module to the "Existing modules" table and note any module-specific invariants.
 
@@ -224,7 +247,7 @@ public class MyModuleScript implements AModule {
             exitRequested = true;
             Microbot.status = "STOPPED — " + reason;
             AScriptNotify.notify("aScript Stopped — My Module", reason);
-            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
         }
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1100, weatherMultiplier));
     }
@@ -239,13 +262,14 @@ public class MyModuleScript implements AModule {
 @ConfigGroup("aScript")
 public interface AScriptConfig {
     // Automation section
-    boolean enabled();           // Master on/off
-    ScriptType scriptSelection(); // Dropdown — which module to run
+    boolean enabled();            // Automation permission — may a module dispatch?
+    ScriptType scriptSelection(); // Which module; default ScriptType.IDLE (none)
 
     // <Module> section (one per module, closedByDefault = true)
     // ... module-specific settings ...
 
-    // QOL section (placeholder)
+    // QOL section — independent of the automation switch
+    // autoZoomOut(), autoEat(), eventDismiss*()
 }
 ```
 
@@ -257,7 +281,7 @@ When a module's section is `closedByDefault = true`, the user expands it manuall
 - **Modules must not use Guice.** No `@Inject` — they receive config as a method parameter.
 - **Keep module state minimal, per-run, and cleared.** The registry holds one instance for the whole session; mutable state (resolved phase, exit-once flag, failure counter) must be reset in `resetExitFlag()`.
 - **Clicks go through the client mouse.** Use `Microbot.getMouse().click(bounds)` (VirtualMouse: natural-mouse movement + weather/error hooks), or a helper that already clicks that way (`Rs2Widget.clickWidget(...)`, `Rs2Inventory.itemBounds(...)` + mouse). Never inject menu entries (`Microbot.doInvoke` / `NewMenuEntry`) or call `Rs2Inventory.interact(...)` for a module's own action. The residue is not a missing cursor — the `doInvoke`-with-bounds path does move the cursor and click through `VirtualMouse.click(point, entry)` — it is the **fabricated menu entry** (the client's own menu is replaced, so the action can dispatch from a pixel that does not cover the target) plus the **silent failure**: the call returns `true` even when nothing happened, and it bypasses the mouse-speed/antiban modulation. Bank *withdrawals* are the documented exception (see "Bank item-GRID interactions").
-**Tick order matters.** High-priority checks (config null, missing materials) go first in `tick()`.
+**Tick order matters.** QOL runs before the automation gate (it is not automation); the automation gate (`config == null`, `enabled`, `IDLE` selection) runs before module resolution, and missing-materials checks come before dispatch.
 - **Use `Microbot.status`** for user-visible status updates inside module actions.
 - **Use `sleepUntil(condition, timeoutMs)`** — never fixed `sleep()` to wait on game state.
 - **Verify the action landed.** A click that returned `true` is not a completed action: confirm the state change (inventory count, animation, widget) and count consecutive failures, so a broken run stops with a message instead of spinning.
@@ -293,10 +317,10 @@ if (!AScriptBank.bankableAtLeast(mouldId, 1)) return true;
 
 ### Bank state management
 
-- **IDLE** opens the bank to check stock. If materials exist, bank stays open for BANKING.
-- **BANKING** uses the already-open bank. Does NOT re-open. Does NOT close on success.
-- **IDLE** closes the bank only when transitioning to CRAFTING (inventory full) or stopping (no materials).
-- **Never close the bank between IDLE <-> BANKING** — this causes open/close loops.
+- The tick opens the bank only when a module reports `needsBank()` and `readyForBank()`; it caches the contents, runs the missing-materials verdict, and then calls the module's `doBank()`.
+- `doBank()` uses the already-open bank. It does not open it and does not close it on success.
+- The bank is closed by the next tick's dispatch branch (no module needs a bank), by the idle branch after a module self-stop (`IDLE`), or by `stopWithMessage()` on an orchestrator stop. The idle branch closes a bank THIS run may have left open exactly once (`runWasActive`).
+- **Never close/re-open the bank between the bank step and `doBank()`** — that causes open/close loops.
 
 ### openBank() return value
 
@@ -311,7 +335,7 @@ if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
 
 ### doBank() return value
 
-`doBank()` must return `false` if banking failed (bank didn't open, materials missing, withdraw failed). If it returns `true`, the tick proceeds to CRAFTING. Returning `true` when inventory is empty creates an infinite loop.
+`doBank()` must return `false` if banking failed (bank didn't open, materials missing, withdraw failed). If it returns `true`, the tick proceeds to RUNNING. Returning `true` when inventory is empty creates an infinite loop.
 
 ### doBank ordering: withdraws before equips; re-verify the window before each step
 
@@ -327,7 +351,7 @@ if (!Rs2Bank.isOpen() && !Rs2Bank.openBank()) {
 
 On some machines, **any** interaction targeting the bank's item grids fails silently: injected CC_OP entries (`Rs2Bank.depositAll(id)` op 8, `depositX` ops 2/6/7) AND raw physical clicks on the slot widget all do nothing — mouse fires, no deposit, no exception, no `MenuOptionClicked`. Verified live via Agent Server (menu entry logging on): withdraw-side grid entries work fine, toolbar BUTTON clicks work fine, only grid targets die. Suspected coordinate/scaling issue with dynamic item widgets on that display setup.
 
-Symptom when it hits a full inventory (crafted jewelry + mould): every withdraw also fails, unchecked `sleepUntil`s time out invisibly, module returns `true` → infinite BANKING↔CRAFTING loop with zero messages.
+Symptom when it hits a full inventory (crafted jewelry + mould): every withdraw also fails, unchecked `sleepUntil`s time out invisibly, module returns `true` → infinite BANKING↔RUNNING loop with zero messages.
 
 **Rule:** in aScript modules, deposit with `Rs2Bank.depositAll()` (no args) — it raw-clicks the "Deposit inventory" toolbar button (a static button widget, proven to work) and waits for inventory changes. Protect tool slots (mould/chisel/pipe) from the blanket deposit by locking them first: `Rs2ItemModel tool = Rs2Inventory.get(toolId); if (tool != null && !Rs2Bank.isLockedSlot(tool.getSlot())) Rs2Bank.toggleItemLock(tool.getName(), true);` — locks persist account-wide and the check makes it a no-op after the first cycle. Locking needs "bank slot locking" enabled in the player's bank settings; if the injected lock op dies on grid-silent machines, keep going — re-withdraw the tool next cycle. Check every bank-step `sleepUntil(...)` result and return `false` on timeout so the tick retries instead of looping blind.
 
@@ -351,7 +375,12 @@ Consequences:
 
 ### Stopping the script
 
-Use `Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE)` to stop. The group key is `"aScript"` (capital S) — use the `AScriptConfig.GROUP` constant, never a string literal: a wrong-case group writes to a nonexistent config and fails silently. Add a `stopRequested` flag to prevent repeated exit attempts while the config change propagates.
+There are two deliberately different stop paths:
+
+- **Module self-stop** — a module that cannot continue writes `Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE)` through its local stop helper, after its own failure budget (e.g. three failed actions, furnace not found). Automation permission (`enabled`) is left exactly as the user set it, so they can reselect the module or pick another one; the IDLE → active edge calls `resetExitFlag()`. Add a `stopRequested`/`exitRequested` flag so the write is not repeated while it propagates.
+- **Orchestrator stop** — an unrecoverable, orchestrator-level failure (no materials, bank unreachable, slot locking disabled, loop errors) calls `AScript.stopWithMessage(title, message)`, which notifies Discord, clears `enabled`, closes a bank the run left open and records the reason for the overlay. The script itself (and QOL) keeps running.
+
+Use the `AScriptConfig.GROUP` constant for the config group, never a string literal: a wrong-case group writes to a nonexistent config and fails silently. QOL features must never call `stopWithMessage` — they are not automation.
 
 ## Anti-detection with Rs2Random
 
@@ -498,11 +527,12 @@ Modules must call these instead of re-implementing them.
 
 - **Module clicks go through the shared `AScriptClick` recipes** (`ascript/util/AScriptClick.java`): `clickObject(TileObject[, action[, renderWaitSteps]])`, `clickActor(Actor[, action])` and `clickGroundItem(TileItem, Tile[, action])` — camera first, the target's real clickbox, the canvas-sized fallback never clicked, and the dispatch **verified against the hover menu** (see "Verified entity dispatch" below). `resolveObject` is the gate-first half for callers that own the click. Plus the item-on-X recipes `useItemOnObject`/`useItemOnNpc`/`useItemOnPlayer`/`useItemOnItem` (a physical click on the item slot → verified selection → a physical click on the target; every failure path cancels the selection on the **source item's own slot**, never at the last press point). **The selection is armed on the item's real `Use` row** (the `onPostMenuSort` swap — a plain slot click dispatches the default op, which is `Wield` for bolts and the fletcher's knife), and an accidentally worn item is removed with `AScriptClick.unequip(itemId)` before the recipe refuses the dispatch. The recipes report whether the click was issued — confirming the EFFECT (make-X prompt, animation, XP/count) stays with the caller's tracking. The item recipes also bring the inventory tab forward before slot reads/clicks (`Rs2Tab.switchTo(InterfaceTab.INVENTORY)` when not current) — a closed inventory tab leaves slot bounds empty; scripts that depend on other panels must switch them the same way before widget work.
 - **Every inventory item a module clicks resolves through `AScriptPick`** (`ascript/util/AScriptPick.java`): the helper returns the same item TYPE with a randomized instance — the target slot is drawn with a log-normal rank over the candidates in slot order, so a script working a 14-item batch does not click the same pixel every cycle (`Rs2Inventory.get` always returns the lowest matching slot). Contract: it changes WHICH candidate is clicked, never WHICH candidates qualify — the type is resolved with the plain `Rs2Inventory.get` rules (fuzzy name matching and the shortest-name tie-break included) and only the instance is drawn, so a converted site cannot silently retarget a different item. The one qualification the helper enforces itself is **banknotes are never candidates** (a certificate is not the item a Use click can act on); a noted reference resolves to its base id through `Rs2ItemModel.getUnNotedId()` and draws the unnoted instances. Resolve the pick at the click site (immediately before the recipe), never at the top of `doAction`. Opt-outs are code-level and named: `AScriptPick.first(...)` (the first occurrence is load-bearing) and `AScriptPick.last(...)` (the target must stay as late as possible — Jewel Enchant's armed cast consumes the first-of-type item, so an early slot can already have been converted when the click lands); every opt-out names its reason at the call site, and `grep -rn "AScriptPick\.\(first\|last\)" ascript/` is the exception list. **Drops are centralized — `AScriptPick.dropRoute(...)` + `AScriptDrop`**: `dropRoute` precomputes one shuffled slot route per slice (no slot is drawn twice; the slot is re-read before each click, `AScriptClick.dropAtSlot`, which installs the item's real Drop row), and the shared `AScriptDrop.drop(filter, status, weatherMultiplier)` owns the randomised 5–9-slot slice, the per-click pacing and the unit-count verification. `dropAll(...)` is the one-pass variant for small sets only (gems). Modules keep their own drop-phase latch and call `drop` once per tick until `Result.remaining() == 0`; `NOTHING_TO_DROP` is an empty state (never a failure), `NO_PROGRESS` is a failed drop. Do NOT go back to `Rs2Inventory.dropAll*` for a module's own drops: those walk slot order and dispatch by `invokeMenu` injection with a fixed sleep. **Food is the third shape — `AScriptPick.pickFood(foods)` / `AScriptFood`**: the heal priority is untouched (biggest per-bite heal wins, food with no `Rs2Food` entry scores 0 and ranks last) and only the INSTANCE inside the top-heal group is drawn, with the same log-normal rank as every other click target. The QOL auto-eat and the food-owning modules (Gem Crab Killer, Ammonite Crabs) go through `AScriptFood.bestFood()`/`dispatch(...)`; a module must not reach for the lowest food slot (`Rs2Player.eatAt`).
+- **Inventory action presses use `AScriptClick.inventoryOptionAtSlot(slot, itemId, option)`** (currently `Eat`/`Drink`, used by `AScriptFood`). It re-reads the slot, promotes the item's real row with the MES-style swap, verifies it is on top, then presses with the client mouse. A raw slot click would dispatch the container's default op — `Deposit` while the bank is open. The recipe returns `ISSUED` / `NO_ACTION` / `BLOCKED`; confirming the effect stays with the caller.
 - **Pre-click hovers use `AScriptClick.moveNaturally(point)`** — never `Microbot.getMouse().move(point)`. `VirtualMouse.move` only emits a single MOVED event (a teleport), and `NaturalMouse.moveTo` early-returns when the pointer already rests on the destination, so the following click becomes an instantaneous press with no natural path or weather speed. This applies to Jewel Enchant's cast, the drop recipe's hover and the item-on-X selection hover; all three use the shared helper.
 - **Banking must use the toolbar "Deposit inventory" button** (`AScriptBank.depositAll()`, no args) — never grid-targeted `depositAll(String/id)`. Grid interactions die silently on some machines (see "Bank item-GRID interactions" below).
-- **Every withdraw must be verified** with `AScriptBank.withdrawVerified(name)` so a failed withdraw never advances to CRAFTING with an empty inventory.
+- **Every withdraw must be verified** with `AScriptBank.withdrawVerified(name)` so a failed withdraw never advances to RUNNING with an empty inventory.
 - **Mouse speed is global and pinned (fork customization).** `Rs2Antiban.activityIntensity` is locked to `VERY_LOW` and `setActivityIntensity` is a no-op (`Rs2AntibanIntensityLockTest`); `NaturalMouse` speed is hardcoded to the slow tier. Modules carry no mouse-speed code — the old `managePrecisionMouseSpeed()`/`isPrecisionModule()` machinery was removed.
-- **Missing-materials / invalid-selection stops** must call `Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE)` with a `stopRequested`/`exitRequested` guard and a one-shot Discord notify (see "Stopping the script"). Fletching also self-escalates after 3 consecutive craft failures.
+- **Missing-materials / invalid-selection stops** must call `Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE)` with a `stopRequested`/`exitRequested` guard and a one-shot Discord notify (see "Stopping the script"). Fletching also self-escalates after 3 consecutive craft failures.
 - **Missing-materials checks must use the retrying bank reads**: `Rs2Bank.hasBankItem(name|id, amount)` (2-tick retry + miss debug), never the bare `Rs2Bank.hasItem(...)` mirror read. The mirror is refreshed only by bank container events, so one stale read used to decide a stop — and the same trap sat inside `AScriptBank.hasBankItem`, the withdraw pre-check, despite its name. Check *amounts* for anything consumed per action, count banknotes as bankable inventory (`AScriptBank.bankableAtLeast`, which uses the retrying reads), and keep a stop message's own conditions identical to the check's: an inventory-only `describeMissing` can name an item that IS in the bank or in the inventory as banknotes.
 
 ### Cooking: raw ids only
@@ -577,8 +607,8 @@ QOL features don't run as automation scripts. Add config items under the QOL `@C
 
 | Feature | Config keys | Where |
 |---------|-------------|-------|
-| Auto zoom out | `autoZoomOut` | `tick()` step 1b — rate-limited to 60 s |
-| Auto eat | `autoEat`, `autoEatMinHpPercent`, `autoEatMaxHpPercent` | `tick()` step 1c + `rollEatThreshold()` |
+| Auto zoom out | `autoZoomOut` | `tick()` QOL block (before the automation gate) — rate-limited to 60 s |
+| Auto eat | `autoEat`, `autoEatMinHpPercent`, `autoEatMaxHpPercent` | `tick()` QOL block (`runAutoEat`) + `EatTracker` |
 | Random event handler | `eventDismissGenieAction`, `eventDismissCountCheckAction`, `eventDismissLampSkill`, `eventDismissStrayLamps` | `ascript/eventdismiss/` — blocking events registered in `AScriptPlugin.startUp()` |
 
 **Random event handler invariants:**
@@ -592,29 +622,32 @@ QOL features don't run as automation scripts. Add config items under the QOL `@C
 - **F3 click conversion (card t_b3adef8c):** the handler's own dispatches go through the `AScriptClick` recipes now — the accept-path talk is `AScriptClick.clickActor(npc.getNpc())` (raw NPC, the BVF precedent), the dismiss is `AScriptClick.clickActor(npc.getNpc(), "Dismiss")`, and the lamp rub is a physical slot click (`Rs2Tab.switchTo(InterfaceTab.INVENTORY)` → `Rs2Inventory.itemBounds` → `Microbot.getMouse().click(bounds)`). `Rs2NpcModel.click` and `Rs2Inventory.interact(ItemID.LAMP, "Rub")` are gone from `ascript/eventdismiss/`. Grounding: "Talk-to" is the first (left-click) op of both event NPCs and "Rub" the lamp's default — OSRS wiki infobox `options` order, `Talk-to, Dismiss` (Genie 326/327 and Count Check 12551/12552) and `Rub, Destroy` (Lamp 2528); "Dismiss" is an NPC composition action, never the default, so it needs the row pick. A talk/dismiss that reports no click (`!clicked()`: off-camera target, hull not rendered yet, or the hover/menu never exposed the row) stops that pass instead of falling through — a Count Check would otherwise be marked `countCheckTried` with no dialogue ever starting — and the `Microbot.status` line the old `Rs2NpcModel.click` set is kept. Needs in-game validation with the final bundled test pass (Genie + Count Check accept, a plain dismiss, one lamp rub).
 
 **Auto-eat invariants:**
-- Skipped entirely for `ScriptType.GEM_CRAB_KILLER`: that module owns HP management (50% normal eat, 2% emergency, banks for food at 25%, Dharok mode holds HP at 10). A global 35–60% eat would double-eat in normal mode and break Dharok mode; Ammonite Crabs is skipped the same way (the module eats at 50 and banks when empty). `autoEatEnabled()` is the single gate.
-- The threshold is rolled once (`rollEatThreshold()`), held across ticks, and **only re-rolled after a bite is CONFIRMED** — never per tick, and never on an unconfirmed dispatch.
-- The bite goes through `eatBestFood()`, NOT `Rs2Player.eatAt(pct)`: `eatAt()` → `useFood()` eats the FIRST food in slot order (a shark in slot 3 always beats a summer pie in slot 20, whatever the heal). `eatBestFood()` keeps `useFood()`'s rules (unnoted only, blighted food first in the Wilderness, "jug of wine" is drunk) and picks the **largest per-bite heal** from `Rs2Food`; the INSTANCE within the top-heal group is then DRAWN by `AScriptPick.pickFood(...)` — the same log-normal rank toward the first occurrences as every other click target, never the lowest slot every time — and food with no heal in the table (level-scaled/random heals) sorts last. `Rs2Food` is therefore the heal source of truth for the auto-eat priority — keep it in sync with the wiki's `Food/All food` (heal per bite) and `Food/Fast foods` (eat delays) tables.
-- The Eat/Drink op being *dispatched* proves nothing: the dispatch ends in `Rs2Inventory.interact()`, which returns true unconditionally and can bail silently inside `invokeMenu()`. `waitForBite()` is the confirmation step — inventory food consumed (unnoted quantity) or hitpoints rose — and it is **not** `Rs2Player.waitForAnimation()`, which waits for ANY animation (the module's own action animation is normally already running) and can hold the 600 ms loop for ~10 s.
-- `MAX_EAT_FAILURES` consecutive unconfirmed bites stop the script via `stopWithMessage()` — a broken safety net must be loud, not a silent wait every tick while hitpoints drain.
-- A spell/item left selected on the cursor makes `Rs2Inventory.invokeMenu()` send the Eat as `WIDGET_TARGET_ON_WIDGET` (the spell is cast at the food, nothing is eaten). `eatReady()` cancels the pending selection the way the bank/deposit-box/GE utils do (`isItemSelected()` → `mouse.click()` at the current position, then wait for it to clear) and skips the attempt — without counting a strike — when it cannot be cleared. `Rs2Inventory.deselect()` does NOT work for this: it re-uses the selected widget's item id, which is -1 for a spell.
-- The hitpoint check is `belowEatThreshold()` (level comparison), NOT `Rs2Player.getHealthPercentage()`: that helper divides by the real level, which reads 0 while skill data is still loading (each `getRealSkillLevel`/`getBoostedSkillLevel` call also falls back to 0 when the client-thread read times out), so the ratio comes back NaN (0/0) or Infinity — every comparison against it is false and the auto-eat silently does nothing. An unloaded level returns false here and the next tick retries.
-- The hitpoint check runs before `eatReady()`, so the cancel-click never fires on a tick where no bite is due.
-- Roll is normal-distributed between the min/max sliders (`Rs2Random.fancyNormalSample`), then shifted down by `(WeatherModulation.combinedSpeedFactor() − 1) × 15` HP% points (bad real-world weather → slower reactions → eats later; no-op when weather modulation is disabled globally).
-- Result clamps to `[max(1, min−5), max]` — the floor must stay ≥ 1 or the threshold can silently disable eating.
-- No food in the inventory is a cheap no-op (`eatAt` returns false before any wait).
-- The `Eat` op does force the inventory tab (`Rs2Inventory.invokeMenu` → `Rs2Tab.switchToInventoryTab`). Not a concern for the tab-sensitive modules: only Gem Crab Killer carries food and it is excluded above, and the crafting/fletching/MLM/Jewel-Enchant modules have no damage source, so the block never dispatches an eat.
-- `eatThreshold` and the strike count reset whenever auto-eat is inactive (`autoEatEnabled()` false — unchecked, or a food-owning module), so toggling the checkbox mid-run re-rolls from the current slider values.
+- **QOL, not automation.** `autoEatEnabled()` is `autoEat() && (!enabled() || (selection != GEM_CRAB_KILLER && selection != AMMONITE_CRABS))`. With automation off it runs even when a food-owning module is selected — that module is not ticking and owns nothing. With automation on, GCK (50% normal eat, 2% emergency, Dharok holds 10 HP) and Ammonite (eat at 50 + bank restock) own HP management, so the global eat stays out. There is no Dharok special case beyond that.
+- The threshold is rolled once (`rollEatThreshold()`), held across ticks, and **only re-rolled after a bite is CONFIRMED** — never per tick, never on an unconfirmed dispatch.
+- Food selection is `AScriptFood.bestFood()`, NOT `Rs2Player.eatAt(pct)`: `eatAt()` → `useFood()` eats the FIRST food in slot order. `bestFood()` mirrors `useFood()` (unnoted only, blighted food first in the Wilderness, wine is drunk), takes the **largest per-bite heal** from `Rs2Food`, and draws the INSTANCE within the top-heal group through `AScriptPick.pickFood(...)` (log-normal rank, never always the lowest slot). Food with no heal entry sorts last. Keep `Rs2Food` in sync with the wiki's `Food/All food` and `Food/Fast foods` tables.
+- The dispatch is `AScriptFood.dispatch(food)` → `AScriptClick.inventoryOptionAtSlot(slot, id, "Eat" | "Drink")`: hover the real slot, promote the client's own consume row with the MES-style swap, verify it is on top, then `moveNaturally` + `Microbot.getMouse().click(point)`. No `Rs2Inventory.interact`/`invokeMenu`/`doInvoke`. The result is `ISSUED` / `NO_ACTION` / `BLOCKED`; the bite is never confirmed by the dispatch.
+- **The swap is mandatory in the bank**: with the bank open an inventory item's default left click is `Deposit`, so a plain slot click would bank the food. The bank and the deposit box expose Eat (OSRS update 9 Jan 2020, "Eating in the Bank") and are never closed by the interface fallback; a bank PIN is skipped too.
+- Interface fallback: food exists but the container exposes no consume row → GE open = `Rs2GrandExchange.closeExchange()`, shop open = `Rs2Shop.closeShop()`, any other interface showing its own inventory container = ESC when `Rs2Settings.isEscCloseInterfaceSettingEnabled()`, else a cooldown and retry. A close/retry is **not** an eat attempt and sets no eat backoff; a short cooldown prevents hammering a stuck interface. With the normal inventory visible and no row, the food genuinely has no consume action → normal retry backoff.
+- Confirmation is **asynchronous** via `EatTracker`; there is no blocking wait and no `waitForAnimation()`. Baselines (food count, HP) are captured **before** the dispatch, so a fast bite cannot land before them. Success = food count dropped or HP rose. In flight = do not dispatch another bite. Timeout = clear the attempt and schedule a log-normal 0.6–2.0 s retry (weather-modulated); no strike counter, no suspension, no config write. A rate-limited WARN (once per 30 s) is diagnostic only.
+- A late bite is still a success: `resolve()` checks the observations before the deadline. Human takeover, pause, lag and interruption are therefore ordinary observations, not failures.
+- A spell/item left selected on the cursor makes the next inventory op "use the selected thing on the food". `eatReady()` cancels it through `AScriptClick.clearSelection()` (a click on the selected widget/item slot, not at the cursor) and skips the attempt without a strike when it cannot be cleared. `Rs2Inventory.deselect()` does NOT work for this: it re-uses the selected widget's item id, which is -1 for a spell.
+- The hitpoint check is `belowEatThreshold()` (level comparison), NOT `Rs2Player.getHealthPercentage()`: that helper divides by the real level, which reads 0 while skill data loads (client-thread reads fall back to 0 on timeout), producing NaN/Infinity — every comparison is false and the auto-eat silently does nothing. An unloaded level returns false and the next tick retries. Run this check BEFORE `eatReady()`, so the cancel-click never fires on a tick where no bite is due.
+- Roll is normal-distributed between the min/max sliders (`Rs2Random.fancyNormalSample`), then shifted down by `(WeatherModulation.combinedSpeedFactor() − 1) × 15` HP% points; the result clamps to `[max(1, min−5), max]` — the floor must stay ≥ 1.
+- No food in the inventory is a cheap no-op.
+- QOL state (`eatThreshold`, `EatTracker`, retry gates) is reset by `resetQolState()` when auto-eat is inactive and at lifecycle boundaries — **not** by `resetRunCounters()`. Otherwise the idle branch would re-roll the threshold every 600 ms. QOL must never call `stopWithMessage()`.
+- Tab handling: `inventoryOptionAtSlot` switches to the inventory tab only when no container is visible; the bank/GE/shop/deposit-box containers are already displayed and must not have a hotkey pressed at them.
 
 ## Checklist when modifying this module
 
 - [ ] Code compiles: `./gradlew :client:compileJava`
 - [ ] New enums/config items have `toString()` for RuneLite config UI
-- [ ] Tick logic is clear: config check → phase resolve → validation → bank check (`readyForBank` gate) → dispatch
+- [ ] Tick logic is clear: QOL (independent of automation) → automation gate (`enabled` + non-`IDLE` selection) → phase resolve → validation → bank check (`readyForBank` gate) → dispatch
 - [ ] A module whose bank needs travelling gates the bank phase with `readyForBank()`, keeps its walk radius inside the readiness distance, and stops loudly when the trip stalls
 - [ ] Module clicks use the client mouse — no `doInvoke` / `NewMenuEntry` / `interact(...)`
 - [ ] Item-on-X selections go through `AScriptClick` (never a raw slot click), so a wearable source such as bolts or the knife is never equipped by its default `Wield` op; a worn recipe item is recovered before the bank/material check
 - [ ] `isBankMissingMaterials()` checks bank *amounts* for anything consumed per action, and every bank read in it is the retrying `Rs2Bank.hasBankItem(...)` family — never the bare `Rs2Bank.hasItem(...)` mirror read
 - [ ] Material availability uses `AScriptBank.bankableAtLeast` (banknotes count, because the bank cycle un-notes them); `needsBank` counts only unnoted inventory, and bank withdrawals run in "Withdraw as item" mode
-- [ ] Every stop path notifies (status + log + `AScriptNotify` + config reset), and repeated action failures escalate to a stop
+- [ ] Every stop path notifies (status + log + `AScriptNotify`) and either returns the selection to `IDLE` (module self-stop) or clears `enabled` (orchestrator stop); repeated action failures escalate to a stop
+- [ ] QOL features are not behind the automation gate: they run while `enabled` is off, each gated only by its own toggle
+- [ ] Auto-eat confirmation is asynchronous (`EatTracker`); no blocking wait, no strike counter, no suspension — only a randomized retry
 - [ ] This AGENTS.md is updated with new modules, states, or config items

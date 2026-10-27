@@ -308,7 +308,7 @@ public class AmmoniteCrabsScript implements AModule {
         }
         int foodBefore = AScriptFood.edibleCount();
         int hpBefore = Rs2Player.getBoostedSkillLevel(Skill.HITPOINTS);
-        if (!AScriptFood.dispatch(food)) {
+        if (AScriptFood.dispatch(food) != AScriptFood.Dispatch.ISSUED) {
             return;
         }
         boolean confirmed = sleepUntil(
@@ -579,7 +579,7 @@ public class AmmoniteCrabsScript implements AModule {
             exitRequested = true;
             Microbot.status = "STOPPED — " + reason;
             AScriptNotify.notify("aScript Stopped — Ammonite Crabs", reason);
-            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
         }
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1100, weatherMultiplier));
     }

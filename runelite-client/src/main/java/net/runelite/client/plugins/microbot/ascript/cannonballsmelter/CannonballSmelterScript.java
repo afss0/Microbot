@@ -571,6 +571,6 @@ public class CannonballSmelterScript implements AModule {
         Microbot.status = "STOPPED — " + message;
         log.warn("[CannonballSmelter] Stopping: {}", message);
         AScriptNotify.notify("aScript Stopped — Cannonball Smelter", message);
-        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
     }
 }
