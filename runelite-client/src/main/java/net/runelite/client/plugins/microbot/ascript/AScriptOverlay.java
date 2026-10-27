@@ -32,33 +32,55 @@ public class AScriptOverlay extends OverlayPanel {
 
             panelComponent.setPreferredSize(new Dimension(275, 0));
 
-            // Title
+            boolean automationOn = config != null && config.enabled();
+            boolean idle = config != null && config.scriptSelection() == ScriptType.IDLE;
+
+            // Colour: red = the last orchestrator stop, orange = automation off,
+            // yellow = idle/configuration hold, green = automation running.
+            Color titleColor;
+            if (script.getLastStopMessage() != null) {
+                titleColor = Color.RED;
+            } else if (!automationOn) {
+                titleColor = new Color(255, 170, 0);
+            } else if (idle || script.getCurrentPhase() == AScript.Phase.IDLE) {
+                titleColor = Color.YELLOW;
+            } else {
+                titleColor = Color.GREEN;
+            }
             panelComponent.getChildren().add(TitleComponent.builder()
                     .text("aScript AIO")
-                    .color(config != null && config.enabled() ? Color.GREEN : Color.RED)
+                    .color(titleColor)
                     .build());
 
-            if (config == null || !config.enabled()) {
+            if (config == null) {
                 panelComponent.getChildren().add(LineComponent.builder()
-                        .left("Status:")
-                        .right("Disabled")
+                        .left("Automation:")
+                        .right("unavailable")
                         .build());
                 return super.render(graphics);
             }
 
-            // Script selection
+            String automation;
+            if (!automationOn) {
+                String stop = script.getLastStopMessage();
+                automation = stop == null ? "Disabled" : "Stopped — " + stop;
+            } else if (idle) {
+                automation = "Idle — select a script";
+            } else {
+                automation = config.scriptSelection().getName()
+                        + " (" + script.getCurrentPhase() + ")";
+            }
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Script:")
-                    .right(config.scriptSelection().getName())
+                    .left("Automation:")
+                    .right(automation)
                     .build());
 
-            // Phase
+            // QOL is independent of the automation switch and stays visible while it is off.
             panelComponent.getChildren().add(LineComponent.builder()
-                    .left("Phase:")
-                    .right(String.valueOf(script.getCurrentPhase()))
+                    .left("QOL:")
+                    .right(qolSummary(config))
                     .build());
 
-            // Microbot status
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("Status:")
                     .right(Microbot.status == null ? "—" : Microbot.status)
@@ -75,5 +97,20 @@ public class AScriptOverlay extends OverlayPanel {
                     .build());
         }
         return super.render(graphics);
+    }
+
+    /**
+     * QOL features are always-on while the plugin is enabled (random events) or gated by
+     * their own toggles (auto-eat, auto-zoom) — never by the automation switch.
+     */
+    private static String qolSummary(AScriptConfig config) {
+        StringBuilder summary = new StringBuilder("events");
+        if (config.autoEat()) {
+            summary.append(", auto-eat");
+        }
+        if (config.autoZoomOut()) {
+            summary.append(", auto-zoom");
+        }
+        return summary.toString();
     }
 }

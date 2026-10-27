@@ -1009,6 +1009,6 @@ public class JewelEnchantScript implements AModule {
         Microbot.status = "STOPPED — " + message;
         log.warn("[JewelEnchant] Stopping: {}", message);
         AScriptNotify.notify("aScript Stopped — Jewel Enchant", message);
-        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+        Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
     }
 }

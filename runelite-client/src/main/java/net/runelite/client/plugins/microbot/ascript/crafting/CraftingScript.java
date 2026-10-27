@@ -697,7 +697,7 @@ public class CraftingScript implements AModule {
                 AScriptNotify.notify("aScript Stopped", "Crafting: " + consecutiveCraftFailures
                         + " consecutive craft failures");
                 Microbot.getConfigManager().setConfiguration(
-                        AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                        AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             }
         }
 
@@ -906,7 +906,7 @@ public class CraftingScript implements AModule {
             Microbot.status = "NO FLAX LOCATION — STOPPING";
             AScriptNotify.notify("Flax Script Stopped",
                     "No spinning wheel location selected. Set Flax Location in the config.");
-            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             return false;
         }
 
@@ -942,7 +942,7 @@ public class CraftingScript implements AModule {
             AScriptNotify.notify("Flax Script Stopped",
                     "Spinning wheel (ID " + location.getObjectID() + ") not found at "
                             + location.getLabel() + ". Deactivating script.");
-            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             return false;
         }
 
@@ -1189,7 +1189,7 @@ public class CraftingScript implements AModule {
                 AScriptNotify.notify("Jewelry Script Stopped",
                         "Furnace (ID " + location.getFurnaceObjectIdsText() + ") not found at "
                                 + location.getLabel() + ". Deactivating script.");
-                Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
                 return false;
             }
 
