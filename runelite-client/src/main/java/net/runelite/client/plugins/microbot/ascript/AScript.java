@@ -73,7 +73,7 @@ public class AScript extends Script {
      * High-level <b>automation</b> phase exposed to the overlay. QOL state is not represented
      * here — it runs independently and the overlay reports it on its own line.
      */
-    public enum Phase { DISABLED, IDLE, BANKING, RUNNING, ERROR }
+    public enum Phase { DISABLED, IDLE, WAITING, BANKING, RUNNING, ERROR }
 
     // ── Module registry ─────────────────────────────────────
     /** All modules, in dispatch priority order. First active module wins. */
@@ -187,6 +187,23 @@ public class AScript extends Script {
     private boolean playerWasLoggedIn = false;
     /** Prevent repeated logout notifications. */
     private boolean logoutHandled = false;
+    /**
+     * Game-readiness gate. Every tick samples the client before anything acts; a module must never
+     * dispatch (and QOL must never click) on a client that is still building the world or whose
+     * game loop has stopped. Liveness comes from the client game cycle — it advances every 20 ms
+     * with the client loop, unlike the server tick counter, which pauses during lag and region
+     * loads while the client is healthy.
+     */
+    private final GameReadinessMonitor gameReadiness = new GameReadinessMonitor();
+    /** Reason of the current hold, {@code null} when the game is ready. Logs once per change. */
+    private GameReadinessMonitor.Readiness gameHoldReason;
+    /** When this hold started; {@code 0} while ready. */
+    private long gameHoldSince;
+    /**
+     * How long automation may wait for a ready game before stopping loudly. Covers a slow region
+     * load plus the monitor's own {@link GameReadinessMonitor#STALL_MS} window.
+     */
+    private static final long GAME_READY_TIMEOUT_MS = 60_000;
 
     // ── Main loop ───────────────────────────────────────────
 
@@ -197,6 +214,7 @@ public class AScript extends Script {
         this.runWasActive = false;
         this.lastStopMessage = null;
         this.idleHoldAnnounced = false;
+        resetGameHold();
         resetQolState();
         // A previous run must not leave a slot-lock capability failure or a menu swap armed.
         AScriptBank.resetSessionState();
@@ -225,6 +243,12 @@ public class AScript extends Script {
                 if (logoutHandled) logoutHandled = false;
 
                 if (!super.run()) return; // heartbeat / pause guard
+
+                // Nothing touches the client until the game is actually running: not the modules
+                // and not QOL. A logged-in client can still be building the scene, and a dead
+                // client keeps reporting LOGGED_IN with a stale player (see GameReadinessMonitor).
+                if (!awaitGameReady()) return;
+
                 tick();
                 consecutiveTickErrors = 0;
             } catch (Exception ex) {
@@ -244,6 +268,85 @@ public class AScript extends Script {
         }, 0, 600, TimeUnit.MILLISECONDS);
 
         return true;
+    }
+
+    /**
+     * Samples the client and either lets the tick proceed or holds it.
+     * <p>
+     * <b>Why no client-thread hop:</b> a readiness probe must be cheap and must still answer when
+     * the client thread is the thing that died. {@code runOnClientThreadOptional} would block for
+     * its full timeout on every 600 ms tick against a crashed client — turning the probe into the
+     * hang — so this reads a few plain client fields directly. The probe must not depend on the
+     * thread it is probing.
+     *
+     * @return {@code true} when the game is ready and the tick may run
+     */
+    private boolean awaitGameReady() {
+        long now = System.currentTimeMillis();
+        GameReadinessMonitor.Readiness readiness = gameReadiness.update(sampleGame(), now);
+
+        if (readiness == GameReadinessMonitor.Readiness.READY) {
+            if (gameHoldReason != null) {
+                log.info("[AScript] Game ready after {} ms — resuming", now - gameHoldSince);
+                gameHoldReason = null;
+                gameHoldSince = 0;
+            }
+            return true;
+        }
+
+        // Only an automation request turns a hold into a timed stop. With the switch off — or no
+        // module selected — the player may sit on a loading screen for as long as they like; the
+        // hold still blocks the tick (QOL has nothing to act on while the world is loading).
+        boolean automationRequested = config != null && config.enabled()
+                && config.scriptSelection() != ScriptType.IDLE;
+
+        if (gameHoldReason != readiness) {
+            gameHoldReason = readiness;
+            // Nothing else writes Microbot.status while the tick is held, so the overlay's status
+            // line can carry the reason without racing the QOL block.
+            Microbot.status = "WAITING FOR GAME — " + readiness.description();
+            log.info("[AScript] Holding the tick — game not ready: {}", readiness.description());
+        }
+        if (gameHoldSince == 0) {
+            gameHoldSince = now;
+        }
+
+        if (automationRequested) {
+            currentPhase = Phase.WAITING;
+            if (now - gameHoldSince >= GAME_READY_TIMEOUT_MS) {
+                stopWithMessage("aScript Stopped — Game Not Ready",
+                        "The game was not ready for " + (GAME_READY_TIMEOUT_MS / 1000) + " s ("
+                                + readiness.description() + ") — the client may still be loading,"
+                                + " or it crashed");
+            }
+        }
+        return false;
+    }
+
+    /**
+     * One cheap snapshot of the client for {@link #awaitGameReady()}.
+     * <p>
+     * Only built-in primitives are read: {@code Microbot.isLoggedIn()} (the RuneLite
+     * {@code GameState.LOGGED_IN} check), the local-player reference, the top-level scene base and
+     * the client game cycle. The cycle is the liveness signal — it advances every 20 ms with the
+     * client loop, while the server tick counter pauses during lag and region loads.
+     */
+    private static GameReadinessMonitor.Sample sampleGame() {
+        var client = Microbot.getClient();
+        if (client == null || !Microbot.isLoggedIn()) {
+            return new GameReadinessMonitor.Sample(false, false, false, -1);
+        }
+        var worldView = client.getTopLevelWorldView();
+        boolean regionLoaded = worldView != null && worldView.getBaseX() > 0;
+        return new GameReadinessMonitor.Sample(
+                true, client.getLocalPlayer() != null, regionLoaded, client.getGameCycle());
+    }
+
+    /** Drops the hold state — the next sample starts the gate from scratch. */
+    private void resetGameHold() {
+        gameReadiness.reset();
+        gameHoldReason = null;
+        gameHoldSince = 0;
     }
 
     private void tick() {
@@ -823,6 +926,7 @@ public class AScript extends Script {
         consecutiveBankOpenFailures = 0;
         consecutiveBankCloseFailures = 0;
         lastStopMessage = message;
+        resetGameHold();
         Microbot.status = "STOPPED — " + message;
         log.warn("[AScript] {}: {}", title, message);
         AScriptNotify.notify(title, message);
@@ -849,6 +953,7 @@ public class AScript extends Script {
         lastStopMessage = null;
         idleHoldAnnounced = false;
         runWasActive = false;
+        resetGameHold();
         playerWasLoggedIn = false;
         logoutHandled = false;
         for (AModule mod : MODULES) {
