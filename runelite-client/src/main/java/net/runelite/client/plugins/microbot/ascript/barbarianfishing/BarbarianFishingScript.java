@@ -127,7 +127,7 @@ public class BarbarianFishingScript implements AModule {
             currentPhase = Phase.NONE;
             return;
         }
-        // Coarse phase for the overlay and the NONE -> active reset transition;
+        // Coarse phase for the overlay and the IDLE -> active reset transition;
         // runtime state (bank proximity, drop session) is re-resolved in doAction.
         if (bankTripNeeded()) {
             currentPhase = Phase.WALK_TO_BANK;
@@ -518,7 +518,7 @@ public class BarbarianFishingScript implements AModule {
             Microbot.status = "STOPPED — " + reason;
             AScriptNotify.notify("aScript Stopped — Barbarian Fishing", reason);
             Microbot.getConfigManager().setConfiguration(
-                    AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                    AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
         }
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1100, weatherMultiplier));
     }

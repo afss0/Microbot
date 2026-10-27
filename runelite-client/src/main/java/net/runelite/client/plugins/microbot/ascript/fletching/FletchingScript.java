@@ -73,7 +73,7 @@ public class FletchingScript implements AModule {
         NONE, DARTS, BOLTS, BOLT_TIPS, ARROWS, BOWS, UNSTRUNG_BOWS, ARROW_SHAFTS, STOCKS, SHIELDS
     }
 
-    /** Reset state when the module is re-enabled. Called by AScript on the NONE → active edge. */
+    /** Reset state when the module is re-enabled. Called by AScript on the IDLE → active edge. */
     @Override
     public void resetExitFlag() {
         exitRequested = false;
@@ -951,7 +951,7 @@ public class FletchingScript implements AModule {
             AScriptNotify.notify("aScript Stopped", "Fletching: " + consecutiveCraftFailures
                     + " consecutive craft failures — " + reason);
             Microbot.getConfigManager().setConfiguration(
-                    AScriptConfig.GROUP, "scriptSelection", ScriptType.NONE);
+                    AScriptConfig.GROUP, "scriptSelection", ScriptType.IDLE);
             return;
         }
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(500, 1_100, weatherMultiplier));
