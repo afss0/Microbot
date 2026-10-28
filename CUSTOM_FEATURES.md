@@ -134,7 +134,7 @@ Used during merges to verify nothing is lost.
 
 ### aScript — AIO Multi-Script Orchestrator
 - **Files:** `ascript/` package (AScript.java, AScriptConfig.java, AScriptPlugin.java, AScriptOverlay.java, ScriptType.java, crafting/)
-- **What:** AIO script hosting multiple automation scripts under one plugin, built on standard `Script` (Phase enum: DISABLED/IDLE/BANKING/CRAFTING/ERROR — migrated from StateMachineScript). Modules are plain helper classes (no Guice, no Script inheritance).
+- **What:** AIO script hosting multiple automation scripts under one plugin, built on standard `Script` (Phase enum: DISABLED/IDLE/WAITING/BANKING/RUNNING/ERROR — migrated from StateMachineScript). `Phase` describes the **automation** state only; QOL state (auto-eat) is reported separately. Modules are plain helper classes (no Guice, no Script inheritance).
 - **Current modules:**
   - **Crafting** (`ascript/crafting/`) — Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry
   - **Random event handler** (`ascript/eventdismiss/`) — always-on Genie/Count Check dismissal + XP lamp use (lamp skill configurable); banking interlock keeps lamps out of deposits (locked lamp slot + bank yield)
@@ -152,7 +152,7 @@ Used during merges to verify nothing is lost.
   - Widget interactions use `sleepUntilTrue()` for production widget detection (no fixed sleeps)
   - Missing materials → immediate stop with status message (no silent failures)
 - **Weather integration:** `WeatherModulation.ensureFresh()` called once per craft cycle; `combinedSpeedFactor()` scales all waits
-- **Config:** Automation section (enabled + dropdown), per-module sections (closedByDefault), QOL section (placeholder)
+- **Config:** Automation section (enabled + dropdown) at position 0, QOL section at position 1, per-module sections (closedByDefault) after them in alphabetical order — see the config-order entry below
 - **Review fixes (Aug 2026):**
   - Flax Spinning now walks to the configured spinning wheel (`flaxSpinLocation`), turns camera, interacts with "Spin"; stops once + Discord notify when wheel/location missing (was: no navigation at all)
   - `tick()` honors `Rs2Bank.openBank()` return value — failed open retries next tick instead of checking stock against an empty bank snapshot (false "missing materials" stop)
@@ -325,6 +325,33 @@ Used during merges to verify nothing is lost.
   - Modules: BVF, Barbarian Fishing, Mining, Motherload Mine (gems + hammer cleanup), Woodcutting.
   - Merge check: `grep "dropAtSlot" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
   - Merge check: `grep -c "dropRoute" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptPick.java`
+- **aScript automation/QOL split + asynchronous auto-eat (Oct 2026):**
+  - The tick is now two independently gated halves: `runQol(config)` (today: auto-eat) and the module dispatch. QOL keeps working with the Automation switch off, and `Phase` describes automation only — the overlay reports QOL state on its own line. This is why `Phase.CRAFTING` was renamed `RUNNING`: it names the automation phase, not the activity, and every module keeps its own private phase enum.
+  - Auto-eat no longer blocks the 600 ms loop. The tick dispatches the Eat/Drink and returns; `EatTracker` confirms the bite on a later tick (unnoted food count dropped **or** boosted hitpoints rose) and is the only writer of the attempt state. Baselines are captured **before** the dispatch, so a fast bite that lands first is not read as "nothing happened".
+  - Deliberately no strike counter and no suspension: `TIMED_OUT` clears the attempt and the caller schedules a randomized retry (`Rs2Random.logNormalBounded(600, 2000, weatherMultiplier)`), so a human takeover, a pause, lag or a late bite are ordinary observations rather than a failure streak. A confirmed bite re-rolls the eat threshold, and a second bite may follow on the same tick if HP is still low.
+  - Merge check: `grep "class EatTracker" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/EatTracker.java | head -1`
+  - Merge check: `grep "private void runAutoEat" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1`
+- **aScript game-readiness hold + `WAITING` phase (Oct 2026):**
+  - The tick can no longer act on a client that is not ready. `GameReadinessMonitor` decides from built-in state only — `GameState.LOGGED_IN` (`Microbot.isLoggedIn()`), a loaded local player, a scene with a real `WorldView.getBaseX()`, and `Client.getGameCycle()` — and returns the reason (`NOT_LOGGED_IN`, `PLAYER_NOT_LOADED`, `REGION_NOT_LOADED`, `LOOP_STALLED`).
+  - The liveness signal is the **game cycle**, not `Client.getTickCount()`: the tick count only advances when RuneLite processes a server tick, so lag or a long region load freezes it on a healthy client and a probe watching it reports a stalled loop. A frozen game cycle for `STALL_MS` (10 s ≈ 500 cycles) means the client loop itself is dead.
+  - While not ready the tick is held before any module runs, `Microbot.status` carries `WAITING FOR GAME — <reason>` and the reason is logged once per change (`Game ready after N ms — resuming` on recovery). With automation requested the hold becomes `Phase.WAITING` and times out after `GAME_READY_TIMEOUT_MS` (60 s) with a loud stop (`aScript Stopped — Game Not Ready`); with the switch off or no module selected it holds indefinitely, because the player may sit on a loading screen for as long as they like.
+  - The monitor is pure and client-free on purpose (`update(Sample, now)` takes primitives), so the whole truth table is unit-tested without a live client (`GameReadinessMonitorTest`); it is stateful only for the stall window.
+  - Merge check: `grep "class GameReadinessMonitor" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/GameReadinessMonitor.java | head -1`
+  - Merge check: `grep "WAITING FOR GAME" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1`
+  - Merge check: `grep "GAME_READY_TIMEOUT_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1`
+- **aScript config section order (Oct 2026):**
+  - The config panel sorts by `position`, not by source order: `Automation` stays at 0, `QOL` at 1, and every module section follows in **alphabetical order of its `@ConfigSection(name = ...)` display name** from position 2 (Ammonite Crabs 2 … Woodcutting 16). Inserting a module means renumbering every section after it — a duplicate position silently reorders the panel, it does not error.
+  - Merge check: `grep -A1 'name = "QOL"' runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -2`
+  - Merge check: `grep -c "@ConfigSection(" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java`
+- **aScript bank close only on the running → idle transition (Oct 2026):**
+  - The disabled-branch cleanup used to infer "this run left the bank open" from `lastSelection != NONE`. `lastSelection` is written at the top of every tick even while the Enabled checkbox is off, so from the second tick on the condition was true with automation disabled and the loop closed **any** bank the player opened, every 600 ms (live 2026-10-26).
+  - The one-shot close is now gated on `runWasActive` (set when a tick actually ran automation, cleared by the cleanup itself): a self-stop or a mid-run disable still closes the bank that run left open, exactly once, while a bank the player opened while the script was idle is left alone. Reset in `run()` alongside the other per-run state.
+  - Merge check: `grep "private boolean runWasActive" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1`
+- **aScript pre-click hover travel: `AScriptClick.moveNaturally` (Oct 2026):**
+  - Never place the cursor with `Microbot.getMouse().move(point)` before a click. `VirtualMouse.move` emits a single MOVED event (a teleport) and `NaturalMouse.moveTo` then early-returns because the pointer already rests on the destination, so the following click becomes an instantaneous press with no natural path and no weather speed factor.
+  - `AScriptClick.moveNaturally(point)` owns the travel: NaturalMouse path with weather modulation, no corrective teleport when NaturalMouse is available, and a retry (no click) when the pointer does not settle. Call sites: `dropAtSlot`, `inventoryOptionAtSlot` (the item-on-X selection), the private `select(Rs2ItemModel)` Use arming, and Jewel Enchant's cast hover — so drops and Use-chain clicks do not teleport either.
+  - Merge check: `grep "moveNaturally" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
+  - Merge check: `grep -c "getMouse().move(point)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantScript.java` (expect 0)
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
@@ -427,4 +454,23 @@ grep "static void requestAutoRun" runelite-client/src/main/java/net/runelite/cli
 grep "KEY_TRACE" runelite-client/src/main/java/net/runelite/client/plugins/microbot/agentserver/AgentServerConfig.java | head -1
 grep "AgentTrace.isEnabled" runelite-client/src/main/java/net/runelite/client/plugins/microbot/agentserver/handler/AgentHandler.java | head -1
 grep "object is no longer in a loaded world view" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1
+# aScript automation/QOL split + async auto-eat (2026-10-26)
+grep "class EatTracker" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/EatTracker.java | head -1
+grep "private void runAutoEat" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
+grep "default boolean autoEat" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -1
+# aScript game-readiness hold + WAITING phase (2026-10-27)
+grep "class GameReadinessMonitor" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/GameReadinessMonitor.java | head -1
+grep "WAITING FOR GAME" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
+grep "GAME_READY_TIMEOUT_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
+grep "enum Phase { DISABLED, IDLE, WAITING, BANKING, RUNNING, ERROR }" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
+# aScript config section order (2026-10-27)
+grep -A1 'name = "QOL"' runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -2
+grep -A1 'name = "Ammonite Crabs"' runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -2
+# aScript bank close only on running -> idle + natural hover travel (2026-10-26)
+grep "private boolean runWasActive" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
+grep "moveNaturally" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1
+# aScript bolt enchant module (2026-10-28)
+ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/boltenchant/
+grep "STALL_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/boltenchant/BoltEnchantScript.java | head -1
+grep "boltEnchantAfk" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -1
 ```
