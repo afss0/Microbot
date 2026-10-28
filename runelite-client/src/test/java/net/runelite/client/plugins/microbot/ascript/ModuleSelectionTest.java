@@ -1,6 +1,8 @@
 package net.runelite.client.plugins.microbot.ascript;
 
 import net.runelite.client.plugins.microbot.ascript.crafting.CraftingScript;
+import net.runelite.client.plugins.microbot.ascript.boltenchant.BoltEnchantScript;
+import net.runelite.client.plugins.microbot.ascript.boltenchant.BoltEnchantType;
 import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingScript;
 import net.runelite.client.plugins.microbot.ascript.fletching.FletchingActivity;
 import net.runelite.client.plugins.microbot.ascript.fletching.FletchingScript;
@@ -44,6 +46,8 @@ public class ModuleSelectionTest {
                 new CraftingScript().validateSelection(selection(ScriptType.CRAFTING)));
         assertEquals("no fletching activity selected",
                 new FletchingScript().validateSelection(selection(ScriptType.FLETCHING)));
+        assertEquals("no bolt type selected",
+                new BoltEnchantScript().validateSelection(selection(ScriptType.BOLT_ENCHANT)));
     }
 
     @Test
@@ -68,5 +72,23 @@ public class ModuleSelectionTest {
                 module.runKey(darts), module.runKey(bows));
         assertEquals("the same activity must keep the scope stable",
                 module.runKey(darts), module.runKey(darts));
+    }
+
+    @Test
+    public void boltEnchantRunKeyChangesWithTheBoltType() {
+        AScriptConfig opal = mock(AScriptConfig.class);
+        when(opal.boltEnchantBoltType()).thenReturn(BoltEnchantType.OPAL);
+        when(opal.boltEnchantUseStaff()).thenReturn(true);
+        AScriptConfig onyx = mock(AScriptConfig.class);
+        when(onyx.boltEnchantBoltType()).thenReturn(BoltEnchantType.ONYX);
+        when(onyx.boltEnchantUseStaff()).thenReturn(true);
+
+        BoltEnchantScript module = new BoltEnchantScript();
+        assertNotEquals("a different bolt type must start a fresh run scope",
+                module.runKey(opal), module.runKey(onyx));
+        assertEquals("the same bolt type must keep the scope stable",
+                module.runKey(opal), module.runKey(opal));
+        assertNull("an unselected bolt module must not block another module",
+                module.validateSelection(selection(ScriptType.IDLE)));
     }
 }
