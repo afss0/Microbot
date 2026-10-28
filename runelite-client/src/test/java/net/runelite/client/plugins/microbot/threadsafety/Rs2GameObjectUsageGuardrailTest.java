@@ -24,7 +24,20 @@ public class Rs2GameObjectUsageGuardrailTest
 		MICROBOT + "util/tileobject/Rs2TileObjectModel"
 	);
 
-	private static final Set<String> PENDING_MIGRATION = Set.of();
+	/**
+	 * Classes of this fork that still use Rs2GameObject. Upstream retired the class in 2.6.44
+	 * (M3-06/M3-08/M3-09); the fork's own walker engine and aScript modules are the remaining
+	 * callers and are being migrated module by module. Remove an entry as its class migrates —
+	 * the test fails when a listed class stops referencing the class, so the list only shrinks.
+	 */
+	private static final Set<String> PENDING_MIGRATION = Set.of(
+		MICROBOT + "util/walker/Rs2Walker",
+		MICROBOT + "ascript/crafting/CraftingScript",
+		MICROBOT + "ascript/mining/MiningScript",
+		MICROBOT + "ascript/motherloadmine/MotherloadMineScript",
+		MICROBOT + "ascript/util/AScriptBank",
+		MICROBOT + "ascript/woodcutting/WoodcuttingScript"
+	);
 
 	@Test
 	public void noNewRs2GameObjectReferences() throws IOException
