@@ -50,6 +50,11 @@ public class WidgetDescribeHandler extends AgentHandler {
 			return;
 		}
 
+		if (groupId < 0 || childId < 0) {
+			sendJson(exchange, 400, errorResponse("groupId and childId must be non-negative"));
+			return;
+		}
+
 		int depth = Math.min(getIntParam(params, "depth", 5), MAX_DEPTH);
 
 		List<WidgetDescription> tree = Rs2WidgetInspector.describeWidget(groupId, childId, depth);

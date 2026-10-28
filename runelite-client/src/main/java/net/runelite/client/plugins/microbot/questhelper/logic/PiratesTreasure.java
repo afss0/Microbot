@@ -9,7 +9,6 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.questhelper.QuestHelperPlugin;
 import net.runelite.client.plugins.microbot.questhelper.steps.QuestStep;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.grounditem.Rs2GroundItem;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
@@ -98,7 +97,7 @@ public class PiratesTreasure extends BaseQuest {
             if (questStep.getText().contains("Talk to Luthas and tell him you finished filling the crate.")) {
                 Rs2Walker.walkTo(2942, 3150, 0);
                 sleep(2000);
-                Rs2GameObject.interact(2072, "Search", 10);
+                Microbot.getRs2TileObjectCache().query().fromWorldView().withId(2072).interact("Search", 10);
                 sleep(6000);
                 if (!mQuestPlugin.fullCrate) {
                     collectBananas();
@@ -155,7 +154,7 @@ public class PiratesTreasure extends BaseQuest {
         if (Rs2Inventory.count(BANANA) >= 10) {
             Rs2Walker.walkTo(2942, 3150, 0);
             sleep(2000);
-            Rs2GameObject.interact(2072, "Fill", 10);
+            Microbot.getRs2TileObjectCache().query().fromWorldView().withId(2072).interact("Fill", 10);
             sleep(2000);
         }
     }
@@ -170,7 +169,7 @@ public class PiratesTreasure extends BaseQuest {
 
     private static void pickBananaTree() {
         for (int i = 0; i < 4; i++) { // 4 picks total
-            Rs2GameObject.interact("Banana Tree", "Pick");
+            Microbot.getRs2TileObjectCache().query().fromWorldView().withNameContains("Banana Tree").withAction("Pick").interact("Pick");
             sleep(800, 1500); // Sleep after each click
         }
     }

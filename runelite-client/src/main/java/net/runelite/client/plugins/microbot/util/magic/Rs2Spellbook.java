@@ -10,7 +10,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import lombok.Getter;
-import net.runelite.api.GameObject;
 import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
 import net.runelite.api.coords.WorldPoint;
@@ -20,7 +19,8 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.NpcID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.npc.Rs2Npc;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
@@ -255,9 +255,9 @@ public enum Rs2Spellbook {
                 case ARCEUUS:
                     // For ARCEUUS to MODERN, we still need to use an altar, but Arceuus uses NPC
                     // Try to find any available altar (Ancient or Lunar)
-                    if (!Rs2GameObject.getGameObjects(o -> o.getId() == ANCIENT.getGameID(), maxSearchRadius).isEmpty()) {
+                    if (findAltar(ANCIENT, maxSearchRadius) != null) {
                         targetAltarSpellbook = ANCIENT;
-                    } else if (!Rs2GameObject.getGameObjects(o -> o.getId() == LUNAR.getGameID(), maxSearchRadius).isEmpty()) {
+                    } else if (findAltar(LUNAR, maxSearchRadius) != null) {
                         targetAltarSpellbook = LUNAR;
                     } else {
                         Microbot.log("No suitable altar found to switch from Arceuus to Modern spellbook");
@@ -290,9 +290,7 @@ public enum Rs2Spellbook {
         
         // Create a final copy of targetAltarSpellbook for use in the lambda
         final Rs2Spellbook finalTargetAltarSpellbook = targetAltarSpellbook;   
-        GameObject altarObject = Rs2GameObject.getGameObjects(o -> finalTargetAltarSpellbook.getGameID().equals(o.getId()), maxSearchRadius).stream()
-                .findFirst()
-                .orElse(null);
+        Rs2TileObjectModel altarObject = findAltar(finalTargetAltarSpellbook, maxSearchRadius);
                 
         if (altarObject == null) {
             Microbot.log("No altar object found for " + targetAltarSpellbook.name() + 
@@ -302,7 +300,8 @@ public enum Rs2Spellbook {
         }
         
         // Interact with the altar to pray and switch spellbook
-        if (Rs2GameObject.interact(altarObject, "Pray")) {
+        String prayAction = altarObject.findAction("Pray");
+        if (altarObject.click(prayAction != null ? prayAction : "")) {
             Rs2Player.waitForAnimation();
             // Wait for spellbook change confirmation
             return sleepUntil(() -> getCurrentSpellbook() == this, 5000);
@@ -445,13 +444,21 @@ public enum Rs2Spellbook {
      * 
      * @return true if any spellbook altar is nearby
      */
+    private static Rs2TileObjectModel findAltar(Rs2Spellbook spellbook, int maxSearchRadius) {
+        return Microbot.getRs2TileObjectCache().query()
+                .fromWorldView()
+                .ofType(TileObjectType.GAME)
+                .withId(spellbook.getGameID())
+                .nearestOnClientThread(maxSearchRadius);
+    }
+
     public static boolean isAltarNearby() {
         final int maxSearchRadius = 10;
         
         // Check for any of the spellbook altars
         for (Rs2Spellbook spellbook : values()) {
             if (spellbook.getGameID() != null && spellbook != ARCEUUS) { // ARCEUUS uses NPC, not altar
-                if (!Rs2GameObject.getGameObjects(o -> spellbook.getGameID().equals(o.getId()), maxSearchRadius).isEmpty()) {
+                if (findAltar(spellbook, maxSearchRadius) != null) {
                     return true;
                 }
             }

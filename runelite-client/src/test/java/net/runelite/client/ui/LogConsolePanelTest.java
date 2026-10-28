@@ -8,6 +8,7 @@ import java.awt.event.KeyListener;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
+import java.awt.geom.Rectangle2D;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -28,12 +29,16 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
+import javax.swing.plaf.basic.BasicTextAreaUI;
 import javax.swing.text.BadLocationException;
+import javax.swing.text.JTextComponent;
+import javax.swing.text.Position;
 import org.junit.Before;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class LogConsolePanelTest
@@ -58,6 +63,15 @@ public class LogConsolePanelTest
 		panel.append(lines(0, 200));
 		settle();
 		assertTrue(isAtBottom());
+	}
+
+	@Test
+	public void bufferCutStartsAtTheNextWholeLine()
+	{
+		assertEquals(0, LogConsolePanel.lineStartAtOrAfter("one\ntwo\n", 0));
+		assertEquals(4, LogConsolePanel.lineStartAtOrAfter("one\ntwo\n", 2));
+		assertEquals(4, LogConsolePanel.lineStartAtOrAfter("one\ntwo\n", 4));
+		assertEquals(2, LogConsolePanel.lineStartAtOrAfter("one two", 2));
 	}
 
 	@Test
@@ -257,6 +271,54 @@ public class LogConsolePanelTest
 		assertTrue(text.length() <= DOCUMENT_CAP);
 		assertTrue(text.endsWith(last));
 		assertNotEquals(-1, text.indexOf("line " + (next - 2) + "\n"));
+	}
+
+	@Test
+	public void layoutFailureWhileSnappingStaysOffTheEdt() throws Exception
+	{
+		AtomicReference<Throwable> uncaught = new AtomicReference<>();
+		Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+		Thread.setDefaultUncaughtExceptionHandler((thread, ex) -> uncaught.set(ex));
+		try
+		{
+			onEdt(() -> textArea.setUI(new BasicTextAreaUI()
+			{
+				@Override
+				public Rectangle2D modelToView2D(JTextComponent component, int pos, Position.Bias bias)
+				{
+					throw new IllegalArgumentException("TextHitInfo is out of range");
+				}
+			}));
+			panel.scrollToBottom();
+			settle();
+		}
+		finally
+		{
+			Thread.setDefaultUncaughtExceptionHandler(previous);
+		}
+		assertNull(uncaught.get());
+	}
+
+	@Test
+	public void trimmingDropsWholeLines() throws Exception
+	{
+		int length = onEdtGet(() -> textArea.getDocument().getLength());
+		panel.append("y".repeat(DOCUMENT_CAP - length + 2) + "\n");
+		settle();
+		String text = onEdtGet(() ->
+		{
+			try
+			{
+				return textArea.getDocument().getText(0, textArea.getDocument().getLength());
+			}
+			catch (BadLocationException ex)
+			{
+				throw new IllegalStateException(ex);
+			}
+		});
+		assertTrue(text.length() <= DOCUMENT_CAP);
+		assertTrue(text.startsWith("line 1\n"));
+		assertTrue(text.endsWith("y\n"));
 	}
 
 	private void press(int keyCode, int modifiers) throws Exception

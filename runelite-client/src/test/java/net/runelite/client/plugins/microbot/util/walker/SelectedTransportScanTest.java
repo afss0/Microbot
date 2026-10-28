@@ -3,12 +3,12 @@ package net.runelite.client.plugins.microbot.util.walker;
 import net.runelite.api.Client;
 import net.runelite.api.Scene;
 import net.runelite.api.WorldView;
+import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.shortestpath.Transport;
 import net.runelite.client.plugins.microbot.shortestpath.TransportType;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.leaguetransport.Rs2LeaguesTransport;
 import net.runelite.client.plugins.microbot.util.npc.Rs2Npc;
 import net.runelite.client.plugins.microbot.util.npc.Rs2NpcModel;
@@ -46,7 +46,7 @@ public class SelectedTransportScanTest
 	private static final int REMAINING_ROUTE_TILES = 30;
 
 	private final List<MockedStatic<?>> statics = new ArrayList<>();
-	private MockedStatic<Rs2GameObject> gameObjects;
+	private MockedStatic<Rs2WalkerSceneObjects> gameObjects;
 	private MockedStatic<Rs2PathApi> pathApi;
 	private MockedStatic<Rs2Npc> npcs;
 	private WorldPoint playerLocation;
@@ -82,7 +82,7 @@ public class SelectedTransportScanTest
 
 		assertFalse(result.handled);
 		assertEquals(TransportDispatchTrace.Refusal.OBJECT_MISSING, result.trace.refusal());
-		gameObjects.verify(() -> Rs2GameObject.getAll(any(), eq(origin), eq(10)), times(1));
+		gameObjects.verify(() -> Rs2WalkerSceneObjects.near(eq(TileObject.class), any(), eq(origin), eq(10)), times(1));
 	}
 
 	@Test
@@ -99,7 +99,7 @@ public class SelectedTransportScanTest
 
 		assertEquals(TransportDispatchTrace.Verdict.DELIBERATE_SKIP, result.verdict);
 		pathApi.verify(Rs2PathApi::isSpiritTreeTravelEnabled, times(1));
-		gameObjects.verify(() -> Rs2GameObject.getAll(any(), any(WorldPoint.class), eq(10)), never());
+		gameObjects.verify(() -> Rs2WalkerSceneObjects.near(eq(TileObject.class), any(), any(WorldPoint.class), eq(10)), never());
 	}
 
 	@Test
@@ -121,7 +121,7 @@ public class SelectedTransportScanTest
 
 		assertFalse(result.handled);
 		npcs.verify(() -> Rs2Npc.interact(guide, "Follow"), times(1));
-		gameObjects.verify(() -> Rs2GameObject.getAll(any(), any(WorldPoint.class), eq(10)), never());
+		gameObjects.verify(() -> Rs2WalkerSceneObjects.near(eq(TileObject.class), any(), any(WorldPoint.class), eq(10)), never());
 	}
 
 	private static List<WorldPoint> route(WorldPoint origin, WorldPoint destination)
@@ -174,8 +174,8 @@ public class SelectedTransportScanTest
 		open(Rs2Tile.class);
 		npcs = open(Rs2Npc.class);
 
-		gameObjects = open(Rs2GameObject.class);
-		gameObjects.when(() -> Rs2GameObject.getAll(any(), any(WorldPoint.class), anyInt())).thenReturn(List.of());
+		gameObjects = open(Rs2WalkerSceneObjects.class);
+		gameObjects.when(() -> Rs2WalkerSceneObjects.near(eq(TileObject.class), any(), any(WorldPoint.class), anyInt())).thenReturn(List.of());
 	}
 
 	private <T> MockedStatic<T> open(Class<T> type)

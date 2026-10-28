@@ -13,7 +13,8 @@ import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.plugins.microbot.util.coords.Rs2LocalPoint;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldArea;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
@@ -1078,7 +1079,7 @@ public abstract class Rs2Tile implements Tile {
         }
 
         // Get the world area of the game object
-        Rs2WorldArea gameObjectArea = new Rs2WorldArea(Objects.requireNonNull(Rs2GameObject.getWorldArea(tileObject)));
+        Rs2WorldArea gameObjectArea = new Rs2WorldArea(Objects.requireNonNull(new Rs2TileObjectModel(tileObject).getWorldArea()));
 
         // Get interactable points around the game object
         List<WorldPoint> interactablePoints = getInteractablePoints(gameObjectArea, topLevelWorldView);
@@ -1164,7 +1165,11 @@ public abstract class Rs2Tile implements Tile {
     }
 
     private static boolean tileHasWallsInternal(WorldPoint source) {
-        return Rs2GameObject.getWallObjects().stream().filter(x -> x.getWorldLocation().equals(source)).findFirst().orElse(null) != null;
+        return Microbot.getRs2TileObjectCache().query()
+                .fromWorldView()
+                .ofType(TileObjectType.WALL)
+                .where(x -> Objects.equals(source, x.getRuneLiteWorldLocation()))
+                .first() != null;
     }
 
     /**
@@ -1185,12 +1190,12 @@ public abstract class Rs2Tile implements Tile {
     }
 
     private static boolean isBankBoothInternal(WorldPoint source) {
-        GameObject gameObject = Rs2GameObject.getGameObjects().stream().filter(x -> x.getWorldLocation().equals(source)).findFirst().orElse(null);
-        if (gameObject != null) {
-            ObjectComposition objectComposition = Rs2GameObject.convertToObjectComposition(gameObject);
-            return objectComposition != null && objectComposition.getName().equalsIgnoreCase("bank booth");
-        }
-        return false;
+        Rs2TileObjectModel gameObject = Microbot.getRs2TileObjectCache().query()
+                .fromWorldView()
+                .ofType(TileObjectType.GAME)
+                .where(x -> Objects.equals(source, x.getRuneLiteWorldLocation()))
+                .first();
+        return gameObject != null && "bank booth".equalsIgnoreCase(gameObject.getName());
     }
 
     /**

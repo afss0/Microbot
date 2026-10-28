@@ -31,6 +31,7 @@ import javax.swing.event.PopupMenuListener;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
 import javax.swing.text.DefaultCaret;
+import javax.swing.text.Element;
 import net.runelite.api.Constants;
 
 final class LogConsolePanel extends JPanel
@@ -204,7 +205,7 @@ final class LogConsolePanel extends JPanel
 			// newest line's position from the document itself
 			newestLine = textArea.modelToView2D(end);
 		}
-		catch (BadLocationException ex)
+		catch (BadLocationException | IllegalArgumentException ex)
 		{
 			return;
 		}
@@ -247,7 +248,7 @@ final class LogConsolePanel extends JPanel
 			if (pending.length() > 2 * MAX_CHARACTERS_SCROLLED_UP)
 			{
 				// the oldest buffered lines would be trimmed out of the document on arrival anyway
-				pending.delete(0, pending.length() - MAX_CHARACTERS_SCROLLED_UP);
+				pending.delete(0, lineStartAtOrAfter(pending, pending.length() - MAX_CHARACTERS_SCROLLED_UP));
 			}
 
 			if (flushScheduled)
@@ -258,6 +259,26 @@ final class LogConsolePanel extends JPanel
 		}
 
 		SwingUtilities.invokeLater(this::flushPending);
+	}
+
+	static int lineStartAtOrAfter(CharSequence text, int from)
+	{
+		if (from <= 0)
+		{
+			return 0;
+		}
+		if (text.charAt(from - 1) == '\n')
+		{
+			return from;
+		}
+		for (int i = from; i < text.length(); i++)
+		{
+			if (text.charAt(i) == '\n')
+			{
+				return i + 1;
+			}
+		}
+		return from;
 	}
 
 	private void flushPending()
@@ -272,7 +293,7 @@ final class LogConsolePanel extends JPanel
 			}
 
 			int cap = followTail ? MAX_CHARACTERS : MAX_CHARACTERS_SCROLLED_UP;
-			text = pending.substring(Math.max(0, pending.length() - cap));
+			text = pending.substring(lineStartAtOrAfter(pending, pending.length() - cap));
 			pending.setLength(0);
 		}
 
@@ -411,9 +432,13 @@ final class LogConsolePanel extends JPanel
 			return;
 		}
 
+		Element lines = document.getDefaultRootElement();
+		int lineEnd = lines.getElement(lines.getElementIndex(excess - 1)).getEndOffset();
+		int cut = lineEnd <= document.getLength() ? lineEnd : excess;
+
 		try
 		{
-			document.remove(0, excess);
+			document.remove(0, cut);
 		}
 		catch (BadLocationException ex)
 		{

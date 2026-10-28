@@ -28,7 +28,6 @@ import net.runelite.client.plugins.microbot.util.coords.Rs2WorldArea;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
@@ -255,7 +254,7 @@ final class Rs2WalkerDoors {
      */
     static boolean sceneDoorAdjacentToEdge(WorldPoint a, WorldPoint b) {
         List<String> doorActions = List.of("pay-toll", "pick-lock", "walk-through", "go-through", "open", "pass");
-        return !Rs2GameObject.getAll(o -> {
+        return !Rs2WalkerSceneObjects.near(TileObject.class, o -> {
             WorldPoint loc = o.getWorldLocation();
             if (!doorTileAdjacentToEdgeEndpoints(loc, a, b)) {
                 return false;
@@ -464,7 +463,7 @@ final class Rs2WalkerDoors {
     static boolean interactDoorTimed(TileObject object, String action) {
         long startedAt = System.currentTimeMillis();
         try {
-            return Rs2GameObject.interact(object, action);
+            return Rs2WalkerSceneObjects.interact(object, action);
         } finally {
             long tookMs = System.currentTimeMillis() - startedAt;
             if (rawScanWallSnapshot != null || rawScanGameObjectSnapshot != null) {
@@ -563,9 +562,9 @@ final class Rs2WalkerDoors {
             }
             return adjacent;
         }
-        WallObject wall = Rs2GameObject.getWallObject(o -> o.getWorldLocation().equals(probe), probe, 3);
+        WallObject wall = Rs2WalkerSceneObjects.first(WallObject.class, o -> o.getWorldLocation().equals(probe), probe, 3);
         if (wall == null) {
-            wall = Rs2GameObject.getWallObject(o -> o.getWorldLocation().distanceTo2D(probe) <= 1, probe, 3);
+            wall = Rs2WalkerSceneObjects.first(WallObject.class, o -> o.getWorldLocation().distanceTo2D(probe) <= 1, probe, 3);
         }
         return wall;
     }
@@ -592,9 +591,9 @@ final class Rs2WalkerDoors {
             }
             return adjacent;
         }
-        TileObject object = Rs2GameObject.getGameObject(o -> o.getWorldLocation().equals(probe), probe, 3);
+        TileObject object = Rs2WalkerSceneObjects.first(GameObject.class, o -> o.getWorldLocation().equals(probe), probe, 3);
         if (object == null) {
-            object = Rs2GameObject.getGameObject(o -> o.getWorldLocation().distanceTo2D(probe) <= 1, probe, 3);
+            object = Rs2WalkerSceneObjects.first(GameObject.class, o -> o.getWorldLocation().distanceTo2D(probe) <= 1, probe, 3);
         }
         return object;
     }
@@ -789,7 +788,7 @@ final class Rs2WalkerDoors {
                     continue;
                 }
 
-                ObjectComposition baseComp = Rs2GameObject.convertToObjectComposition(object);
+                ObjectComposition baseComp = Rs2DoorDetection.visibleComposition(object);
                 ObjectComposition comp = Rs2DoorDetection.resolveCompositionForDoorProbe(object);
                 if (comp == null) {
                     Telemetry.recordDoorReject("composition-null");
@@ -1204,7 +1203,7 @@ final class Rs2WalkerDoors {
             anchor = probe;
         }
 
-        TileObject object = Rs2GameObject.getAll(
+        TileObject object = Rs2WalkerSceneObjects.near(TileObject.class,
                         o -> doorObjectStillHasAction(o, probe, fromWp, toWp, doorActions, action, strictTile),
                         anchor, Math.max(3, HANDLER_RANGE))
                 .stream()
@@ -2085,12 +2084,12 @@ final class Rs2WalkerDoors {
             return false;
         }
 
-        for (WallObject wall : Rs2GameObject.getWallObjects(o -> true, playerLoc, radiusTiles)) {
+        for (WallObject wall : Rs2WalkerSceneObjects.near(WallObject.class, playerLoc, radiusTiles)) {
             if (isPendingRouteDoorObject(wall, fromWp, toWp, playerLoc, radiusTiles)) {
                 return true;
             }
         }
-        for (GameObject object : Rs2GameObject.getGameObjects(o -> true, playerLoc, radiusTiles)) {
+        for (GameObject object : Rs2WalkerSceneObjects.near(GameObject.class, playerLoc, radiusTiles)) {
             if (isPendingRouteDoorObject(object, fromWp, toWp, playerLoc, radiusTiles)) {
                 return true;
             }
@@ -2141,12 +2140,12 @@ final class Rs2WalkerDoors {
             return false;
         }
 
-        for (WallObject wall : Rs2GameObject.getWallObjects(o -> true, playerLoc, radiusTiles)) {
+        for (WallObject wall : Rs2WalkerSceneObjects.near(WallObject.class, playerLoc, radiusTiles)) {
             if (isUnresolvedRouteDoorObject(wall, fromWp, toWp, playerLoc, radiusTiles)) {
                 return true;
             }
         }
-        for (GameObject object : Rs2GameObject.getGameObjects(o -> true, playerLoc, radiusTiles)) {
+        for (GameObject object : Rs2WalkerSceneObjects.near(GameObject.class, playerLoc, radiusTiles)) {
             if (isUnresolvedRouteDoorObject(object, fromWp, toWp, playerLoc, radiusTiles)) {
                 return true;
             }
@@ -2341,7 +2340,7 @@ final class Rs2WalkerDoors {
 		int scannedGames = 0;
 		int candidates = 0;
 
-		for (WallObject w : Rs2GameObject.getWallObjects(o -> true, playerLoc, radiusTiles)) {
+		for (WallObject w : Rs2WalkerSceneObjects.near(WallObject.class, playerLoc, radiusTiles)) {
 			if (w == null) continue;
 			scannedWalls++;
 			ObjectComposition comp = Rs2DoorDetection.resolveCompositionForDoorProbe(w);
@@ -2366,7 +2365,7 @@ final class Rs2WalkerDoors {
 			}
 		}
 
-		for (GameObject g : Rs2GameObject.getGameObjects(o -> true, playerLoc, radiusTiles)) {
+		for (GameObject g : Rs2WalkerSceneObjects.near(GameObject.class, playerLoc, radiusTiles)) {
 			if (g == null) continue;
 			scannedGames++;
 			ObjectComposition comp = Rs2DoorDetection.resolveCompositionForDoorProbe(g);
@@ -2399,9 +2398,9 @@ final class Rs2WalkerDoors {
 		WorldPoint before = Rs2Player.getWorldLocation();
 		log.info("[Walker] fallback door-scan: action={} at {}", bestAction.isEmpty() ? "<default>" : bestAction, best.getWorldLocation());
 		if (bestAction.isEmpty()) {
-			Rs2GameObject.interact(best);
+			Rs2WalkerSceneObjects.interact(best, "");
 		} else {
-			Rs2GameObject.interact(best, bestAction);
+			Rs2WalkerSceneObjects.interact(best, bestAction);
 		}
 		Rs2Player.waitForWalking();
 		sleepUntil(() -> {
@@ -2429,9 +2428,9 @@ final class Rs2WalkerDoors {
 		// Look a little ahead along the path to bias toward the intended door edge.
 		int endIdx = Math.min(path.size() - 1, startIdx + 10);
 
-		for (WallObject w : Rs2GameObject.getWallObjects(o -> true, playerLoc, radiusTiles)) {
+		for (WallObject w : Rs2WalkerSceneObjects.near(WallObject.class, playerLoc, radiusTiles)) {
 			if (w == null) continue;
-			if (!Rs2GameObject.hasLineOfSight(playerLoc, w)) continue;
+			if (!Rs2WalkerSceneObjects.hasLineOfSight(playerLoc, w)) continue;
 
 			ObjectComposition comp = Rs2DoorDetection.resolveCompositionForDoorProbe(w);
 			if (comp == null || Rs2DoorClassifier.isNullOrPlaceholderObjectName(comp.getName())) continue;
@@ -2465,9 +2464,9 @@ final class Rs2WalkerDoors {
 			}
 		}
 
-		for (GameObject g : Rs2GameObject.getGameObjects(o -> true, playerLoc, radiusTiles)) {
+		for (GameObject g : Rs2WalkerSceneObjects.near(GameObject.class, playerLoc, radiusTiles)) {
 			if (g == null) continue;
-			if (!Rs2GameObject.hasLineOfSight(playerLoc, g)) continue;
+			if (!Rs2WalkerSceneObjects.hasLineOfSight(playerLoc, g)) continue;
 
 			ObjectComposition comp = Rs2DoorDetection.resolveCompositionForDoorProbe(g);
 			if (comp == null || Rs2DoorClassifier.isNullOrPlaceholderObjectName(comp.getName())) continue;
@@ -2506,9 +2505,9 @@ final class Rs2WalkerDoors {
 
 		log.info("[Walker] LOS door-scan: score={} action={} at {}", bestScore, (bestAction == null || bestAction.isEmpty()) ? "<default>" : bestAction, best.getWorldLocation());
 		if (bestAction == null || bestAction.isEmpty()) {
-			Rs2GameObject.interact(best);
+			Rs2WalkerSceneObjects.interact(best, "");
 		} else {
-			Rs2GameObject.interact(best, bestAction);
+			Rs2WalkerSceneObjects.interact(best, bestAction);
 		}
 		Rs2Player.waitForWalking();
 		return true;
@@ -2581,7 +2580,7 @@ final class Rs2WalkerDoors {
             return;
         }
         markStationaryDoorOpened(originLocation);
-        for (WallObject wall : Rs2GameObject.getWallObjects(o -> true, originLocation, radiusTiles)) {
+        for (WallObject wall : Rs2WalkerSceneObjects.near(WallObject.class, originLocation, radiusTiles)) {
             if (wall == null || wall.getWorldLocation() == null) {
                 continue;
             }
@@ -2594,7 +2593,7 @@ final class Rs2WalkerDoors {
                 markStationaryDoorOpened(wall.getWorldLocation());
             }
         }
-        for (GameObject game : Rs2GameObject.getGameObjects(o -> true, originLocation, radiusTiles)) {
+        for (GameObject game : Rs2WalkerSceneObjects.near(GameObject.class, originLocation, radiusTiles)) {
             if (game == null || game.getWorldLocation() == null) {
                 continue;
             }
@@ -2726,7 +2725,7 @@ final class Rs2WalkerDoors {
         final WorldPoint before = Rs2Player.getWorldLocation();
         final int wallOrientation = object instanceof WallObject ? ((WallObject) object).getOrientationA() : -1;
         final WorldPoint wallTile = object.getWorldLocation();
-        Rs2GameObject.interact(object, action);
+        Rs2WalkerSceneObjects.interact(object, action);
         // The gates only ask their question until it has been answered; every later crossing just
         // carries the player through. The old sleepUntilInDialogue here waited its FULL flat timeout
         // on every questionless gate — the leg breakdown traced the corridor's constant ~5.4s per
@@ -2991,7 +2990,7 @@ final class Rs2WalkerDoors {
             TileObject best = null;
             WorldPoint bestLocation = null;
             int bestDistance = Integer.MAX_VALUE;
-            for (TileObject candidate : Rs2GameObject.getAll()) {
+            for (TileObject candidate : Rs2WalkerSceneObjects.all()) {
                 if (candidate == null) {
                     continue;
                 }

@@ -1,7 +1,6 @@
 package net.runelite.client.plugins.microbot.shortestpath.pathfinder;
 
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.plugins.microbot.shortestpath.Transport;
 import net.runelite.client.plugins.microbot.shortestpath.TransportType;
@@ -9,7 +8,8 @@ import net.runelite.client.plugins.microbot.shortestpath.pathfinder.live.LiveCol
 import net.runelite.client.plugins.microbot.shortestpath.pathfinder.live.LiveEdgeSource;
 import net.runelite.client.plugins.microbot.shortestpath.WorldPointUtil;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 
 import java.util.*;
@@ -341,8 +341,11 @@ public class CollisionMap {
                 if (!targets.contains(neighborPacked)) {
                     WorldPoint globalWorldPoint = Rs2WorldPoint.convertInstancedWorldPoint(WorldPointUtil.unpackWorldPoint(neighborPacked));
                     if (globalWorldPoint != null) {
-                        TileObject go = Rs2GameObject.getGroundObject(globalWorldPoint);
-                        if (go != null && go.getId() == 45340) {
+                        if (Microbot.getRs2TileObjectCache().query()
+                                .ofType(TileObjectType.GROUND)
+                                .withId(45340)
+                                .at(globalWorldPoint)
+                                .first() != null) {
                             continue;
                         }
                     }
@@ -449,8 +452,11 @@ public class CollisionMap {
                 if (!puzzleAllowPacked.contains(prevPacked)) {
                     WorldPoint globalWorldPoint = Rs2WorldPoint.convertInstancedWorldPoint(WorldPointUtil.unpackWorldPoint(prevPacked));
                     if (globalWorldPoint != null) {
-                        TileObject go = Rs2GameObject.getGroundObject(globalWorldPoint);
-                        if (go != null && go.getId() == 45340) {
+                        if (Microbot.getRs2TileObjectCache().query()
+                                .ofType(TileObjectType.GROUND)
+                                .withId(45340)
+                                .at(globalWorldPoint)
+                                .first() != null) {
                             continue;
                         }
                     }

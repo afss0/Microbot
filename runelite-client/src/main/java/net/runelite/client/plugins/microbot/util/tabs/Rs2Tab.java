@@ -20,6 +20,7 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 @Slf4j
 public class Rs2Tab {
     private static final int TAB_SWITCH_SCRIPT = 915;
+    private static final long LIVE_TAB_READ_TIMEOUT_MS = 600;
     private static volatile InterfaceTab cachedTab = InterfaceTab.NOTHING_SELECTED;
 
     // Derived from InterfaceTab.varcIntIndex — single source of truth.
@@ -52,8 +53,17 @@ public class Rs2Tab {
         return getCurrentTab() == tab;
     }
 
+    private static InterfaceTab readCurrentTab() {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            int value = Microbot.getClient().getVarcIntValue(VarClientID.TOPLEVEL_PANEL);
+            InterfaceTab current = INDEX_TO_TAB.getOrDefault(value, InterfaceTab.NOTHING_SELECTED);
+            cachedTab = current;
+            return current;
+        }, LIVE_TAB_READ_TIMEOUT_MS).orElse(cachedTab);
+    }
+
     public static boolean switchTo(InterfaceTab tab) {
-        if (isCurrentTab(tab)) return true;
+        if (readCurrentTab() == tab) return true;
 
         if (tab == InterfaceTab.NOTHING_SELECTED && Microbot.getVarbitValue(VarbitID.RESIZABLE_STONE_ARRANGEMENT) == 0)
             return false;
@@ -73,7 +83,7 @@ public class Rs2Tab {
             Rs2Keyboard.keyPress(hotkey);
         }
 
-        return sleepUntil(() -> isCurrentTab(tab));
+        return sleepUntil(() -> readCurrentTab() == tab);
     }
 
     @Deprecated(since = "Use switchTo")

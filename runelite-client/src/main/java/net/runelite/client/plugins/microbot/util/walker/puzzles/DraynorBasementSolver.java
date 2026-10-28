@@ -29,7 +29,6 @@ import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ObjectID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.plugins.microbot.Microbot;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 
@@ -237,7 +236,7 @@ public final class DraynorBasementSolver
 			{
 				log.info("[DraynorBasement] entering basement before solving toward room {}", targetRoom);
 				if (!Rs2Walker.walkTo(BASEMENT_ENTRY_STAGING_TILE, BASEMENT_ENTRY_DISTANCE)
-					|| !Rs2GameObject.interact(ObjectID.PUZZLE_LADDER_TOP, "Climb-down")
+					|| !Microbot.getRs2TileObjectCache().query().fromWorldView().withId(ObjectID.PUZZLE_LADDER_TOP).interact("Climb-down")
 					|| !sleepUntil(() -> isBasementTarget(Rs2Player.getWorldLocation()),
 						BASEMENT_ENTRY_TIMEOUT_MS))
 				{
@@ -318,7 +317,7 @@ public final class DraynorBasementSolver
 		int rangedTimeout = LEVER_PULL_TIMEOUT_MS
 			+ Math.min(MAX_RANGED_APPROACH_BUDGET_MS, distance * RANGED_APPROACH_MS_PER_TILE);
 
-		if (Rs2GameObject.interact(LEVER_OBJ[leverIndex], "Pull")
+		if (Microbot.getRs2TileObjectCache().query().fromWorldView().withId(LEVER_OBJ[leverIndex]).interact("Pull")
 			&& sleepUntil(() -> Microbot.getVarbitValue(varbit) != before, rangedTimeout))
 		{
 			return true;
@@ -336,7 +335,7 @@ public final class DraynorBasementSolver
 		}
 		final int afterApproach = Microbot.getVarbitValue(varbit);
 		return afterApproach != before
-			|| (Rs2GameObject.interact(LEVER_OBJ[leverIndex], "Pull")
+			|| (Microbot.getRs2TileObjectCache().query().fromWorldView().withId(LEVER_OBJ[leverIndex]).interact("Pull")
 			&& sleepUntil(() -> Microbot.getVarbitValue(varbit) != afterApproach, LEVER_PULL_TIMEOUT_MS));
 	}
 }

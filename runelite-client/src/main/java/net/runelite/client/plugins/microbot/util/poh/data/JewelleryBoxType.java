@@ -4,9 +4,11 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import net.runelite.api.GameObject;
 import net.runelite.api.gameval.ObjectID;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.util.walker.Rs2WalkerSceneObjects;
 
 import java.util.Arrays;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -44,7 +46,8 @@ public enum JewelleryBoxType {
      * Gets the jewellery box GameObject if present in POH
      */
     public static GameObject getObject() {
-        return Rs2GameObject.getGameObject(getJewelleryBoxIds());
+        Set<Integer> ids = new HashSet<>(Arrays.asList(getJewelleryBoxIds()));
+        return Rs2WalkerSceneObjects.firstNearPlayer(GameObject.class, o -> ids.contains(o.getId()));
     }
 
     /**

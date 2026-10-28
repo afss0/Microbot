@@ -546,28 +546,33 @@ public class Rs2Widget {
      * @return map of widgets to action text
      */
     public static Map<Widget, String> findWidgetsWithAction(String actionText, int widgetGroupId, int widgetSubGroupId, boolean clickWidget) {
-        Map<Widget, String> widgetActions = new HashMap<>();
-        Widget child = getWidget(widgetGroupId, widgetSubGroupId);
-        if (child == null) return widgetActions;
-        
-        List<Widget[]> childGroups = Stream.of(child.getChildren(), child.getNestedChildren(), 
-                                             child.getDynamicChildren(), child.getStaticChildren())
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-        
-        for (Widget[] childGroup : childGroups) {
-            if (childGroup != null) {
-                for (Widget nestedChild : Arrays.stream(childGroup)
-                        .filter(w -> w != null && !w.isHidden())
-                        .collect(Collectors.toList())) {
-                    if (matchesWildCardText(nestedChild, actionText, false, false)) {
-                        if (clickWidget) {
-                            clickWidget(nestedChild);
-                        }
-                        widgetActions.put(nestedChild, actionText.toLowerCase());
+        List<Widget> matches = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            List<Widget> found = new ArrayList<>();
+            Widget child = Microbot.getClient().getWidget(widgetGroupId, widgetSubGroupId);
+            if (child == null) return found;
+
+            List<Widget[]> childGroups = Stream.of(child.getChildren(), child.getNestedChildren(),
+                                                 child.getDynamicChildren(), child.getStaticChildren())
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            for (Widget[] childGroup : childGroups) {
+                for (Widget nestedChild : childGroup) {
+                    if (nestedChild != null && !nestedChild.isHidden()
+                            && matchesWildCardText(nestedChild, actionText, false, false)) {
+                        found.add(nestedChild);
                     }
                 }
             }
+            return found;
+        }).orElse(Collections.emptyList());
+
+        Map<Widget, String> widgetActions = new HashMap<>();
+        for (Widget match : matches) {
+            if (clickWidget) {
+                clickWidget(match);
+            }
+            widgetActions.put(match, actionText.toLowerCase());
         }
         return widgetActions;
     }

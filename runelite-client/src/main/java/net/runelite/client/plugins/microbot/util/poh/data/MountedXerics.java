@@ -9,11 +9,14 @@ import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.ObjectID;
 import net.runelite.api.widgets.Widget;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.util.walker.Rs2WalkerSceneObjects;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.client.plugins.worldmap.TeleportLocationData;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.HashSet;
 
 
 @Getter
@@ -40,11 +43,11 @@ public enum MountedXerics implements PohTeleport {
         }
         if (talisman.getId() == objectId) {
             //The correct id for the object means it has the right left click option, so we can just use that.
-            return Rs2GameObject.interact(talisman, destinationName);
+            return Rs2WalkerSceneObjects.interact(talisman, destinationName);
         }
         Widget widget = getWidget();
         if (widget == null) {
-            if (Rs2GameObject.interact(talisman, "Teleport menu")) {
+            if (Rs2WalkerSceneObjects.interact(talisman, "Teleport menu")) {
                 if (!sleepUntil(() -> getWidget() != null, 10000)) {
                     return false;
                 }
@@ -56,7 +59,8 @@ public enum MountedXerics implements PohTeleport {
     public static final Integer[] IDS = {ObjectID.POH_AMULET_XERIC, ObjectID.POH_AMULET_XERIC_LOOKOUT, ObjectID.POH_AMULET_XERIC_GLADE, ObjectID.POH_AMULET_XERIC_INFERNO, ObjectID.POH_AMULET_XERIC_HEART, ObjectID.POH_AMULET_XERIC_HONOUR};
 
     public static DecorativeObject getObject() {
-        return Rs2GameObject.getDecorativeObject(IDS);
+        Set<Integer> ids = new HashSet<>(Arrays.asList(IDS));
+        return Rs2WalkerSceneObjects.firstNearPlayer(DecorativeObject.class, o -> ids.contains(o.getId()));
     }
 
     public static boolean isMountedXerics(DecorativeObject go) {

@@ -21,7 +21,7 @@ import net.runelite.client.plugins.microbot.globval.enums.InterfaceTab;
 import net.runelite.client.plugins.microbot.api.playerstate.Rs2PlayerStateCache;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.grounditem.Rs2GroundItem;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -1541,7 +1541,11 @@ public class Rs2Player {
      */
     public static boolean isStandingOnGameObject() {
         WorldPoint playerPoint = getWorldLocation();
-        return Rs2GameObject.getGameObject(o -> Objects.equals(playerPoint, o.getWorldLocation())) != null || isStandingOnGroundItem();
+        return Microbot.getRs2TileObjectCache().query()
+                .fromWorldView()
+                .ofType(TileObjectType.GAME)
+                .where(o -> Objects.equals(playerPoint, o.getRuneLiteWorldLocation()))
+                .firstOnClientThread() != null || isStandingOnGroundItem();
     }
 
     /**
@@ -1727,7 +1731,9 @@ public class Rs2Player {
      * @return {@code true} if the player is inside a cave, {@code false} otherwise.
      */
     public static boolean isInCave() {
-        return Rs2Player.getWorldLocation().getY() >= 6400
+        WorldPoint location = Rs2Player.getWorldLocation();
+        return location != null
+                && location.getY() >= 6400
                 && !Microbot.getClient().getTopLevelWorldView().isInstance();
     }
     

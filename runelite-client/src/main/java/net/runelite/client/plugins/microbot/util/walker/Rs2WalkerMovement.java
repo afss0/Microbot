@@ -27,7 +27,7 @@ import net.runelite.client.plugins.microbot.util.coords.Rs2WorldArea;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
@@ -125,6 +125,14 @@ final class Rs2WalkerMovement {
     static final SceneClickPolicy SCENE_CLICKS = SceneClickPolicy.create();
     static final int SCENE_WALK_CONFIRM_TIMEOUT_MS = 600;
     static final int SCENE_WALK_CONFIRM_POLL_MS = 25;
+    private static final int[] SCENE_OVERLAY_COMPONENTS = {
+            InterfaceID.ToplevelOsrsStretch.SIDE_MENU,
+            InterfaceID.ToplevelOsrsStretch.CHAT_CONTAINER,
+            InterfaceID.ToplevelOsrsStretch.MAP_CONTAINER,
+            InterfaceID.ToplevelPreEoc.SIDE_CONTAINER,
+            InterfaceID.ToplevelPreEoc.CHAT_CONTAINER,
+            InterfaceID.ToplevelPreEoc.MAP_CONTAINER
+    };
 
     private Rs2WalkerMovement() {
     }
@@ -753,8 +761,12 @@ final class Rs2WalkerMovement {
         }
         int end = Math.min(rawPath.size(), anchor + sceneReach + 1);
         List<TileObject> sceneObjects = new ArrayList<>();
-        sceneObjects.addAll(Rs2GameObject.getWallObjects(o -> true, playerLoc, sceneReach));
-        sceneObjects.addAll(Rs2GameObject.getGameObjects(o -> true, playerLoc, sceneReach));
+        Microbot.getRs2TileObjectCache().query()
+                .fromWorldView()
+                .ofType(TileObjectType.WALL, TileObjectType.GAME)
+                .within(playerLoc, sceneReach)
+                .toListOnClientThread()
+                .forEach(object -> sceneObjects.add(object.getTileObject()));
         for (int i = anchor; i < end - 1; i++) {
             WorldPoint from = rawPath.get(i);
             WorldPoint to = rawPath.get(i + 1);
@@ -986,11 +998,42 @@ final class Rs2WalkerMovement {
         Rectangle viewport = new Rectangle(Microbot.getClient().getViewportXOffset(),
                 Microbot.getClient().getViewportYOffset(), Microbot.getClient().getViewportWidth(),
                 Microbot.getClient().getViewportHeight());
-        return isCanvasPointInsideViewport(canvasPoint, viewport) ? canvasPoint : null;
+        if (!isCanvasPointInsideViewport(canvasPoint, viewport)
+                || isCanvasPointCoveredByInterface(canvasPoint, visibleSceneOverlayBounds())) {
+            return null;
+        }
+        return canvasPoint;
     }
 
     static boolean isCanvasPointInsideViewport(Point point, Rectangle viewport) {
         return point != null && viewport.contains(new Rectangle(point.getX() - 4, point.getY() - 4, 8, 8));
+    }
+
+    static boolean isCanvasPointCoveredByInterface(Point point, List<Rectangle> interfaceBounds) {
+        if (point == null || interfaceBounds == null) {
+            return false;
+        }
+        Rectangle clickArea = new Rectangle(point.getX() - 4, point.getY() - 4, 8, 8);
+        for (Rectangle bounds : interfaceBounds) {
+            if (bounds != null && !bounds.isEmpty() && bounds.intersects(clickArea)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<Rectangle> visibleSceneOverlayBounds() {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Client client = Microbot.getClient();
+            List<Rectangle> bounds = new ArrayList<>();
+            for (int componentId : SCENE_OVERLAY_COMPONENTS) {
+                Widget widget = client.getWidget(componentId);
+                if (widget != null && !widget.isHidden()) {
+                    bounds.add(widget.getBounds());
+                }
+            }
+            return bounds;
+        }).orElseGet(ArrayList::new);
     }
 
     static LocalPoint localPointForWorld(WorldPoint worldPoint) {

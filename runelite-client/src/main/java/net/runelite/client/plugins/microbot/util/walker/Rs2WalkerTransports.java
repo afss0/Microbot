@@ -27,7 +27,8 @@ import net.runelite.client.plugins.microbot.util.coords.Rs2WorldArea;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.Rs2ObjectIds;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
@@ -557,7 +558,7 @@ final class Rs2WalkerTransports {
                                     }
                                     prepareTransportObjectForInteraction(terminalObject);
                                     final TileObject selectedTerminalObject = terminalObject;
-                                    if (attemptObserved(transport, () -> Rs2GameObject.interact(
+                                    if (attemptObserved(transport, () -> Rs2WalkerSceneObjects.interact(
                                         selectedTerminalObject, objectAction))) {
                                         if (!selectTerminalTravelDialogueDestination(
                                                 transport, terminalTravelMode)) {
@@ -818,12 +819,12 @@ final class Rs2WalkerTransports {
                     // closed and replanning.
                     List<TileObject> matched;
                     if (allowAlKharidTollGateVariant) {
-                        matched = Rs2GameObject.getAll(
+                        matched = Rs2WalkerSceneObjects.near(TileObject.class, 
                                 o -> isAlKharidTollGateSceneCandidate(transport, o),
                                 transport.getOrigin(), 3);
                     } else {
                         // Id-only first: these are plain field reads, no composition resolution.
-                        matched = Rs2GameObject.getAll(o -> {
+                        matched = Rs2WalkerSceneObjects.near(TileObject.class, o -> {
                             int id = o.getId();
                             if (id == transportObjectId) return true;
                             return legacyClosedId != null && id == legacyClosedId;
@@ -836,8 +837,8 @@ final class Rs2WalkerTransports {
                         // action was Climb-down, one client-thread hop each — measured at 5.5-10.9
                         // SECONDS for a single scan inside Falador castle, and the reason descending
                         // stairs was slow while ascending was not.
-                        matched = Rs2GameObject.getAll(o -> {
-                            ObjectComposition comp = Rs2GameObject.convertToObjectComposition(o);
+                        matched = Rs2WalkerSceneObjects.near(TileObject.class, o -> {
+                            ObjectComposition comp = Rs2WalkerSceneObjects.composition(o);
                             if (comp == null || comp.getActions() == null) return false;
                             String nm = comp.getName() == null ? "" : comp.getName().toLowerCase();
                             boolean nameMatches = nm.contains("trapdoor") || nm.contains("manhole")
@@ -880,7 +881,7 @@ final class Rs2WalkerTransports {
                         // Closed variant detection: if the found object doesn't advertise the
                         // transport action but does advertise "Open", open it first and re-find
                         // the now-open object before invoking handleObject.
-                        ObjectComposition comp = Rs2GameObject.convertToObjectComposition(object);
+                        ObjectComposition comp = Rs2WalkerSceneObjects.composition(object);
                         if (comp != null && comp.getActions() != null) {
                             String[] actions = comp.getActions();
                             boolean hasTransportAction = resolveTransportObjectAction(actions, transportActions).isPresent();
@@ -890,13 +891,13 @@ final class Rs2WalkerTransports {
                                 log.info("[Walker] Closed transport variant at {} (id={} name={}) — opening before {}",
                                         transport.getOrigin(), object.getId(), comp.getName(), transportAction);
                                 final int closedId = object.getId();
-                                if (Rs2GameObject.interact(object, "Open")) {
+                                if (Rs2WalkerSceneObjects.interact(object, "Open")) {
                                     noteTransportInteraction();
                                 }
                                 Rs2Player.waitForAnimation(2000);
-                                TileObject reopened = Rs2GameObject.getAll(o -> {
+                                TileObject reopened = Rs2WalkerSceneObjects.near(TileObject.class, o -> {
                                     if (o.getId() == closedId) return false;
-                                    ObjectComposition c = Rs2GameObject.convertToObjectComposition(o);
+                                    ObjectComposition c = Rs2WalkerSceneObjects.composition(o);
                                     if (c == null || c.getActions() == null) return false;
                                     return resolveTransportObjectAction(c.getActions(), transportActions).isPresent();
                                 }, transport.getOrigin(), 3).stream()
@@ -1205,7 +1206,7 @@ final class Rs2WalkerTransports {
     private static boolean handleObject(Transport transport, TileObject tileObject, String action) {
         ensureRequiredItemBeforeTransport(transport);
         WorldPoint before = Rs2Player.getWorldLocation();
-        if (!Rs2GameObject.interact(tileObject, action)) {
+        if (!Rs2WalkerSceneObjects.interact(tileObject, action)) {
             noteRefusal(TransportDispatchTrace.Refusal.INTERACT_FAILED);
             return false;
         }
@@ -1595,7 +1596,7 @@ final class Rs2WalkerTransports {
         if (transport == null || transport.getOrigin() == null) {
             return null;
         }
-        TileObject object = Rs2GameObject.getAll(
+        TileObject object = Rs2WalkerSceneObjects.near(TileObject.class, 
                 candidate -> isTerminalTravelObjectSceneCandidate(transport, candidate),
                 transport.getOrigin(), 3).stream().findFirst().orElse(null);
         if (object != null) {
@@ -1844,14 +1845,14 @@ final class Rs2WalkerTransports {
 
             if (transport.getObjectId() == openTrapdoorId) {
                 if (tileObject.getId() == closedTrapdoorId) {
-                    Rs2GameObject.interact(tileObject, "Open");
-                    sleepUntil(() -> Rs2GameObject.exists(openTrapdoorId));
-                    TileObject openTrapdoor = Rs2GameObject.getAll(o -> o.getId() == openTrapdoorId, tileObject.getWorldLocation(), 10).stream().findFirst().orElse(null);
+                    Rs2WalkerSceneObjects.interact(tileObject, "Open");
+                    sleepUntil(() -> (Rs2WalkerSceneObjects.findById(openTrapdoorId) != null));
+                    TileObject openTrapdoor = Rs2WalkerSceneObjects.near(TileObject.class, o -> o.getId() == openTrapdoorId, tileObject.getWorldLocation(), 10).stream().findFirst().orElse(null);
                     if (openTrapdoor != null) {
-                        Rs2GameObject.interact(openTrapdoor, transport.getAction());
+                        Rs2WalkerSceneObjects.interact(openTrapdoor, transport.getAction());
                     }
                 } else if (tileObject.getId() == openTrapdoorId) {
-                    Rs2GameObject.interact(tileObject, transport.getAction());
+                    Rs2WalkerSceneObjects.interact(tileObject, transport.getAction());
                 }
                 sleepUntil(() -> !Rs2Player.isAnimating());
                 boolean trapdoorLanded = sleepUntilTrue(
@@ -1878,7 +1879,7 @@ final class Rs2WalkerTransports {
         if (tileObject.getId() == ObjectID.REGICIDE_PITFALL_SIDE) {
             Rs2Player.waitForAnimation(1200);
             if (Rs2Player.getWorldLocation().getY() > 6400) {
-                Rs2GameObject.interact(ObjectID.REGICIDE_TRAP_HAND_HOLDS);
+                Rs2WalkerSceneObjects.interact(ObjectID.REGICIDE_TRAP_HAND_HOLDS, "");
                 sleepUntil(() -> Rs2Player.getWorldLocation().getY() < 6400);
             } else {
                 sleepUntil(() -> !Rs2Player.isMoving() && !Rs2Player.isAnimating());
@@ -1902,11 +1903,11 @@ final class Rs2WalkerTransports {
             sleepUntil(() -> !Rs2Player.isMoving() && !Rs2Player.isAnimating(1200));
             final WorldPoint webLocation = tileObject.getWorldLocation();
             final WorldPoint currentPlayerPoint = Rs2Player.getWorldLocation();
-            boolean doesWebStillExist = Rs2GameObject.getAll(o -> Objects.equals(webLocation, o.getWorldLocation()) && o.getId() == ObjectID.BIGWEB_SLASHABLE).stream().findFirst().isPresent();
+            boolean doesWebStillExist = Rs2WalkerSceneObjects.all(o -> Objects.equals(webLocation, o.getWorldLocation()) && o.getId() == ObjectID.BIGWEB_SLASHABLE).stream().findFirst().isPresent();
             if (doesWebStillExist) {
-                sleepUntil(() -> Rs2GameObject.getAll(o -> Objects.equals(webLocation, o.getWorldLocation()) && o.getId() == ObjectID.BIGWEB_SLASHABLE).stream().findFirst().isEmpty(),
+                sleepUntil(() -> Rs2WalkerSceneObjects.all(o -> Objects.equals(webLocation, o.getWorldLocation()) && o.getId() == ObjectID.BIGWEB_SLASHABLE).stream().findFirst().isEmpty(),
                         () -> {
-                            Rs2GameObject.interact(tileObject, "slash");
+                            Rs2WalkerSceneObjects.interact(tileObject, "slash");
                             Rs2Player.waitForAnimation();
                         }, 8000, 1200);
             }
@@ -1975,7 +1976,7 @@ final class Rs2WalkerTransports {
             return true;
         }
 
-        if (Rs2GameObject.getObjectIdsByName("Fossil_Rowboat").contains(tileObject.getId())) {
+        if (Rs2ObjectIds.byName("Fossil_Rowboat").contains(tileObject.getId())) {
             if (transport.getDisplayInfo() == null || transport.getDisplayInfo().isEmpty()) return false;
 
             char option = transport.getDisplayInfo().charAt(0);
@@ -2016,11 +2017,11 @@ final class Rs2WalkerTransports {
     }
 
     private static boolean handleWildernessObelisk(Transport transport) {
-        GameObject obelisk = Rs2GameObject.getGameObject(obj -> obj.getId() == transport.getObjectId(), transport.getOrigin());
+        GameObject obelisk = Rs2WalkerSceneObjects.first(GameObject.class, obj -> obj.getId() == transport.getObjectId(), transport.getOrigin(), Constants.SCENE_SIZE / 2);
 
         if (obelisk != null) {
-            Rs2GameObject.interact(obelisk, transport.getAction());
-            sleepUntil(() -> Rs2GameObject.getGameObject(obj -> obj.getId() == transport.getObjectId(), transport.getOrigin()) != null);
+            Rs2WalkerSceneObjects.interact(obelisk, transport.getAction());
+            sleepUntil(() -> Rs2WalkerSceneObjects.first(GameObject.class, obj -> obj.getId() == transport.getObjectId(), transport.getOrigin(), Constants.SCENE_SIZE / 2) != null);
             walkFastCanvasWithAutoRun(transport.getOrigin());
             return sleepUntilTrue(() -> {
                 WorldPoint pl = Rs2Player.getWorldLocation();
@@ -2486,7 +2487,7 @@ final class Rs2WalkerTransports {
         }
 
         if (!Rs2Widget.isWidgetVisible(ComponentID.ADVENTURE_LOG_CONTAINER)) {
-            TileObject spiritTree = Rs2GameObject.findObjectById(objectId);
+            TileObject spiritTree = Rs2WalkerSceneObjects.findById(objectId);
             if (log.isDebugEnabled())
             {
                 log.debug("[Walker] handleSpiritTree: findObjectById({}) returned {}",
@@ -2504,7 +2505,7 @@ final class Rs2WalkerTransports {
                             spiritTree != null ? "non-null @ " + spiritTree.getWorldLocation() : "NULL");
                 }
             }
-            boolean interactResult = Rs2GameObject.interact(spiritTree, "Travel");
+            boolean interactResult = Rs2WalkerSceneObjects.interact(spiritTree, "Travel");
             if (log.isDebugEnabled())
             {
                 log.debug("[Walker] handleSpiritTree: interact(spiritTree, Travel) returned {}", interactResult);
@@ -2562,13 +2563,17 @@ final class Rs2WalkerTransports {
 
         Widget selectedWidget = Rs2Widget.getWidget(SELECTED_MINIGAME);
         if (selectedWidget == null) return false;
-        if (!selectedWidget.getText().equalsIgnoreCase(destination)) {
+        if (!widgetTextMatches(selectedWidget, destination)) {
             Widget dropdownBtn = Rs2Widget.getWidget(DROPDOWN_BUTTON_COMPONENT_ID);
             if (dropdownBtn == null) return false;
 
             if (dropdownBtn.getSpriteId() != DROPDOWN_SELECTED_SPRITE_ID) {
                 Rs2Widget.clickWidget(dropdownBtn);
-                sleepUntil(() -> Rs2Widget.findWidget(DROPDOWN_SELECTED_SPRITE_ID, List.of(Rs2Widget.getWidget(DROPDOWN_BUTTON_COMPONENT_ID))) != null);
+                sleepUntil(() -> {
+                    Widget currentDropdownBtn = Rs2Widget.getWidget(DROPDOWN_BUTTON_COMPONENT_ID);
+                    return currentDropdownBtn != null
+                            && Rs2Widget.findWidget(DROPDOWN_SELECTED_SPRITE_ID, List.of(currentDropdownBtn)) != null;
+                });
             }
 
             Widget minigameWidgetParent = Rs2Widget.getWidget(MINIGAME_LIST);
@@ -2590,7 +2595,8 @@ final class Rs2WalkerTransports {
                     .forceLeftClick(false);
 
             Microbot.doInvoke(destinationMenuEntry, new Rectangle(1, 1));
-            sleepUntil(() -> Rs2Widget.getWidget(SELECTED_MINIGAME).getText().equalsIgnoreCase(destination));
+            boolean selected = sleepUntil(() -> widgetTextMatches(Rs2Widget.getWidget(SELECTED_MINIGAME), destination));
+            if (!selected) return false;
         }
 
         Widget teleportBtn = Rs2Widget.getWidget(TELEPORT_BUTTON);
@@ -2604,6 +2610,12 @@ final class Rs2WalkerTransports {
 
         sleepUntil(Rs2Player::isAnimating);
         return sleepUntilTrue(() -> !Rs2Player.isAnimating() && teleportGraphics.stream().noneMatch(Rs2Player::hasSpotAnimation), 100, 20000);
+    }
+
+    static boolean widgetTextMatches(Widget widget, String text) {
+        if (widget == null) return false;
+        String widgetText = widget.getText();
+        return widgetText != null && widgetText.equalsIgnoreCase(text);
     }
 
     static int canoeMapMainComponentId(int stationObjectId) {
@@ -2631,7 +2643,7 @@ final class Rs2WalkerTransports {
         if (displayInfo == null || displayInfo.isEmpty()) return false;
 
         List<String> validActions = List.of("chop-down", "shape-canoe", "float canoe", "paddle canoe");
-        ObjectComposition CANOE_COMPOSITION = Rs2GameObject.convertToObjectComposition(transport.getObjectId());
+        ObjectComposition CANOE_COMPOSITION = Rs2WalkerSceneObjects.composition(transport.getObjectId());
         if (CANOE_COMPOSITION == null) return false;
 
         String currentAction = Arrays.stream(CANOE_COMPOSITION.getActions())
@@ -2644,10 +2656,10 @@ final class Rs2WalkerTransports {
 
         switch (currentAction) {
             case "Chop-down":
-                Rs2GameObject.interact(transport.getObjectId(), "Chop-down");
+                Rs2WalkerSceneObjects.interact(transport.getObjectId(), "Chop-down");
                 sleepUntil(() -> Rs2Player.isAnimating(1200));
                 return sleepUntilTrue(() -> {
-                    ObjectComposition composition = Rs2GameObject.convertToObjectComposition(transport.getObjectId());
+                    ObjectComposition composition = Rs2WalkerSceneObjects.composition(transport.getObjectId());
 
                     if (composition == null) return false;
                     return Arrays.stream(composition.getActions()).filter(Objects::nonNull).noneMatch(currentAction::equals) && !Rs2Player.isAnimating();
@@ -2656,7 +2668,7 @@ final class Rs2WalkerTransports {
                 @Component final int CANOE_SELECTION_PARENT = 27262976; // 416.3
                 @Component final int CANOE_SHAPING_TEXT = 27262986; // 416.10
 
-                Rs2GameObject.interact(transport.getObjectId(), "Shape-Canoe");
+                Rs2WalkerSceneObjects.interact(transport.getObjectId(), "Shape-Canoe");
                 boolean isCanoeShapeTextVisible = sleepUntilTrue(() -> Rs2Widget.isWidgetVisible(CANOE_SHAPING_TEXT), 100, 10000);
                 if (!isCanoeShapeTextVisible) {
                     log.error("Canoe shape text is not visible within timeout period");
@@ -2684,16 +2696,16 @@ final class Rs2WalkerTransports {
                 Rs2Widget.clickWidget(canoeSelectionWidget);
                 sleepUntil(() -> Rs2Player.isAnimating(1200));
                 return sleepUntilTrue(() -> {
-                    ObjectComposition composition = Rs2GameObject.convertToObjectComposition(transport.getObjectId());
+                    ObjectComposition composition = Rs2WalkerSceneObjects.composition(transport.getObjectId());
 
                     if (composition == null) return false;
                     return Arrays.stream(composition.getActions()).filter(Objects::nonNull).noneMatch(currentAction::equals) && !Rs2Player.isAnimating();
                 }, 300, 10000);
             case "Float Canoe":
-                Rs2GameObject.interact(transport.getObjectId(), "Float Canoe");
+                Rs2WalkerSceneObjects.interact(transport.getObjectId(), "Float Canoe");
                 sleepUntil(() -> Rs2Player.isAnimating(1200));
                 return sleepUntilTrue(() -> {
-                    ObjectComposition composition = Rs2GameObject.convertToObjectComposition(transport.getObjectId());
+                    ObjectComposition composition = Rs2WalkerSceneObjects.composition(transport.getObjectId());
 
                     if (composition == null) return false;
                     return Arrays.stream(composition.getActions()).filter(Objects::nonNull).noneMatch(currentAction::equals) && !Rs2Player.isAnimating();
@@ -2705,7 +2717,7 @@ final class Rs2WalkerTransports {
                     log.error("Unsupported canoe station object id: {}", transport.getObjectId());
                     return false;
                 }
-                if (!Rs2GameObject.interact(transport.getObjectId(), "Paddle Canoe")) {
+                if (!Rs2WalkerSceneObjects.interact(transport.getObjectId(), "Paddle Canoe")) {
                     log.error("Failed to interact with canoe station");
                     return false;
                 }
@@ -3290,10 +3302,10 @@ final class Rs2WalkerTransports {
 
         Rs2ItemModel startingWeapon = null;
 
-        TileObject fairyRingObject = PohTeleports.isInHouse() ? PohTeleports.getFairyRings() : Rs2GameObject.getAll(o -> Objects.equals(o.getWorldLocation(), transport.getOrigin())).stream().findFirst().orElse(null);
+        TileObject fairyRingObject = PohTeleports.isInHouse() ? PohTeleports.getFairyRings() : Rs2WalkerSceneObjects.all(o -> Objects.equals(o.getWorldLocation(), transport.getOrigin())).stream().findFirst().orElse(null);
         if (fairyRingObject == null) return false;
 
-        if (!PohTeleports.isInHouse() && !Rs2GameObject.canWalkTo(fairyRingObject, 25)) return false;
+        if (!PohTeleports.isInHouse() && !new Rs2TileObjectModel(fairyRingObject).canWalkTo(25)) return false;
 
         boolean hasLumbridgeElite = Microbot.getVarbitValue(VarbitID.LUMBRIDGE_DIARY_ELITE_COMPLETE) == 1;
 
@@ -3317,20 +3329,20 @@ final class Rs2WalkerTransports {
 
         String lastDestinationAction = "last-destination (" + transport.getDisplayInfo() + ")";
         String treeLastDestinationAction = "Ring-last-destination (" + transport.getDisplayInfo() + ")";
-        ObjectComposition composition = Rs2GameObject.convertToObjectComposition(fairyRingObject);
+        ObjectComposition composition = Rs2WalkerSceneObjects.composition(fairyRingObject);
         log.info("Interacting with Fairy Ring @ {}", fairyRingObject.getWorldLocation());
 
         // we can use the last-destination to handle fairy rings
-        if (Rs2GameObject.hasAction(composition, lastDestinationAction, true)) {
-            Rs2GameObject.interact(fairyRingObject, lastDestinationAction);
-        } else if (Rs2GameObject.hasAction(composition, treeLastDestinationAction, true)) {
-            Rs2GameObject.interact(fairyRingObject, treeLastDestinationAction);
+        if (Rs2WalkerSceneObjects.hasAction(composition, lastDestinationAction)) {
+            Rs2WalkerSceneObjects.interact(fairyRingObject, lastDestinationAction);
+        } else if (Rs2WalkerSceneObjects.hasAction(composition, treeLastDestinationAction)) {
+            Rs2WalkerSceneObjects.interact(fairyRingObject, treeLastDestinationAction);
         } else {
             // We have to configure fairy rings through the interface
-            if (Rs2GameObject.hasAction(composition, "Configure", true)) {
-                Rs2GameObject.interact(fairyRingObject, "Configure");
-            } else if (Rs2GameObject.hasAction(composition, "Ring-configure", true)) {
-                Rs2GameObject.interact(fairyRingObject, "Ring-configure");
+            if (Rs2WalkerSceneObjects.hasAction(composition, "Configure")) {
+                Rs2WalkerSceneObjects.interact(fairyRingObject, "Configure");
+            } else if (Rs2WalkerSceneObjects.hasAction(composition, "Ring-configure")) {
+                Rs2WalkerSceneObjects.interact(fairyRingObject, "Ring-configure");
             }
             sleepUntil(() -> !Rs2Player.isMoving() && !Rs2Widget.isHidden(ComponentID.FAIRY_RING_TELEPORT_BUTTON), 10000);
 

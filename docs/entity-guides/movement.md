@@ -591,3 +591,45 @@ return Rs2Tile.fullPathTo(sourceTile, targetTile);
 **Where this applies:** `Rs2WorldPoint.pathTo`, `Rs2Tile.pathTo`, `Rs2Tile.fullPathTo`, and any helper that reads a `Tile` from the scene array.
 
 **Defensive check:** Mock a scene with an empty source or target slot and assert the path is `null`, as in `Rs2WorldPointNullSceneTileTest` and `Rs2TileNullPathEndpointTest`.
+
+## 30. In resizable mode the viewport runs under the side panel, chatbox and minimap
+
+`client.getViewportXOffset/YOffset/Width/Height` covers the whole canvas in the resizable layouts, so a tile that projects inside the viewport can still be drawn under the inventory/side panel, the chatbox or the minimap. A `WALK` menu entry clicks `param0/param1` exactly, so a scene click point under one of those interfaces lands on the interface. Reject scene click points whose click box intersects a visible top-level overlay container and let the caller use the minimap instead.
+
+**Why this matters:** A Discord report on a clean main build showed the walker clicking the inventory while walking. `Rs2WalkerMovement.sceneCanvasPoint` and `Rs2Camera.isTileOnScreen` only tested the viewport rectangle, so `dispatchSceneWalk` clicked a tile point behind the side panel.
+
+**Pattern to follow:**
+
+```java
+// Wrong: viewport bounds alone in resizable mode.
+return isCanvasPointInsideViewport(canvasPoint, viewport) ? canvasPoint : null;
+
+// Right: also reject points covered by a visible side panel, chatbox or minimap container.
+if (!isCanvasPointInsideViewport(canvasPoint, viewport)
+        || isCanvasPointCoveredByInterface(canvasPoint, visibleSceneOverlayBounds())) return null;
+```
+
+**Where this applies:** `Rs2WalkerMovement.sceneCanvasPoint`, `Rs2WalkerMovement.isSceneCanvasClickable`, `Rs2WalkerMovement.dispatchSceneWalk`, and any helper that clicks a projected canvas point with a `WALK` entry.
+
+**Defensive check:** Assert points inside, touching and outside overlay rectangles against `isCanvasPointCoveredByInterface`, as in `Rs2WalkerUnitTest.sceneClickRejectsPointsCoveredByVisibleInterfaces`.
+
+## 31. The player location can be `null` right after a transport
+
+`Rs2Player.getWorldLocation()` returns `null` while the local player is missing, which happens while the destination area loads after a teleport, ladder or region-crossing door. Location-derived predicates such as `Rs2Player.isInCave()` must answer `false` for a missing location instead of dereferencing it.
+
+**Why this matters:** `Rs2WalkerTransports.finishHandledTransport` restarts pathfinding immediately after a transport, and `Rs2WalkerLifecycleRuntime.restartPathfinding` passes `Rs2Player.isInCave()` to the route request. Telemetry for 2.6.43 recorded a `NullPointerException` from `isInCave` that aborted the walk after the transport had already succeeded.
+
+**Pattern to follow:**
+
+```java
+// Wrong: the location is null while the new area loads.
+return Rs2Player.getWorldLocation().getY() >= 6400;
+
+// Right: no location means no cave.
+WorldPoint location = Rs2Player.getWorldLocation();
+return location != null && location.getY() >= 6400;
+```
+
+**Where this applies:** `Rs2Player.isInCave` and any helper that reads `Rs2Player.getWorldLocation()` during a walk or transport handoff.
+
+**Defensive check:** Mock `Rs2PlayerStateCache.getLocalPlayerPosition()` to return `null` and assert the predicate is `false`, as in `Rs2PlayerIsInCaveTest`.

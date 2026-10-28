@@ -399,6 +399,7 @@ obj.click("Mine")          // Interact with a specific action
 **How interaction behaves:**
 - `obj.click(...)` recovers from "I can't reach that!": when the previous interaction failed that way, it walks beside the object first, then clicks. After a few failed attempts it pauses scripts and tells the player.
 - `obj.click(...)` walks toward the object and returns `false` when it is more than 51 tiles away.
+- `obj.click(action)` returns `false` without clicking when the object has no such action (compared case-insensitively, colour tags ignored). `obj.click()` sends the first option. With an item or spell selected, any action uses it on the object.
 - `query().interact(...)` picks the nearest *reachable* match. When nothing matching is reachable (for example the object is behind a closed door), it clicks the nearest match and lets the recovery above open the way. The target is picked on the client thread, so name and action filters are safe before `interact`.
 
 ---
@@ -925,7 +926,7 @@ Rs2TileObjectModel nearest = tileObjectCache.query()
 | `hasAction(composition, action)` | `model.hasAction(action)` |
 | `findObjectByImposter(id, action)` | `query().withId(id).withAction(action).firstOnClientThread()` |
 | `interact(id)` / `interact(name, action)` | `query().withId(id).interact()` / `query().withNameContains(name).interact(action)` |
-| `interact(tileObject, action)` / `clickObject(tileObject, action)` | `new Rs2TileObjectModel(tileObject).click(action)` |
+| `interact(tileObject, action)` / `clickObject(tileObject, action)` | `new Rs2TileObjectModel(tileObject).click(action)` (refuses a missing action; `Rs2GameObject` sent the first option instead, so check the action name when migrating) |
 | `findObjectComposition(id)` / `convertToObjectComposition(id)` / `getObjectComposition(id)` | `Rs2TileObjectModel.compositionOf(id)` |
 | `convertToObjectComposition(id, true)` | `Rs2TileObjectModel.compositionOf(id, true)` |
 | `isReachable(gameObject)` / `canReach(object.getWorldLocation(), ...)` | `model.isReachable()` |

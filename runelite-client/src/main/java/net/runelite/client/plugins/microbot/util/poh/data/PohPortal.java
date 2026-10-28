@@ -4,13 +4,16 @@ import lombok.Getter;
 import net.runelite.api.GameObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ObjectID;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.util.walker.Rs2WalkerSceneObjects;
 import net.runelite.client.plugins.worldmap.TeleportLocationData;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Arrays;
+import java.util.Set;
+import java.util.HashSet;
 
 @Getter
 public enum PohPortal implements PohTeleport {
@@ -149,7 +152,8 @@ public enum PohPortal implements PohTeleport {
     private final int duration = 4;
 
     public GameObject getPortal() {
-        return Rs2GameObject.getGameObject(objectIds);
+        Set<Integer> ids = new HashSet<>(Arrays.asList(objectIds));
+        return Rs2WalkerSceneObjects.firstNearPlayer(GameObject.class, o -> ids.contains(o.getId()));
     }
 
     @Override
@@ -165,7 +169,7 @@ public enum PohPortal implements PohTeleport {
     @Override
     public boolean execute() {
         GameObject portal = getPortal();
-        return Rs2GameObject.interact(portal, "enter");
+        return Rs2WalkerSceneObjects.interact(portal, "enter");
     }
 
     private static final Map<Integer, PohPortal> BY_OBJECT_ID;
@@ -188,7 +192,7 @@ public enum PohPortal implements PohTeleport {
 
     public static List<PohPortal> findPortalsInPoh() {
         List<PohPortal> portals = new ArrayList<>();
-        for (GameObject obj : Rs2GameObject.getGameObjects(o -> BY_OBJECT_ID.containsKey(o.getId()))) {
+        for (GameObject obj : Rs2WalkerSceneObjects.nearPlayer(GameObject.class, o -> BY_OBJECT_ID.containsKey(o.getId()))) {
             PohPortal portal = BY_OBJECT_ID.get(obj.getId());
             if (portal != null && !portals.contains(portal)) {
                 portals.add(portal);

@@ -9,7 +9,6 @@ import net.runelite.client.plugins.microbot.BlockingEventPriority;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 
 import java.util.List;
@@ -47,7 +46,7 @@ public class DeathEvent implements BlockingEvent {
                         .collect(Collectors.toList());
 
                 if (completedDialogueOptions.size() >= 4) {
-                    Rs2GameObject.interact(DEATHS_PORTAL, "use");
+                    Microbot.getRs2TileObjectCache().query().fromWorldView().withId(DEATHS_PORTAL).interact("Use");
                     return Global.sleepUntil(() -> {
                         WorldPoint location = Rs2Player.getWorldLocation();
                         return location != null && location.getRegionID() != DEATH_DOMAIN_REGION_ID;

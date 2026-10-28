@@ -13,7 +13,7 @@ import net.runelite.client.plugins.microbot.pouch.Pouch;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
@@ -1717,7 +1717,7 @@ public class Rs2Inventory {
     public static boolean useUnNotedItemOnObject(String item, int objectID) {
         if (Rs2Bank.isOpen()) return false;
         useUnNoted(item);
-        Rs2GameObject.interact(objectID);
+        Microbot.getRs2TileObjectCache().query().fromWorldView().withId(objectID).interact();
         return true;
     }
 
@@ -1733,7 +1733,7 @@ public class Rs2Inventory {
         if (Rs2Bank.isOpen()) return false;
         if (!useUnNoted(item)) return false;
         sleep(100);
-        return isItemSelected() && Rs2GameObject.interact(object);
+        return isItemSelected() && object != null && new Rs2TileObjectModel(object).click();
     }
 
     /**
@@ -1748,7 +1748,7 @@ public class Rs2Inventory {
         if (Rs2Bank.isOpen()) return false;
         if (!use(item)) return false;
         sleep(100);
-        return isItemSelected() && Rs2GameObject.interact(objectID);
+        return isItemSelected() && Microbot.getRs2TileObjectCache().query().fromWorldView().withId(objectID).interact();
     }
 
     /**

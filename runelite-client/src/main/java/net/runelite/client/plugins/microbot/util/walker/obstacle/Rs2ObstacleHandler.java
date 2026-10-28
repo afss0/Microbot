@@ -2,13 +2,13 @@ package net.runelite.client.plugins.microbot.util.walker.obstacle;
 
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.ObjectID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.Global;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2PathApi;
@@ -66,6 +66,15 @@ public final class Rs2ObstacleHandler {
     }
 
     /** Mines a Motherlode rockfall blocking {@code path[index]}/{@code path[index + 1]} if present. */
+    private static Rs2TileObjectModel rockfallAt(WorldPoint point) {
+        return Microbot.getRs2TileObjectCache().query()
+                .fromWorldView()
+                .ofType(TileObjectType.GAME)
+                .withIds(ObjectID.MOTHERLODE_ROCKFALL_1, ObjectID.MOTHERLODE_ROCKFALL_2)
+                .where(o -> point.equals(o.getRuneLiteWorldLocation()))
+                .firstOnClientThread();
+    }
+
     public static RockfallResult handleRockfall(List<WorldPoint> path, int index) {
         if (path == null || path.isEmpty() || index < 0 || index >= path.size()) {
             return RockfallResult.NOT_APPLICABLE;
@@ -90,25 +99,19 @@ public final class Rs2ObstacleHandler {
             var point = path.get(rockIndex);
             if (point == null || (!inInstance && point.getRegionID() != MOTHERLODE_MINE_REGION)) continue;
 
-            TileObject object = null;
-            var tile = Rs2GameObject.getTiles(3).stream()
-                    .filter(x -> x.getWorldLocation().equals(point))
-                    .findFirst().orElse(null);
+            Rs2TileObjectModel object = rockfallAt(point);
 
-            if (tile != null)
-                object = Rs2GameObject.getGameObject(point);
-
-            if (object == null) continue;
-
-            if (object.getId() == ObjectID.MOTHERLODE_ROCKFALL_1 || object.getId() == ObjectID.MOTHERLODE_ROCKFALL_2) {
+            if (object != null) {
                 // Only abandon the walk once a rockfall is actually in the way. Checking for a
                 // pickaxe up front killed any route merely passing through the mine.
                 if (!Rs2Inventory.hasItem("pickaxe") && !Rs2Equipment.isWearing("pickaxe")) {
                     log.error("Unable to find pickaxe to mine rockfall at {}", point);
                     return RockfallResult.NO_PICKAXE;
                 }
-                Rs2GameObject.interact(object, "mine");
-                return Global.sleepUntil(() -> Rs2GameObject.getGameObject(point) == null)
+                if (!object.click("Mine")) {
+                    return RockfallResult.NOT_APPLICABLE;
+                }
+                return Global.sleepUntil(() -> rockfallAt(point) == null)
                         ? RockfallResult.MINED : RockfallResult.NOT_APPLICABLE;
             }
         }

@@ -1,11 +1,12 @@
 package net.runelite.client.plugins.microbot.util.walker;
 
-import net.runelite.api.GameObject;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.ObjectID;
 import net.runelite.client.plugins.microbot.shortestpath.TransportExecutionRegistry;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
 import java.util.Optional;
@@ -48,8 +49,8 @@ final class Rs2HotAirBalloon
 
 		if (!isMapVisible())
 		{
-			GameObject basket = findBasket(transport.getOrigin());
-			if (basket == null || !Rs2GameObject.interact(basket, transport.getAction()))
+			Rs2TileObjectModel basket = findBasket(transport.getOrigin());
+			if (basket == null || !basket.click(transport.getAction()))
 			{
 				return false;
 			}
@@ -68,12 +69,15 @@ final class Rs2HotAirBalloon
 		return BASKET_OBJECT_IDS.contains(objectId);
 	}
 
-	private static GameObject findBasket(WorldPoint origin)
+	private static Rs2TileObjectModel findBasket(WorldPoint origin)
 	{
 		for (int objectId : BASKET_OBJECT_IDS)
 		{
-			GameObject basket = Rs2GameObject.getGameObject(
-				objectId, origin, BASKET_SEARCH_RADIUS);
+			Rs2TileObjectModel basket = Microbot.getRs2TileObjectCache().query()
+				.fromWorldView()
+				.ofType(TileObjectType.GAME)
+				.withId(objectId)
+				.nearestOnClientThread(origin, BASKET_SEARCH_RADIUS);
 			if (basket != null)
 			{
 				return basket;

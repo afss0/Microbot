@@ -2,7 +2,9 @@ package net.runelite.client.plugins.microbot.util.walker.obstacle;
 
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.WorldPoint;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
+import net.runelite.client.plugins.microbot.api.tileobject.models.TileObjectType;
 import net.runelite.client.plugins.microbot.util.walker.Rs2PathApi;
 
 import java.util.Map;
@@ -42,6 +44,14 @@ public final class Rs2LiveScene implements LiveScene {
 
     @Override
     public TileObject objectAt(WorldPoint tile) {
-        return tile == null ? null : Rs2GameObject.getGameObject(tile);
+        if (tile == null) {
+            return null;
+        }
+        Rs2TileObjectModel object = Microbot.getRs2TileObjectCache().query()
+                .fromWorldView()
+                .ofType(TileObjectType.GAME)
+                .where(o -> tile.equals(o.getRuneLiteWorldLocation()))
+                .firstOnClientThread();
+        return object != null ? object.getTileObject() : null;
     }
 }

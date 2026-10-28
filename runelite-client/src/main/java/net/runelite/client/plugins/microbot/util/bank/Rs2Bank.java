@@ -22,7 +22,8 @@ import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.coords.Rs2WorldPoint;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.Rs2BankObjects;
+import net.runelite.client.plugins.microbot.api.tileobject.models.Rs2TileObjectModel;
 import net.runelite.client.plugins.microbot.util.grandexchange.Rs2GrandExchange;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -61,7 +62,6 @@ import java.util.stream.Stream;
 import static net.runelite.api.widgets.ComponentID.BANK_INVENTORY_ITEM_CONTAINER;
 //import static net.runelite.api.widgets.ComponentID.BANK_ITEM_CONTAINER;
 import static net.runelite.client.plugins.microbot.util.Global.*;
-import static net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject.hoverOverObject;
 import static net.runelite.client.plugins.microbot.util.npc.Rs2Npc.hoverOverActor;
 
 @SuppressWarnings("unused")
@@ -2031,23 +2031,10 @@ public class Rs2Bank {
 
             int epochBeforeInteract = BANK_LIVE_EPOCH.get();
 
-            WorldPoint anchor = Rs2Player.getWorldLocation();
+            Rs2TileObjectModel nearestObj = nearestBankObject(Rs2BankObjects.DEFAULT_SEARCH_RADIUS);
 
-            List<TileObject> candidates = Stream.of(
-                            Rs2GameObject.findBank(),
-                            Rs2GameObject.findGrandExchangeBooth()
-                    )
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-
-            Optional<TileObject> nearestObj = Rs2GameObject.pickClosest(
-                    candidates,
-                    TileObject::getWorldLocation,
-                    anchor
-            );
-
-            if (nearestObj.isPresent()) {
-                if (!Rs2GameObject.interact(nearestObj.get(), "Bank")) return false;
+            if (nearestObj != null) {
+                if (!nearestObj.click(Rs2BankObjects.actionFor(nearestObj, "Bank"))) return false;
             } else {
                 final Rs2NpcModel banker = Rs2Npc.getBankerNPC();
                 if (banker == null || !Rs2Npc.interact(banker, "Bank")) return false;
@@ -2079,23 +2066,10 @@ public class Rs2Bank {
 
             if (collectionBoxIsOpen()) return true;
 
-            WorldPoint anchor = Rs2Player.getWorldLocation();
+            Rs2TileObjectModel nearestObj = nearestBankObject(Rs2BankObjects.DEFAULT_SEARCH_RADIUS);
 
-            List<TileObject> candidates = Stream.of(
-                            Rs2GameObject.findBank(),
-                            Rs2GameObject.findGrandExchangeBooth()
-                    )
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-
-            Optional<TileObject> nearestObj = Rs2GameObject.pickClosest(
-                    candidates,
-                    TileObject::getWorldLocation,
-                    anchor
-            );
-
-            if (nearestObj.isPresent()) {
-                if (!Rs2GameObject.interact(nearestObj.get(), "Collect")) return false;
+            if (nearestObj != null) {
+                if (!nearestObj.click(Rs2BankObjects.actionFor(nearestObj, "Collect"))) return false;
             } else {
                 Rs2NpcModel banker = Rs2Npc.getBankerNPC();
                 if (banker == null) return false;
@@ -2214,7 +2188,8 @@ public class Rs2Bank {
 
             int epochBeforeInteract = BANK_LIVE_EPOCH.get();
 
-            boolean interactResult = Rs2GameObject.interact(object, "bank");
+            Rs2TileObjectModel bank = new Rs2TileObjectModel(object);
+            boolean interactResult = bank.click(Rs2BankObjects.actionFor(bank, "bank"));
 
             if (!interactResult) {
                 return false;
@@ -2413,21 +2388,23 @@ public class Rs2Bank {
         Set<BankLocation> allBanks = Arrays.stream(BankLocation.values())
                 .collect(Collectors.toSet());
         if (Objects.equals(Rs2Player.getWorldLocation(), worldPoint)) {
-            List<TileObject> bankObjs = Stream.concat(
-                            Stream.of(Rs2GameObject.findBank(maxObjectSearchRadius)),
-                            Stream.of(Rs2GameObject.findGrandExchangeBooth(maxObjectSearchRadius))
+            List<WorldPoint> bankObjs = Stream.of(
+                            Rs2BankObjects.findBank(maxObjectSearchRadius),
+                            Rs2BankObjects.findGrandExchangeBooth(maxObjectSearchRadius)
                     )
+                    .filter(Objects::nonNull)
+                    .map(Rs2TileObjectModel::getRuneLiteWorldLocation)
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
 
             Optional<BankLocation> byObject = bankObjs.stream()
                     .map(obj -> {
                         BankLocation closestBank = allBanks.stream()
-                                .min(Comparator.comparingInt(b -> Rs2WorldPoint.quickDistance(obj.getWorldLocation(), b.getWorldPoint())))
+                                .min(Comparator.comparingInt(b -> Rs2WorldPoint.quickDistance(obj, b.getWorldPoint())))
                                 .orElse(null);
 
                         assert closestBank != null;
-                        int dist = obj.getWorldLocation().distanceTo(closestBank.getWorldPoint());
+                        int dist = obj.distanceTo(closestBank.getWorldPoint());
 
                         return new AbstractMap.SimpleEntry<>(closestBank, dist);
                     })
@@ -3420,14 +3397,14 @@ public class Rs2Bank {
         Microbot.status = "Hovering over bank";
 
         try {
-            GameObject bank = Rs2GameObject.findBank();
+            Rs2TileObjectModel bank = Rs2BankObjects.findBank();
             if (bank != null) {
-                return hoverOverObject(bank);
+                return bank.hover();
             }
 
-            WallObject grandExchangeBooth = Rs2GameObject.findGrandExchangeBooth();
+            Rs2TileObjectModel grandExchangeBooth = Rs2BankObjects.findGrandExchangeBooth();
             if (grandExchangeBooth != null) {
-                return hoverOverObject(grandExchangeBooth);
+                return grandExchangeBooth.hover();
             }
 
             Rs2NpcModel npc = Rs2Npc.getBankerNPC();
@@ -3692,6 +3669,23 @@ public class Rs2Bank {
         return anyLocked;
     }
 
+    private static Rs2TileObjectModel nearestBankObject(int maxSearchRadius) {
+        WorldPoint anchor = Rs2Player.getWorldLocation();
+        if (anchor == null) return null;
+        Rs2TileObjectModel nearest = null;
+        int nearestDistance = Integer.MAX_VALUE;
+        for (Rs2TileObjectModel candidate : new Rs2TileObjectModel[]{
+                Rs2BankObjects.findBank(maxSearchRadius),
+                Rs2BankObjects.findGrandExchangeBooth(maxSearchRadius)}) {
+            WorldPoint location = candidate != null ? candidate.getRuneLiteWorldLocation() : null;
+            if (location != null && location.distanceTo(anchor) < nearestDistance) {
+                nearest = candidate;
+                nearestDistance = location.distanceTo(anchor);
+            }
+        }
+        return nearest;
+    }
+
     private static void walkUntilBankReady(BankLocation bankLocation) {
         Rs2Walker.walkUntil(bankLocation.getWorldPoint(), 1, () -> readyBankObject(bankLocation) != null);
     }
@@ -3700,8 +3694,9 @@ public class Rs2Bank {
         WorldPoint player = Rs2Player.getWorldLocation();
         if (player == null || player.distanceTo(bankLocation.getWorldPoint()) > 24) return null;
         return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            TileObject[] candidates = {Rs2GameObject.findBank(), Rs2GameObject.findGrandExchangeBooth()};
-            for (TileObject candidate : candidates) {
+            Rs2TileObjectModel[] models = {Rs2BankObjects.findBank(), Rs2BankObjects.findGrandExchangeBooth()};
+            for (Rs2TileObjectModel model : models) {
+                TileObject candidate = model != null ? model.getTileObject() : null;
                 boolean ready = candidate instanceof GameObject
                         ? Rs2InteractionApproach.isReady((GameObject) candidate)
                         : candidate instanceof WallObject

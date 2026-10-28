@@ -6,7 +6,7 @@ import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.ObjectID;
 import net.runelite.client.plugins.microbot.questhelper.steps.QuestStep;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
@@ -54,11 +54,11 @@ public class RomeoAndJuliet extends BaseQuest {
         }
 
         if (playerLocation.distanceTo2D(JULIET_STAIR_ORIGIN) > 0) {
-            Rs2Walker.walkFastCanvas(JULIET_STAIR_ORIGIN);
+            Rs2Walker.walkTo(JULIET_STAIR_ORIGIN, 0);
             return false;
         }
 
-        Rs2GameObject.interact(ObjectID.FAI_VARROCK_STAIRS_TALLER, "Climb-up");
+        Microbot.getRs2TileObjectCache().query().fromWorldView().withId(ObjectID.FAI_VARROCK_STAIRS_TALLER).interact("Climb-up");
         Rs2Player.waitForWalking();
         return false;
     }
@@ -78,11 +78,11 @@ public class RomeoAndJuliet extends BaseQuest {
         }
 
         if (playerLocation.distanceTo2D(JULIET_TOP_STAIR) > 4) {
-            Rs2Walker.walkFastCanvas(JULIET_TOP_STAIR);
+            Rs2Walker.walkTo(JULIET_TOP_STAIR, 4);
             return false;
         }
 
-        Rs2GameObject.interact(ObjectID.FAI_VARROCK_STAIRS_TOP, "Climb-down");
+        Microbot.getRs2TileObjectCache().query().fromWorldView().withId(ObjectID.FAI_VARROCK_STAIRS_TOP).interact("Climb-down");
         Rs2Player.waitForWalking();
         return false;
     }
@@ -104,7 +104,11 @@ public class RomeoAndJuliet extends BaseQuest {
             return true;
         }
         if (Rs2Walker.walkTo(3266, 3374, 0, 10)) {
-            Rs2GameObject.interact(new int[] {ObjectID.FAI_VARROCK_CADAVABUSH_2, ObjectID.FAI_VARROCK_CADAVABUSH_1, ObjectID.FAI_VARROCK_CADAVABUSH_0}, "take");
+            for (int bush : new int[] {ObjectID.FAI_VARROCK_CADAVABUSH_2, ObjectID.FAI_VARROCK_CADAVABUSH_1, ObjectID.FAI_VARROCK_CADAVABUSH_0}) {
+                if (Microbot.getRs2TileObjectCache().query().fromWorldView().withId(bush).interact("Pick-from")) {
+                    break;
+                }
+            }
             Rs2Player.waitForWalking();
             Rs2Inventory.waitForInventoryChanges(2000);
         }

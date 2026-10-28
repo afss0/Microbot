@@ -126,7 +126,7 @@ public class InventorySetupsNameActions<T extends InventorySetupsDisplayAttribut
 			@Override
 			public void replace(FilterBypass fb, int offset, int length, String str, AttributeSet a) throws BadLocationException
 			{
-				if ((fb.getDocument().getLength() + str.length() - length) >= maxLength)
+				if (str != null && (fb.getDocument().getLength() + str.length() - length) >= maxLength)
 				{
 					// If the user pastes a huge amount of text, cut it out until the maximum length is achieved
 					int chars_available = maxLength - (fb.getDocument().getLength() - length);

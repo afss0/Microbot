@@ -10,6 +10,7 @@ Each guide lists known pitfalls when working with one specific game entity type.
 |--------|------|--------------|
 | Items (inventory, bank, ground, equipment, shops) | [items.md](items.md) | Any code calling `Rs2Inventory`, `Rs2Bank`, `Rs2Equipment`, `Rs2GroundItem`, `Rs2Shop`, or `Rs2DepositBox` interaction helpers, or any helper that takes a list of item names and applies a single action to all of them |
 | Movement (walker, minimap, pathing) | [movement.md](movement.md) | Any code calling or modifying `Rs2Walker`, `Rs2MiniMap`, shortest-path marker handling, or minimap/canvas walk-click logic |
+| Objects (game, wall, ground and decorative objects) | [objects.md](objects.md) | Any code calling `Rs2TileObjectModel.click`, `Microbot.getRs2TileObjectCache().query().interact(...)`, or migrating calls off `Rs2GameObject` |
 | Death (graves, Death's Office, recovery) | [death.md](death.md) | Any code calling or modifying `Rs2Death`, `DeathRecoveryEvent`, `DeathEvent`, or handling graves, retrieval fees, and post-death item recovery |
 | Worlds (selection, ping, hopping) | [worlds.md](worlds.md) | Any code measuring world latency, testing world reachability, selecting worlds based on network availability, or reading the local player while logging in or hopping |
 
@@ -32,6 +33,8 @@ Bounds-check a `LocalPoint` against its worldview before projecting it to the ca
 A door attempt that ends on the near side is a refusal, not a traversal: [movement gotcha 28](movement.md#28-a-door-attempt-that-ends-on-the-near-side-is-a-refusal-not-a-traversal).
 
 A missing scene tile means no path: [movement gotcha 29](movement.md#29-null-check-a-scene-tile-before-pathing-from-or-to-it).
+
+Scene walk clicks must not land under the side panel, chatbox or minimap: [movement gotcha 30](movement.md#30-in-resizable-mode-the-viewport-runs-under-the-side-panel-chatbox-and-minimap).
 
 ## Format
 

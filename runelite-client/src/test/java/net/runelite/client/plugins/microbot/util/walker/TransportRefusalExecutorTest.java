@@ -11,7 +11,6 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.shortestpath.Transport;
 import net.runelite.client.plugins.microbot.shortestpath.TransportType;
 import net.runelite.client.plugins.microbot.shortestpath.pathfinder.PathfinderConfig;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
 import net.runelite.client.plugins.microbot.util.leaguetransport.Rs2LeaguesTransport;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
@@ -252,13 +251,13 @@ public class TransportRefusalExecutorTest
 		GameObject sceneObject = mock(GameObject.class);
 		when(sceneObject.getId()).thenReturn(refused.getObjectId());
 		when(sceneObject.getWorldLocation()).thenReturn(ORIGIN);
-		MockedStatic<Rs2GameObject> gameObjects = open(Rs2GameObject.class);
-		gameObjects.when(() -> Rs2GameObject.findObjectById(anyInt())).thenReturn(sceneObject);
-		gameObjects.when(() -> Rs2GameObject.interact(any(TileObject.class), eq("Travel"))).thenAnswer(inv -> {
+		MockedStatic<Rs2WalkerSceneObjects> gameObjects = open(Rs2WalkerSceneObjects.class);
+		gameObjects.when(() -> Rs2WalkerSceneObjects.findById(anyInt())).thenReturn(sceneObject);
+		gameObjects.when(() -> Rs2WalkerSceneObjects.interact(any(TileObject.class), eq("Travel"))).thenAnswer(inv -> {
 			travelClicks++;
 			return true;
 		});
-		gameObjects.when(() -> Rs2GameObject.getAll(any(), any(WorldPoint.class), anyInt())).thenAnswer(inv ->
+		gameObjects.when(() -> Rs2WalkerSceneObjects.near(eq(TileObject.class), any(), any(WorldPoint.class), anyInt())).thenAnswer(inv ->
 			refused.getType() == TransportType.SPIRIT_TREE ? List.of() : List.of(sceneObject));
 	}
 

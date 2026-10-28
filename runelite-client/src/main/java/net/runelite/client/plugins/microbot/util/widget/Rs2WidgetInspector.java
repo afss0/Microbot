@@ -34,8 +34,14 @@ public class Rs2WidgetInspector {
 	}
 
 	public static List<WidgetDescription> describeWidget(int groupId, int childId, int maxDepth) {
+		if (groupId < 0 || childId < 0) return Collections.emptyList();
 		return Microbot.getClientThread().runOnClientThreadOptional(() -> {
-			Widget widget = Microbot.getClient().getWidget(groupId, childId);
+			Widget widget;
+			try {
+				widget = Microbot.getClient().getWidget(groupId, childId);
+			} catch (IndexOutOfBoundsException e) {
+				return Collections.<WidgetDescription>emptyList();
+			}
 			if (widget == null) return Collections.<WidgetDescription>emptyList();
 			List<WidgetDescription> results = new ArrayList<>();
 			walkTree(widget, "", 0, maxDepth, results);
