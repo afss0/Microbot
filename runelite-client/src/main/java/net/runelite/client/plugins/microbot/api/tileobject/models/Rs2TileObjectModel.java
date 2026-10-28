@@ -379,7 +379,9 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
 
     @Override
     public @Nullable Shape getClickbox() {
-        return tileObject.getClickbox();
+        // The clickbox is derived from the client's projection state: read it on the client
+        // thread (2.6.44 fix; the reapply snapshot restored the raw delegate).
+        return Microbot.getClientThread().runOnClientThreadOptional(tileObject::getClickbox).orElse(null);
     }
 
     @Override
@@ -497,12 +499,12 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
 
     /**
      * Rs2GameObject's old behaviour: sends the first option when the object does not offer the action.
-     * The fork's {@link #click(String)} already falls back to option 0, so this is a plain alias kept
-     * for upstream's Rs2GameObject.clickObject call site until that class is retired.
+     * Kept only for upstream's Rs2GameObject.clickObject call site until that class is retired; every
+     * other caller wants {@link #click(String)}, which refuses a missing action instead.
      */
     @Deprecated(since = "2.6.44", forRemoval = true)
     public boolean clickOrFirstOption(String action) {
-        return click(action);
+        return click(action, true);
     }
 
     /**
@@ -513,6 +515,16 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
      * @return true if the interaction was successful, false otherwise
      */
     public boolean click(String action) {
+        return click(action, false);
+    }
+
+    /**
+     * Dispatches the object's action. A missing action is refused unless
+     * {@code firstOptionIfMissing} is set: dispatching the first option for an action the object
+     * does not offer clicks something else entirely, so the refusal happens before any camera
+     * turn or recovery walk (upstream 2.6.44, d1fdaafc05).
+     */
+    private boolean click(String action, boolean firstOptionIfMissing) {
         try {
             // A stale tile object can outlive its world view (scene unload / instance exit);
             // every field below would then read a dead scene, so bail out before building the
@@ -526,6 +538,10 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
             int param0;
             int param1;
             MenuAction menuAction = MenuAction.WALK;
+
+            // A selected item (Use/item-on-object) is the operation: the action name is only a
+            // label there, so a missing action must not refuse the dispatch.
+            boolean widgetSelected = Microbot.getClient().isWidgetSelected();
 
 
             Microbot.status = action + " " + getName();
@@ -560,17 +576,25 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
                     return false;
                 }
                 String[] actions = objComp.getActions();
+                String wanted = Rs2UiHelper.stripColTags(action).trim();
 
-                for (int i = 0; i < actions.length; i++) {
-                    if (actions[i] == null) continue;
-                    if (action.equalsIgnoreCase(Rs2UiHelper.stripColTags(actions[i]))) {
-                        index = i;
-                        break;
+                if (!wanted.isEmpty()) {
+                    index = -1;
+                    for (int i = 0; i < actions.length; i++) {
+                        if (actions[i] == null) continue;
+                        if (wanted.equalsIgnoreCase(Rs2UiHelper.stripColTags(actions[i]))) {
+                            index = i;
+                            break;
+                        }
+                    }
+                    if (index == -1 && !widgetSelected) {
+                        if (!firstOptionIfMissing) {
+                            log.warn("Failed to interact with object {} - action '{}' not found", getId(), action);
+                            return false;
+                        }
+                        index = 0;
                     }
                 }
-
-                if (index == actions.length)
-                    index = 0;
 
                 objName = objComp.getName();
 
@@ -582,12 +606,7 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
                 }
             }
 
-            if (index == -1) {
-                log.warn("Failed to interact with object {} - action '{}' not found", getId(), action);
-            }
-
-
-            if (Microbot.getClient().isWidgetSelected()) {
+            if (widgetSelected) {
                 menuAction = MenuAction.WIDGET_TARGET_ON_GAME_OBJECT;
             } else if (index == 0) {
                 menuAction = MenuAction.GAME_OBJECT_FIRST_OPTION;
