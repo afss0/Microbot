@@ -12,6 +12,7 @@ import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabPo
 import net.runelite.client.plugins.microbot.ascript.barbarianfishing.BarbarianFishingActivity;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingFunctions;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianFishingType;
+import net.runelite.client.plugins.microbot.ascript.boltenchant.BoltEnchantType;
 import net.runelite.client.plugins.microbot.ascript.cannonballsmelter.CannonballSmelterFurnace;
 import net.runelite.client.plugins.microbot.ascript.cannoning.CannonBallType;
 import net.runelite.client.plugins.microbot.ascript.crafting.*;
@@ -177,7 +178,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Jewelry",
             description = "Jewelry crafting settings",
-            position = 12,
+            position = 13,
             closedByDefault = true
     )
     String jewelrySection = "jewelry";
@@ -329,7 +330,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Motherload Mine",
             description = "Motherload Mine settings",
-            position = 14,
+            position = 15,
             closedByDefault = true
     )
     String motherloadMineSection = "motherloadmine";
@@ -383,7 +384,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Gem Crab Killer",
             description = "Gem Crab Killer settings",
-            position = 10,
+            position = 11,
             closedByDefault = true
     )
     String gemCrabKillerSection = "gemcrabkiller";
@@ -448,7 +449,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Jewel Enchant",
             description = "Jewellery enchanting settings",
-            position = 11,
+            position = 12,
             closedByDefault = true
     )
     String jewelEnchantSection = "jewelenchant";
@@ -497,12 +498,56 @@ public interface AScriptConfig extends Config {
         return true;
     }
 
+    // ── Bolt Enchant ───────────────────────────────────────────
+
+    @ConfigSection(
+            name = "Bolt Enchant",
+            description = "Gem-tipped crossbow bolt enchanting settings",
+            position = 7,
+            closedByDefault = true
+    )
+    String boltEnchantSection = "boltenchant";
+
+    @ConfigItem(
+            keyName = "boltEnchantBoltType",
+            name = "Bolt Type",
+            description = "Bolts to enchant. One selection enchants up to 100 (10 casts of 10 bolts)",
+            position = 0,
+            section = boltEnchantSection
+    )
+    default BoltEnchantType boltEnchantBoltType() {
+        return BoltEnchantType.NONE;
+    }
+
+    @ConfigItem(
+            keyName = "boltEnchantUseStaff",
+            name = "Use Elemental Staff",
+            description = "Wear an elemental staff instead of withdrawing the runes it provides "
+                    + "(carries every rune when no usable staff is available)",
+            position = 1,
+            section = boltEnchantSection
+    )
+    default boolean boltEnchantUseStaff() {
+        return true;
+    }
+
+    @ConfigItem(
+            keyName = "boltEnchantAfk",
+            name = "Random AFKs",
+            description = "Randomly AFKs between 3 and 120 seconds between batches",
+            position = 2,
+            section = boltEnchantSection
+    )
+    default boolean boltEnchantAfk() {
+        return true;
+    }
+
     // ── Cannonball Smelter ─────────────────────────────────────
 
     @ConfigSection(
             name = "Cannonball Smelter",
             description = "Cannonball smelting settings",
-            position = 7,
+            position = 8,
             closedByDefault = true
     )
     String cannonballSmelterSection = "cannonballsmelter";
@@ -532,7 +577,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Cannoning",
             description = "Dwarf multicannon maintenance — place the cannon before starting and keep cannonballs in the inventory",
-            position = 8,
+            position = 9,
             closedByDefault = true
     )
     String cannoningSection = "cannoning";
@@ -728,7 +773,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Firemaking",
             description = "Firemaking settings",
-            position = 9,
+            position = 10,
             closedByDefault = true
     )
     String firemakingSection = "firemaking";
@@ -814,7 +859,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Woodcutting",
             description = "Woodcutting settings",
-            position = 15,
+            position = 16,
             closedByDefault = true
     )
     String woodcuttingSection = "woodcutting";
@@ -891,7 +936,7 @@ public interface AScriptConfig extends Config {
     @ConfigSection(
             name = "Mining",
             description = "Mining settings",
-            position = 13,
+            position = 14,
             closedByDefault = true
     )
     String miningSection = "mining";
