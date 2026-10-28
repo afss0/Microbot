@@ -13,6 +13,7 @@ public enum ScriptType {
     GEM_CRAB_KILLER("Gem Crab Killer"),
     BARBARIAN_VILLAGE_FISHER("Barbarian Village Fisher"),
     JEWEL_ENCHANT("Jewel Enchant"),
+    BOLT_ENCHANT("Bolt Enchant"),
     CANNONBALL_SMELTER("Cannonball Smelter"),
     CANNONING("Cannoning"),
     AMMONITE_CRABS("Ammonite Crabs"),
