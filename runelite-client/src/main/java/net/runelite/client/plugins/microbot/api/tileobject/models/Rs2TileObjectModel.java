@@ -17,6 +17,9 @@ import net.runelite.client.plugins.microbot.api.boat.Rs2BoatCache;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.menu.NewMenuEntry;
+import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
+import net.runelite.client.plugins.microbot.util.walker.recovery.CantReachTargetRecovery;
 import net.runelite.client.plugins.microbot.util.antiban.Rs2AntibanSettings;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
 import org.jetbrains.annotations.NotNull;
@@ -51,8 +54,13 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     }
 
     public Rs2TileObjectModel(TileObject tileObject) {
-        this.tileObject = tileObject;
-        this.tileObjectType = typeOf(tileObject);
+        // Wrapping a model must unwrap: the wrapper is not a GameObject, so a nested model would
+        // read the wrong type and multi-tile size (upstream 2.6.44).
+        TileObject unwrapped = tileObject instanceof Rs2TileObjectModel
+                ? ((Rs2TileObjectModel) tileObject).getTileObject()
+                : tileObject;
+        this.tileObject = unwrapped;
+        this.tileObjectType = typeOf(unwrapped);
     }
 
     static TileObjectType typeOf(TileObject tileObject) {
@@ -74,6 +82,9 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     @Getter
     private final TileObjectType tileObjectType;
     private final TileObject tileObject;
+
+    /** Beyond this Chebyshev distance the object is out of interaction range: walk first. */
+    static final int MAX_INTERACT_DISTANCE = 51;
     private String[] actions;
 
     /**
@@ -498,6 +509,64 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
     }
 
     /**
+     * Recovers from a "can't reach that" game message before the object is clicked again: walk
+     * beside the object, clear the flag and the retry budget, or give up loudly once the budget is
+     * spent. Same contract as the NPC path ({@code Rs2NpcModel}) — the flag is set by
+     * {@code MicrobotPlugin} when the game reports the message.
+     */
+    private boolean recoverFromCantReach() {
+        if (!CantReachTargetRecovery.shouldStart(
+                Microbot.isCantReachTargetDetectionEnabled, Microbot.cantReachTarget)) {
+            return true;
+        }
+        if (CantReachTargetRecovery.retryExhausted(
+                Microbot.cantReachTargetRetries, Rs2Random.between(3, 5))) {
+            int retries = CantReachTargetRecovery.giveUp();
+            Microbot.pauseAllScripts.compareAndSet(false, true);
+            Microbot.showMessage("Your bot tried to interact with an object for "
+                    + retries + " times but failed. Please take a look at what is happening.");
+            return false;
+        }
+        WorldPoint objectLocation = getRuneLiteWorldLocation();
+        if (objectLocation == null) {
+            return false;
+        }
+        Microbot.cantReachTargetRetries++;
+        Microbot.log("[Interact] can't-reach recovery: walking to object " + getId()
+                + " at " + objectLocation + " (attempt " + Microbot.cantReachTargetRetries + ")");
+        if (!CantReachTargetRecovery.walkTo(objectLocation, 2)) {
+            return false;
+        }
+        Microbot.pauseAllScripts.compareAndSet(true, false);
+        Microbot.cantReachTarget = false;
+        Microbot.cantReachTargetRetries = 0;
+        return true;
+    }
+
+    /**
+     * Chebyshev distance in scene tiles, falling back to world distance for objects outside the
+     * loaded scene.
+     */
+    int distanceToPlayer() {
+        LocalPoint objectLocal = tileObject.getLocalLocation();
+        LocalPoint playerLocal = Microbot.getClientThread().invoke(() -> {
+            Player player = Microbot.getClient().getLocalPlayer();
+            return player != null ? player.getLocalLocation() : null;
+        });
+        if (playerLocal != null && objectLocal != null && objectLocal.isInScene()) {
+            int dx = playerLocal.getSceneX() - objectLocal.getSceneX();
+            int dy = playerLocal.getSceneY() - objectLocal.getSceneY();
+            return Math.max(Math.abs(dx), Math.abs(dy));
+        }
+        WorldPoint playerWorld = Rs2Player.getWorldLocation();
+        WorldPoint objectWorld = getRuneLiteWorldLocation();
+        if (playerWorld == null || objectWorld == null) {
+            return -1;
+        }
+        return playerWorld.distanceTo(objectWorld);
+    }
+
+    /**
      * Rs2GameObject's old behaviour: sends the first option when the object does not offer the action.
      * Kept only for upstream's Rs2GameObject.clickObject call site until that class is retired; every
      * other caller wants {@link #click(String)}, which refuses a missing action instead.
@@ -604,6 +673,20 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
                     Rs2Equipment.unEquip(EquipmentInventorySlot.SHIELD);
                     sleepUntil(() -> Rs2Equipment.get(EquipmentInventorySlot.WEAPON) == null && Rs2Equipment.get(EquipmentInventorySlot.SHIELD) == null);
                 }
+            }
+
+            if (!recoverFromCantReach()) {
+                return false;
+            }
+
+            int distance = distanceToPlayer();
+            if (distance < 0) {
+                return false;
+            }
+            if (distance > MAX_INTERACT_DISTANCE) {
+                Microbot.log("Object with id " + getId() + " is not close enough to interact with. Walking to the object....");
+                Rs2Walker.walkTo(getRuneLiteWorldLocation());
+                return false;
             }
 
             if (widgetSelected) {
