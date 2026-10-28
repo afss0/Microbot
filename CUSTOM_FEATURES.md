@@ -59,6 +59,24 @@ Used during merges to verify nothing is lost.
   - `getVisibleObjectComposition()` returns the impostor only when it is resolved, and is the composition `interact()` uses — so `getImpostor()`/`getImpostorIds()` are read on the client thread instead of from a script thread (the client-thread guardrail flags the latter).
 - **Tests:** `Rs2TileObjectModelCompositionTest`, `ClientThreadGuardrailTest`.
 
+### 2.6.44 sync — the reapply snapshot keeps dropping upstream's additions (Oct 2026)
+- **Files:** `api/tileobject/models/Rs2TileObjectModel.java`, `util/walker/Rs2Walker.java`, `util/walker/Rs2WalkerTransports.java`, `threadsafety/Rs2GameObjectUsageGuardrailTest.java`
+- **What:** the monolithic reapply commit replays with an *older* snapshot than the file it replaces, so every sync of this base loses what upstream added to the model. The 2.6.44 additions and why each is easy to lose:
+  - `findAction(String)` — upstream callers (`Rs2BankObjects:83`, `Rs2Spellbook:303`) fail `compileJava` without it; resolves the action against the object's own spelling, tolerating colour tags.
+  - `canWalkTo(int)` + `templateArea()` — no fork caller yet, but part of the surface; the instanced-region-aware area query.
+  - `click(String)` now **refuses** an action the visible object does not offer (`d1fdaafc05`), and `clickOrFirstOption(String)` is the deprecated path that keeps the legacy first-option fallback for `Rs2GameObject.clickObject`. A missing action must be refused *before* any camera turn or recovery walk, and must NOT be refused when an item is selected (that dispatch is `WIDGET_TARGET_ON_GAME_OBJECT` and the action name is only a label). Pinned by `Rs2TileObjectModelClickActionTest`.
+  - `isReachable()` computes the interactable tiles locally (`Rs2WorldArea.getInteractable()` → walkable/reachable) instead of delegating to `Rs2GameObject` — the delegation re-introduces a reference the usage guardrail fails on.
+  - `getClickbox()` reads on the client thread (`e02ce8febf`); the raw delegate is an off-thread projection read.
+- **Walker:** `Rs2Walker.java` needs its `Rs2GameObject` import re-added after **every** sync — upstream moved its own walker off the class and deleted the import, while the fork's file still calls it at ~39 sites. The merge is clean and javac then reports 40 `cannot find symbol` errors, one of them a knock-on in an untyped lambda.
+- **Rs2WalkerTransports:** take upstream's file (M3-08 moved all 45 calls to `Rs2WalkerSceneObjects`) and re-apply the package-private widenings — `Rs2Walker`/`Rs2WalkerDoors`/`Rs2WalkerMovement` static-import 21 helpers from it and upstream declares 20 of them `private`. The fork's own reconciliation commits (`c932928`, `b2e2eb5f33`) predate 2.6.44: their hunks are older than the merge base, so they resolve to upstream.
+- **Guardrail:** `Rs2GameObjectUsageGuardrailTest` (new in 2.6.44) fails on any class outside `util/gameobject` + the deprecated `util/tileobject` model. The fork's remaining callers are declared in `PENDING_MIGRATION` (`Rs2Walker` + Crafting/Mining/MotherloadMine/AScriptBank/Woodcutting); the test fails when a listed class stops referencing it, so the list only shrinks.
+- **Merge check:** `grep "public @Nullable String findAction" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1`
+- **Merge check:** `grep "firstOptionIfMissing" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1`
+- **Merge check:** `grep "runOnClientThreadOptional(tileObject::getClickbox)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1`
+- **Merge check:** `grep "^import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1`
+- **Merge check:** `grep -c "Rs2GameObject\." runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2WalkerTransports.java` (expect 0)
+- **Merge check:** `grep "PENDING_MIGRATION = Set.of(" runelite-client/src/test/java/net/runelite/client/plugins/microbot/threadsafety/Rs2GameObjectUsageGuardrailTest.java | head -1`
+
 ## Walker
 
 ### Unconditional Finish Distance (no exceptions)
