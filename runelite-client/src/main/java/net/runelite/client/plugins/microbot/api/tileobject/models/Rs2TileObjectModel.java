@@ -8,7 +8,8 @@ import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldArea;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.plugins.microbot.Microbot;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.util.coords.Rs2WorldArea;
+import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
 import net.runelite.client.plugins.microbot.api.IEntity;
 import net.runelite.client.plugins.microbot.api.player.models.Rs2PlayerModel;
@@ -22,6 +23,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.awt.*;
+import java.util.List;
 
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
@@ -202,6 +204,40 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
                 .orElse(false);
     }
 
+    public boolean canWalkTo(int distance) {
+        WorldArea objectArea = templateArea();
+        WorldPoint playerLocation = Rs2Player.getWorldLocation();
+        if (objectArea == null || playerLocation == null) {
+            return false;
+        }
+        for (WorldPoint tile : Rs2Tile.getReachableTilesFromTile(playerLocation, distance).keySet()) {
+            if (tile.distanceTo(objectArea) < 2) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private @Nullable WorldArea templateArea() {
+        if (!(tileObject instanceof GameObject)) {
+            WorldPoint location = getRuneLiteWorldLocation();
+            return location != null ? new WorldArea(location, 2, 2) : null;
+        }
+        WorldPoint southWest = getWorldLocation();
+        WorldView worldView = getWorldView();
+        if (southWest == null || worldView == null) {
+            return null;
+        }
+        WorldPoint template = Microbot.getClientThread().invoke(() -> {
+            if (!Microbot.getClient().isInInstancedRegion()) {
+                return southWest;
+            }
+            LocalPoint local = LocalPoint.fromWorld(worldView, southWest);
+            return local != null ? WorldPoint.fromLocalInstance(Microbot.getClient(), local) : southWest;
+        });
+        return new WorldArea(template != null ? template : southWest, sizeX(), sizeY());
+    }
+
     public boolean hover() {
         if (!Rs2AntibanSettings.naturalMouse) {
             if (Rs2AntibanSettings.devDebug) {
@@ -237,6 +273,42 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
 
     public boolean hasActionContaining(String action) {
         return matchesAction(action, false);
+    }
+
+    /**
+     * Resolves a requested action against the object's offered actions, tolerating colour tags:
+     * an exact (stripped) match wins, otherwise the first containing candidate is returned.
+     *
+     * @param action the action text as the caller asked for it (tags allowed)
+     * @return the object's own spelling of the action, or null when the object offers nothing matching
+     */
+    public @Nullable String findAction(String action) {
+        if (action == null || action.isBlank()) {
+            return null;
+        }
+        String[] actions = Microbot.getClientThread().invoke(() -> {
+            ObjectComposition composition = getVisibleObjectComposition();
+            return composition != null ? composition.getActions() : null;
+        });
+        if (actions == null) {
+            return null;
+        }
+        String wanted = Rs2UiHelper.stripColTags(action).trim();
+        String needle = wanted.toLowerCase();
+        String partial = null;
+        for (String candidate : actions) {
+            if (candidate == null) {
+                continue;
+            }
+            String stripped = Rs2UiHelper.stripColTags(candidate);
+            if (stripped.equalsIgnoreCase(wanted)) {
+                return stripped;
+            }
+            if (partial == null && stripped.toLowerCase().contains(needle)) {
+                partial = stripped;
+            }
+        }
+        return partial;
     }
 
     private boolean matchesAction(String action, boolean exact) {
@@ -396,11 +468,24 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
         // tile can be. You interact with a booth, a tree or a rock from an adjacent tile and never
         // from the tile it occupies, so a solid object's own tile is never walkable and the
         // IEntity default (Rs2Reachable on getWorldLocation()) answers "no" for every one of them.
-        // Rs2GameObject.isReachable asks the right question: it builds the object's WorldArea from
+        // Rs2GameObject.isReachable asked the right question: it builds the object's WorldArea from
         // its size, takes the interactable tiles around it, and looks for one that is walkable and
-        // reachable. Reused here rather than reimplemented so the two paths cannot drift.
+        // reachable. The computation lives here now (upstream 2.6.44 retired the delegation) so the
+        // model no longer depends on the deprecated Rs2GameObject.
         if (tileObject instanceof GameObject) {
-            return Rs2GameObject.isReachable((GameObject) tileObject);
+            WorldArea area = getWorldArea();
+            if (area == null) {
+                return false;
+            }
+            Rs2WorldArea objectArea = new Rs2WorldArea(area);
+            List<WorldPoint> interactablePoints = objectArea.getInteractable();
+            if (interactablePoints.isEmpty()) {
+                interactablePoints.addAll(objectArea.offset(1).toWorldPointList());
+                interactablePoints.removeIf(objectArea::contains);
+            }
+            return interactablePoints.stream()
+                    .filter(Rs2Tile::isWalkable)
+                    .anyMatch(Rs2Tile::isTileReachable);
         }
 
         return Rs2Tile.isTileObjectReachable(tileObject);
@@ -408,6 +493,16 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
 
     public boolean click() {
         return click("");
+    }
+
+    /**
+     * Rs2GameObject's old behaviour: sends the first option when the object does not offer the action.
+     * The fork's {@link #click(String)} already falls back to option 0, so this is a plain alias kept
+     * for upstream's Rs2GameObject.clickObject call site until that class is retired.
+     */
+    @Deprecated(since = "2.6.44", forRemoval = true)
+    public boolean clickOrFirstOption(String action) {
+        return click(action);
     }
 
     /**
