@@ -11,6 +11,7 @@ RuneLite fork with a hidden always-on plugin hosting automation scripts. Composi
 ## Non-negotiable rules
 - Never instantiate caches/queryables directly — use `Microbot.getRs2XxxCache().query()` / `.getStream()`. See `runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/QUERYABLE_API.md`.
 - Never block/sleep on the client thread.
+- **Client-thread API reads in `util/`, `api/` and `ascript/util/` helpers go through `Microbot.getClientThread().invoke(...)` / `runOnClientThreadOptional(...)`** — `ClientThreadGuardrailTest` enforces it. Watch the log-only helpers: an argument evaluated on the script thread (e.g. `describeActor` reading `NPC#getName`) throws before the action runs, and a module's `catch (Exception)` around `doAction` then hides it forever.
 - Never use static sleeps to wait for game state — use `sleepUntil(condition, timeoutMs)`.
 - Keep `MicrobotPlugin` hidden/always-on; don't break its config panel wiring.
 - Respect existing Checkstyle/Lombok patterns; don't weaken security (telemetry tokens, HTTP clients).
