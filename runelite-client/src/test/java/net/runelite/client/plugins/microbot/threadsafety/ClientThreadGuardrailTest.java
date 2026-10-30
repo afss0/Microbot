@@ -49,11 +49,19 @@ import static org.junit.Assert.fail;
 
 /**
  * CI guardrail that fails when an {@code Rs2*} utility (under
- * {@code net.runelite.client.plugins.microbot.util}) or the new query API
- * (under {@code net.runelite.client.plugins.microbot.api}) calls a RuneLite
- * API method that the {@link ClientThreadScannerTest scanner} has inferred
- * to require the client thread, without doing so inside a
+ * {@code net.runelite.client.plugins.microbot.util}), an {@code AScript*}
+ * helper (under {@code net.runelite.client.plugins.microbot.ascript.util}) or
+ * the new query API (under {@code net.runelite.client.plugins.microbot.api})
+ * calls a RuneLite API method that the {@link ClientThreadScannerTest scanner}
+ * has inferred to require the client thread, without doing so inside a
  * {@code clientThread.invoke*()} lambda.
+ * <p>
+ * The {@code ascript/util} package is in scope because it is the same kind of
+ * facade the rule exists for: script modules call it from their own scheduler
+ * thread, so a raw client read there is an off-thread read even though the file
+ * is not named {@code Rs2*}. A log-only {@code NPC#getName()} in
+ * {@code AScriptClick.describeActor} slipped through that gap and threw on every
+ * actor click.
  *
  * <h2>Definition of "inferred-list method"</h2>
  * Any {@code net.runelite.api.*} method invoked from a method that the
@@ -68,8 +76,9 @@ import static org.junit.Assert.fail;
  * {@code docs/client-thread-manifest.md}.
  *
  * <h2>How the rule is enforced</h2>
- * For each method in a guarded class (Rs2* under {@code util/} or any class
- * under {@code api/}) that is <strong>not itself</strong> a
+ * For each method in a guarded class (Rs2* under {@code util/}, AScript* under
+ * {@code ascript/util/}, or any class under {@code api/}) that is
+ * <strong>not itself</strong> a
  * {@code CONFIRMED_LAMBDA}, the test rejects any direct invocation of an
  * inferred-list method.  Methods that need to call client-thread-only API
  * have to factor those calls into a lambda passed to
@@ -99,6 +108,14 @@ public class ClientThreadGuardrailTest
 
 	private static final String UTIL_PACKAGE_PREFIX = "net/runelite/client/plugins/microbot/util/";
 	private static final String QUERY_API_PACKAGE_PREFIX = "net/runelite/client/plugins/microbot/api/";
+	/**
+	 * The aScript helper facades. Same contract as the {@code Rs2*} utils — script
+	 * modules (and the AScript dispatcher thread) call them off the client thread —
+	 * but they are named {@code AScript*}, so the {@code Rs2} name rule above
+	 * cannot reach them.
+	 */
+	private static final String ASCRIPT_UTIL_PACKAGE_PREFIX =
+		"net/runelite/client/plugins/microbot/ascript/util/";
 
 	private static final String BASELINE_RESOURCE = "/threadsafety/client-thread-guardrail-baseline.txt";
 	private static final Path BASELINE_RELATIVE_PATH = Paths.get(
@@ -399,6 +416,12 @@ public class ClientThreadGuardrailTest
 		{
 			return true;
 		}
+		// ascript/util is a dedicated facade package: every class in it is called from a
+		// script thread, so the whole package is in scope (no name rule, unlike util/).
+		if (internalName.startsWith(ASCRIPT_UTIL_PACKAGE_PREFIX))
+		{
+			return true;
+		}
 		if (internalName.startsWith(UTIL_PACKAGE_PREFIX))
 		{
 			int lastSlash = internalName.lastIndexOf('/');
@@ -443,6 +466,15 @@ public class ClientThreadGuardrailTest
 		sb.append("# Regenerate with: ./gradlew :client:runUnitTests -D")
 			.append(REGENERATE_BASELINE_PROPERTY).append("=true\n");
 		sb.append("# Lines starting with '#' are ignored.\n");
+		sb.append("#\n");
+		sb.append("# Read this before adding an entry: helper methods that are reached only through a\n");
+		sb.append("# functional-interface parameter (the ascript/util AScriptClick#isOwn*Action /\n");
+		sb.append("# occupiesInventorySlot / optionMatches / sceneCoords cluster) appear here because the\n");
+		sb.append("# scanner cannot follow the call through the interface. They are invoked from inside\n");
+		sb.append("# runOnClientThreadOptional lambdas or the @Subscribe menu-sort hook, i.e. already on the\n");
+		sb.append("# client thread. A new entry for a method that is NOT in such a cluster is a real\n");
+		sb.append("# off-thread read: fix it (clientThread.invoke / runOnClientThreadOptional), do not\n");
+		sb.append("# baseline it.\n");
 		sb.append("\n");
 		for (String v : violations)
 		{
