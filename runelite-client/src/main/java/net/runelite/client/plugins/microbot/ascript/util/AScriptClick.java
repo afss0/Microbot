@@ -1490,19 +1490,34 @@ public final class AScriptClick {
     // ── Describe helpers (log lines) ───────────────────────
 
     private static String describeObject(TileObject object, String action) {
+        // TileObject#getId is on the guardrail's inferred list: read it on the client thread.
+        // These describe helpers run on the script thread and only build a log label, so a
+        // throw here would kill the action before pressVerified ever ran (describeActor's bug).
+        Integer id = Microbot.getClientThread().invoke(object::getId);
         return "'" + (action == null || action.isBlank() ? "default" : action)
-                + "' on object " + object.getId();
+                + "' on object " + (id == null ? "?" : id);
     }
 
+    /**
+     * Log line for an actor click. {@code Actor#getName} asserts the client thread, and this
+     * helper runs on the script thread (it is evaluated as an argument to
+     * {@code pressVerified}), so the read has to hop onto the client thread — reading it
+     * directly threw {@code IllegalStateException: must be called on client thread} on every
+     * click, which killed the action before {@code pressVerified} ever ran.
+     */
     private static String describeActor(Actor actor, String action) {
-        String name = actor instanceof NPC ? ((NPC) actor).getName() : null;
+        String name = actor instanceof NPC
+                ? Microbot.getClientThread().invoke(() -> ((NPC) actor).getName())
+                : null;
         return "'" + (action == null || action.isBlank() ? "default" : action) + "' on "
                 + (name == null ? "NPC/actor" : "'" + name + "'");
     }
 
     private static String describeGroundItem(TileItem item, String action) {
+        // Same contract as describeObject: the id read hops to the client thread.
+        Integer id = Microbot.getClientThread().invoke(item::getId);
         return "'" + (action == null || action.isBlank() ? "default" : action)
-                + "' on ground item " + item.getId();
+                + "' on ground item " + (id == null ? "?" : id);
     }
 
     /**

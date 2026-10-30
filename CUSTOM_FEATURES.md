@@ -373,6 +373,11 @@ Used during merges to verify nothing is lost.
   - `AScriptClick.moveNaturally(point)` owns the travel: NaturalMouse path with weather modulation, no corrective teleport when NaturalMouse is available, and a retry (no click) when the pointer does not settle. Call sites: `dropAtSlot`, `inventoryOptionAtSlot` (the item-on-X selection), the private `select(Rs2ItemModel)` Use arming, and Jewel Enchant's cast hover — so drops and Use-chain clicks do not teleport either.
   - Merge check: `grep "moveNaturally" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
   - Merge check: `grep -c "getMouse().move(point)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/jewellenchant/JewelEnchantScript.java` (expect 0)
+- **aScript util helpers: client-thread reads go to the client thread (Oct 2026):**
+  - `AScriptClick.describeActor` read `NPC#getName` to build a log label. A describe helper's argument is evaluated *before* `pressVerified`, so every actor click threw `IllegalStateException: must be called on client thread` first and `clickActor` never clicked (live: Barbarian Fishing logged `Error in action loop` once per tick, and the module's `catch (Exception)` also skipped `spotClickRetries`, so it never reached its loud stop). The same fix now covers the sibling describe helpers (`TileObject#getId`, `TileItem#getId`), `AScriptFletching.itemName` (`ItemComposition#getMembersName`, ASSERT origin) and `AScriptNotify.notify` (`Player#getName`, previously swallowed into a silent `"Unknown"`).
+  - `ClientThreadGuardrailTest` guards the whole `ascript/util` package now (it was `util/` Rs2* + `api/` only) — that hole is why a facade not named `Rs2*` could ship an off-thread read. The `isOwn*Action` / `occupiesInventorySlot` / `optionMatches` / `sceneCoords` cluster stays in the baseline: the scanner cannot follow a call through a `Predicate` parameter, and those bodies only ever run inside `runOnClientThreadOptional` lambdas or the `@Subscribe` menu-sort hook.
+  - Merge check: `grep "ASCRIPT_UTIL_PACKAGE_PREFIX" runelite-client/src/test/java/net/runelite/client/plugins/microbot/threadsafety/ClientThreadGuardrailTest.java | head -1`
+  - Merge check: `grep "getClientThread().invoke(object::getId)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
@@ -494,4 +499,9 @@ grep "moveNaturally" runelite-client/src/main/java/net/runelite/client/plugins/m
 ls runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/boltenchant/
 grep "STALL_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/boltenchant/BoltEnchantScript.java | head -1
 grep "boltEnchantAfk" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -1
+# aScript util helpers read client-thread API on the client thread + guardrail covers ascript/util (2026-10-30)
+grep "getClientThread().invoke(object::getId)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1
+grep "getClientThread().runOnClientThreadOptional" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptNotify.java | head -1
+grep "ASCRIPT_UTIL_PACKAGE_PREFIX" runelite-client/src/test/java/net/runelite/client/plugins/microbot/threadsafety/ClientThreadGuardrailTest.java | head -1
+grep "ascript.util.AScriptClick#isOwnActorAction" runelite-client/src/test/resources/threadsafety/client-thread-guardrail-baseline.txt | head -1
 ```
