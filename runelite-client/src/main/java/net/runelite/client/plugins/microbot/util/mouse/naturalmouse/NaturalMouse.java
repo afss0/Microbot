@@ -51,6 +51,47 @@ public class NaturalMouse {
 
     private volatile MouseMotionFactory cachedFactory;
 
+    /**
+     * Transient cursor-speed multiplier applied to the natural-mouse travel time
+     * (1.0 = normal, 2.0 = twice as fast). Deliberately <b>not</b> a config knob: it
+     * exists so a short, mechanically repetitive action (the sliced inventory drop) can
+     * compress its own travel without touching the global pacing. Click hold times, the
+     * inter-click gaps and the verify windows are NOT affected — those are anti-ban
+     * pacing, not cursor speed.
+     * <p>
+     * Volatile and read inside the cached factory's speed manager, so a change takes
+     * effect on the next movement without rebuilding the factory. Callers restore the
+     * previous value in a {@code finally} block — see
+     * {@code AScriptDrop#drop(Predicate, String, double, int, int)}.
+     */
+    private static volatile double speedMultiplier = 1.0;
+
+    /** Upper bound of {@link #speedMultiplier}: past this the path stops reading as human. */
+    private static final double MAX_SPEED_MULTIPLIER = 5.0;
+
+    /**
+     * Sets the transient cursor-speed multiplier. Values below 1.0 (slower) are ignored
+     * and values above {@value #MAX_SPEED_MULTIPLIER} are clamped, so a caller cannot turn
+     * the movement into a teleport.
+     *
+     * @return the value that was in effect before this call, to be handed back to
+     * {@link #setSpeedMultiplier(double)} when the action ends
+     */
+    public static double setSpeedMultiplier(double multiplier) {
+        double previous = speedMultiplier;
+        double clamped = Math.min(MAX_SPEED_MULTIPLIER, Math.max(1.0, multiplier));
+        if (clamped != multiplier) {
+            log.warn("Cursor speed multiplier {} clamped to {}", multiplier, clamped);
+        }
+        speedMultiplier = clamped;
+        return previous;
+    }
+
+    /** The multiplier currently applied to the natural-mouse travel time. */
+    public static double getSpeedMultiplier() {
+        return speedMultiplier;
+    }
+
     @Inject
     public NaturalMouse() {
         nature = new DefaultMouseMotionNature();
@@ -101,7 +142,10 @@ public class NaturalMouse {
         factory.setSpeedManager(distance -> {
             var pair = baseManager.getFlowWithTime(distance);
             double factor = WeatherModulation.combinedSpeedFactor();
-            long adjustedTime = (long) (pair.y / Math.max(0.1, factor));
+            // The transient multiplier is read per movement (not captured), so a scoped
+            // boost applies without rebuilding the cached factory.
+            long adjustedTime = (long) (pair.y / Math.max(0.1, factor)
+                    / Math.max(0.1, speedMultiplier));
             return new Pair<>(pair.x, adjustedTime);
         });
         cachedFactory = factory;
