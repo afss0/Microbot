@@ -32,11 +32,13 @@ public final class AScriptFletching {
         if (itemId <= 0) {
             return fallback;
         }
-        ItemComposition composition = Microbot.getRs2ItemManager().getItemComposition(itemId);
-        if (composition == null) {
-            return fallback;
-        }
-        String name = composition.getMembersName();
+        // ItemComposition#getMembersName is client-thread-only (manifest: ASSERT origin) and
+        // callers are module code on the script thread, so both the composition lookup and
+        // the name read happen on the client thread.
+        String name = Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            ItemComposition composition = Microbot.getRs2ItemManager().getItemComposition(itemId);
+            return composition == null ? null : composition.getMembersName();
+        }).orElse(null);
         return name == null || name.isEmpty() ? fallback : name;
     }
 
