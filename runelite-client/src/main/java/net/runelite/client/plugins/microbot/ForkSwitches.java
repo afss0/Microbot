@@ -50,6 +50,15 @@ public final class ForkSwitches
 		return telemetryEnabled();
 	}
 
+	/**
+	 * Microbot Cloud UI: the "Microbot Cloud" section of the plugin panel (dashboard
+	 * link, bot alerts), the bug report entry points and the cloud step of the tour.
+	 */
+	public static boolean cloudUiEnabled()
+	{
+		return telemetryEnabled();
+	}
+
 	private static boolean telemetryEnabled()
 	{
 		return Boolean.getBoolean(TELEMETRY_PROPERTY);
