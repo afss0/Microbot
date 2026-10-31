@@ -54,6 +54,17 @@ Used during merges to verify nothing is lost.
   `grep -c "ForkSwitches.flightRecorderEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/FlightRecorder.java`
   `grep -c "Microbot.inputSelector = new InputSelector" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java`
 
+### Microbot Cloud GUI hidden (`ForkSwitches.cloudUiEnabled()`)
+- **Files:** `ui/MicrobotTopLevelConfigPanel.java`, `ui/MicrobotBugReporter.java`, `ui/MicrobotHelpMenu.java`, `ui/MicrobotTour.java`
+- **What:** The "Microbot Cloud" section (dashboard link and bot alerts), the bug report entries in the help menu and in a plugin's right-click menu, the report / my-reports dialogs and the `MICROBOT_CLOUD` tour step are not shown. `MicrobotBugReporter.menuItem()` returns `null`, `open()`/`openMyReports()` return early and `hasReports()`/`unseenReports()` report nothing, so every caller keeps compiling and the entries simply never appear.
+- **Why:** Nothing on the fork uses `microbot.cloud`; the components stay in the tree (injectable) so a future fork feature can bring them back with the same switch.
+- **Re-apply:** same transform (`microbot-fork-switches.py`), same step 7a, same `-Dmicrobot.fork.telemetry=true` override.
+- **Merge checks:**
+  `grep -c "ForkSwitches.cloudUiEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ui/MicrobotTopLevelConfigPanel.java`
+  `grep -c "ForkSwitches.cloudUiEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ui/MicrobotBugReporter.java`
+  `grep -c "ForkSwitches.cloudUiEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ui/MicrobotHelpMenu.java`
+  `grep -c "ForkSwitches.cloudUiEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ui/MicrobotTour.java`
+
 ## Agent Server
 
 ### Remote Access (bindAllInterfaces)
@@ -430,6 +441,8 @@ grep -c "ForkSwitches.dashboardSyncEnabled()" runelite-client/src/main/java/net/
 grep -c "ForkSwitches.bugReportsEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/BugReportTracker.java
 grep -c "ForkSwitches.flightRecorderEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/FlightRecorder.java
 grep -c "Microbot.inputSelector = new InputSelector" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java
+# cloud UI hidden (panel, bug report entries, tour step) — same switch
+grep -rc "ForkSwitches.cloudUiEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ui/ | grep -v ':0'
 grep -r "bindAllInterfaces" runelite-client/src/main/java/ | head -5
 grep "return Math.max(0, configuredChebyshev);" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
 grep "getVisibleObjectComposition" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1
