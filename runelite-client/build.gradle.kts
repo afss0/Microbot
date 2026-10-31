@@ -604,6 +604,9 @@ tasks.withType<Test> {
         enabled = false
     }
     systemProperty("glslang.path", providers.gradleProperty("glslangPath").getOrElse(""))
+    // Fork: dashboard sync, bug reports and the flight recorder are off in the client
+    // (see ForkSwitches). Unit tests exercise upstream's behaviour, so they force them on.
+    systemProperty("microbot.fork.telemetry", "true")
 }
 
 tasks.javadoc {
