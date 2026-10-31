@@ -394,4 +394,20 @@ public class VirtualMouse extends Mouse {
 
         return this;
     }
+
+
+    static Point retarget(Rectangle clickbox, Point current) {
+        if (Rs2UiHelper.isFallbackRectangle(clickbox)) {
+            return current;
+        }
+        Rectangle clear = Rs2UiHelper.clearOfInterfaces(clickbox, Rs2UiHelper.sceneViewportBounds(),
+                Rs2UiHelper.visibleSceneOverlayBounds());
+        if (clear == null || clear.contains(Microbot.getMouse().getMousePosition())) {
+            return current;
+        }
+        Point target = Rs2UiHelper.getClickingPoint(clear, true, false);
+        Microbot.naturalMouse.moveTo(target.getX(), target.getY());
+        return target;
+    }
+
 }
