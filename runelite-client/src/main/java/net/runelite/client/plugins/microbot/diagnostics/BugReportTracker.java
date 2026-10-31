@@ -28,6 +28,7 @@ import net.runelite.client.config.FlashNotification;
 import net.runelite.client.config.Notification;
 import net.runelite.client.config.NotificationSound;
 import net.runelite.client.config.RequestFocusType;
+import net.runelite.client.plugins.microbot.ForkSwitches;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.MicrobotApi;
 import net.runelite.client.plugins.microbot.MicrobotConfig;
@@ -87,6 +88,13 @@ public class BugReportTracker
 
 	public synchronized void start()
 	{
+		// fork-noop(bug-report): the class stays injectable and its public API
+		// stays usable, but the fork never runs the bug report telemetry refresh. See ForkSwitches.
+		if (!ForkSwitches.bugReportsEnabled())
+		{
+			return;
+		}
+
 		if (refreshTask != null || disableTelemetry)
 		{
 			return;
