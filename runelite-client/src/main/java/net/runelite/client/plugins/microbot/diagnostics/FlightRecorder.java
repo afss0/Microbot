@@ -44,6 +44,7 @@ import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.plugins.microbot.ForkSwitches;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.agentserver.handler.ScriptHeartbeatRegistry;
 import net.runelite.client.plugins.microbot.util.input.InputArbiter;
@@ -111,6 +112,13 @@ public class FlightRecorder
 
 	public void start()
 	{
+		// fork-noop(flight-recorder): the class stays injectable and its public API
+		// stays usable, but the fork never runs the recorder or hijack System.out/err. See ForkSwitches.
+		if (!ForkSwitches.flightRecorderEnabled())
+		{
+			return;
+		}
+
 		reset();
 		eventBus.register(this);
 		originalOut = System.out;

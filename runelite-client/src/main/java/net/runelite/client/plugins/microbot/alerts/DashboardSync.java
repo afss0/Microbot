@@ -30,6 +30,7 @@ import net.runelite.client.ClientSessionManager;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.plugins.microbot.ForkSwitches;
 import net.runelite.client.plugins.microbot.MicrobotApi;
 import net.runelite.client.plugins.microbot.MicrobotConfig;
 import net.runelite.client.ui.DrawManager;
@@ -104,6 +105,13 @@ public class DashboardSync
 
 	public synchronized void start()
 	{
+		// fork-noop(dashboard): the class stays injectable and its public API
+		// stays usable, but the fork never runs chsami's dashboard sync. See ForkSwitches.
+		if (!ForkSwitches.dashboardSyncEnabled())
+		{
+			return;
+		}
+
 		if (running)
 		{
 			return;
