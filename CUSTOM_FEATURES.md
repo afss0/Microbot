@@ -42,6 +42,17 @@ Used during merges to verify nothing is lost.
 - **Why:** Without the agent attached, the upstream default only produces "Spoof device ID is on, but the HWID agent is not attached" warnings at every login.
 - **Merge check:** `grep -A3 "default boolean spoofDeviceId" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotConfig.java | grep "return false"`
 
+### Telemetry stays off (ForkSwitches)
+- **Files:** `ForkSwitches.java`, `alerts/DashboardSync.java`, `diagnostics/BugReportTracker.java`, `diagnostics/FlightRecorder.java`, `MicrobotPlugin.java`
+- **What:** `MicrobotPlugin` mirrors upstream (dashboard sync, bug report tracker, flight recorder and the terminal-logout hold are all wired); the three telemetry features are switched off inside the classes they belong to. Each `start()` opens with `// fork-noop(<tag>)` plus `if (!ForkSwitches.<fn>()) { return; }`, so the classes stay injectable and their public API keeps working for other plugins.
+- **Why:** Dashboard sync is chsami's remote client management, and bug reports plus the flight recorder ship player data. Keeping the wiring upstream-shaped and the switch in one fork-owned class means an upstream refactor of `MicrobotPlugin` never turns them back on, and re-enabling one is a one-line change instead of a merge.
+- **Re-apply:** `microbot-fork-switches.py` (run by the sync as step 7a, after every rebase, and fail-closed when a `start()` anchor disappears).
+- **Merge checks:**
+  `grep -c "ForkSwitches.dashboardSyncEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/alerts/DashboardSync.java`
+  `grep -c "ForkSwitches.bugReportsEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/BugReportTracker.java`
+  `grep -c "ForkSwitches.flightRecorderEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/FlightRecorder.java`
+  `grep -c "Microbot.inputSelector = new InputSelector" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java`
+
 ## Agent Server
 
 ### Remote Access (bindAllInterfaces)
@@ -413,6 +424,11 @@ When merging upstream, verify these files/features are present:
 ```
 grep -r "WeatherModulation" runelite-client/src/main/java/ | head -5
 grep -r "detectable automation" runelite-client/src/main/java/ | head -5
+# fork switches: telemetry inert inside the classes, plugin mirrors upstream (2026-10-31)
+grep -c "ForkSwitches.dashboardSyncEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/alerts/DashboardSync.java
+grep -c "ForkSwitches.bugReportsEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/BugReportTracker.java
+grep -c "ForkSwitches.flightRecorderEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/FlightRecorder.java
+grep -c "Microbot.inputSelector = new InputSelector" runelite-client/src/main/java/net/runelite/client/plugins/microbot/MicrobotPlugin.java
 grep -r "bindAllInterfaces" runelite-client/src/main/java/ | head -5
 grep "return Math.max(0, configuredChebyshev);" runelite-client/src/main/java/net/runelite/client/plugins/microbot/util/walker/Rs2Walker.java | head -1
 grep "getVisibleObjectComposition" runelite-client/src/main/java/net/runelite/client/plugins/microbot/api/tileobject/models/Rs2TileObjectModel.java | head -1
