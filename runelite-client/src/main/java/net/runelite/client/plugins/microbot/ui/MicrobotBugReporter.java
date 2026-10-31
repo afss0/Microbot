@@ -11,6 +11,7 @@ import javax.swing.JMenuItem;
 import javax.swing.SwingUtilities;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginManager;
+import net.runelite.client.plugins.microbot.ForkSwitches;
 import net.runelite.client.plugins.microbot.alerts.ClientLinkToken;
 import net.runelite.client.plugins.microbot.alerts.DeviceLinkFlow;
 import net.runelite.client.plugins.microbot.diagnostics.BugReportCollector;
@@ -43,6 +44,11 @@ public class MicrobotBugReporter
 
 	JMenuItem menuItem(Component parent, Plugin plugin)
 	{
+		// fork-noop(cloud-ui): bug reporting is off, so no menu entry is produced.
+		if (!ForkSwitches.cloudUiEnabled())
+		{
+			return null;
+		}
 		if (plugin == null)
 		{
 			return null;
@@ -55,16 +61,21 @@ public class MicrobotBugReporter
 
 	int unseenReports()
 	{
-		return tracker.unseenCount();
+		return ForkSwitches.cloudUiEnabled() ? tracker.unseenCount() : 0;
 	}
 
 	boolean hasReports()
 	{
-		return !tracker.reports().isEmpty();
+		return ForkSwitches.cloudUiEnabled() && !tracker.reports().isEmpty();
 	}
 
 	public void open(Component parent, Plugin plugin)
 	{
+		// fork-noop(cloud-ui): never open the report dialog while reporting is off.
+		if (!ForkSwitches.cloudUiEnabled())
+		{
+			return;
+		}
 		if (dialog != null && dialog.isDisplayable() && !dialog.isDone())
 		{
 			if (plugin != null)
@@ -86,6 +97,11 @@ public class MicrobotBugReporter
 
 	void openMyReports(Component parent)
 	{
+		// fork-noop(cloud-ui): "my reports" is a cloud view; keep it closed.
+		if (!ForkSwitches.cloudUiEnabled())
+		{
+			return;
+		}
 		if (reportsDialog != null && reportsDialog.isDisplayable())
 		{
 			reportsDialog.toFront();

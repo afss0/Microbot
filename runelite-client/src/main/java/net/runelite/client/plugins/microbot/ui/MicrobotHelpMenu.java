@@ -21,6 +21,7 @@ import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.RuneLiteProperties;
+import net.runelite.client.plugins.microbot.ForkSwitches;
 import net.runelite.client.plugins.microbot.diagnostics.BugReportTracker;
 import net.runelite.client.plugins.microbot.diagnostics.DiagnosticReportCollector;
 import net.runelite.client.plugins.microbot.recovery.StartupRecovery;
@@ -155,7 +156,11 @@ public class MicrobotHelpMenu
 		JMenuItem report = new JMenuItem(BugReportDialog.TITLE + "...");
 		report.setToolTipText("Tell us what went wrong. We'll let you know when it's fixed.");
 		report.addActionListener(e -> bugReporter.open(owner, null));
-		menu.add(report);
+		// fork-noop(cloud-ui): no bug report entry in the help menu.
+		if (ForkSwitches.cloudUiEnabled())
+		{
+			menu.add(report);
+		}
 
 		if (bugReporter.hasReports())
 		{
@@ -196,7 +201,11 @@ public class MicrobotHelpMenu
 		JMenuItem issue = new JMenuItem("Open a GitHub issue");
 		issue.setToolTipText("For people with a GitHub account. Send a report first and mention its code in the issue.");
 		issue.addActionListener(e -> LinkBrowser.browse(BUG_REPORT_URL));
-		menu.add(issue);
+		// fork-noop(cloud-ui): the GitHub issue flow starts from a bug report, which is off.
+		if (ForkSwitches.cloudUiEnabled())
+		{
+			menu.add(issue);
+		}
 
 		return menu;
 	}

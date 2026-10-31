@@ -4,6 +4,7 @@ import net.runelite.client.RuneLiteProperties;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.config.TopLevelConfigPanel;
+import net.runelite.client.plugins.microbot.ForkSwitches;
 import net.runelite.client.plugins.microbot.recovery.StartupRecovery;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.ColorScheme;
@@ -128,7 +129,11 @@ public class MicrobotTopLevelConfigPanel extends PluginPanel {
         JPanel footer = new JPanel();
         footer.setLayout(new BoxLayout(footer, BoxLayout.Y_AXIS));
         footer.setBorder(new EmptyBorder(0, 0, 4, 0));
-        footer.add(cloudPanel);
+        // fork-noop(cloud-ui): the Cloud section (dashboard link + bot alerts) is not mounted.
+        if (ForkSwitches.cloudUiEnabled())
+        {
+            footer.add(cloudPanel);
+        }
 
         String version = RuneLiteProperties.getMicrobotVersion();
         JLabel versionLabel = new JLabel(version == null || version.isBlank() ? "microbot" : "microbot v" + version, SwingConstants.CENTER);
