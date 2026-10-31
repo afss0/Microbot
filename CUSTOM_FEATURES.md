@@ -47,6 +47,7 @@ Used during merges to verify nothing is lost.
 - **What:** `MicrobotPlugin` mirrors upstream (dashboard sync, bug report tracker, flight recorder and the terminal-logout hold are all wired); the three telemetry features are switched off inside the classes they belong to. Each `start()` opens with `// fork-noop(<tag>)` plus `if (!ForkSwitches.<fn>()) { return; }`, so the classes stay injectable and their public API keeps working for other plugins.
 - **Why:** Dashboard sync is chsami's remote client management, and bug reports plus the flight recorder ship player data. Keeping the wiring upstream-shaped and the switch in one fork-owned class means an upstream refactor of `MicrobotPlugin` never turns them back on, and re-enabling one is a one-line change instead of a merge.
 - **Re-apply:** `microbot-fork-switches.py` (run by the sync as step 7a, after every rebase, and fail-closed when a `start()` anchor disappears).
+- **Override:** `-Dmicrobot.fork.telemetry=true` turns all three back on for a run. The unit tests set it (`runelite-client/build.gradle.kts`, `tasks.withType<Test>`) so `FlightRecorderTest` / `BugReportTrackerTest` / `DashboardSyncTest` keep exercising upstream's behaviour.
 - **Merge checks:**
   `grep -c "ForkSwitches.dashboardSyncEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/alerts/DashboardSync.java`
   `grep -c "ForkSwitches.bugReportsEnabled()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/diagnostics/BugReportTracker.java`
