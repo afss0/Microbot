@@ -384,6 +384,17 @@ There are two deliberately different stop paths:
 
 Use the `AScriptConfig.GROUP` constant for the config group, never a string literal: a wrong-case group writes to a nonexistent config and fails silently. QOL features must never call `stopWithMessage` — they are not automation.
 
+### Unexpected-logout recovery
+
+An unexpected logout while automation is on is not an automatic stop. `AScript.handleUnexpectedLogout()` drives `ReloginRecovery`:
+
+- **Tick-driven, never a blocking sleep.** The orchestrator loop is also the overlay's clock: `ReloginRecovery` stores deadlines and one attempt is dispatched per due tick, so the countdown stays live and QOL is never frozen for minutes.
+- **One random wait, then up to five attempts.** A weather-modulated 5-20 s (`Rs2Random.logNormalBounded(..., 1 / combinedSpeedFactor())`), then five `LoginManager.login()` dispatches; each gets a 30 s settle window (`login()` only dispatches — success is `LOGGED_IN` arriving) and a 15 s / 30 s / 60 s / 120 s exponential backoff, sampled log-normal 0.75x-1.5x and weather-modulated. The attempt is counted before the call: a refused login (no profile, throttle) still spends a slot.
+- **A lockout is a wait, not a stop.** Check `LoginManager.isLoginLockoutScreen()` before calling `login()`; call `LoginManager.checkLoginLockout()` to record the cooldown and dismiss the screen once, then wait at least 10 min (weather-modulated, never shorter than `LoginLockout.remainingMillis()`). The attempt counter and the backoff sequence are preserved.
+- **Success resumes silently.** Any successful login — ours or one another actor performed (AutoLogin, break handler) — calls `resumeAfterRelogin()`: recovery, readiness gate, run counters, `AScriptBank` session state and every module's exit flag are reset. No Discord notification.
+- **Only exhaustion stops and notifies.** The flow's single `stopWithMessage` (title `aScript Stopped — Re-login Failed`) clears `enabled` and sends the only notification. Recovery must never notify at start, per attempt or on success.
+- **Not every logout is ours.** Automation off/IDLE, the `recoverUnexpectedLogout` toggle off, `Microbot.pauseAllScripts` (a break handler — an in-flight recovery is abandoned) and a run that never logged in are all left alone.
+
 ## Anti-detection with Rs2Random
 
 All timing must use `Rs2Random` to produce human-like distributions. Anti-cheat systems flag uniform or fixed patterns.
