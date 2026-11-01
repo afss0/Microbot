@@ -64,6 +64,19 @@ public interface AScriptConfig extends Config {
         return ScriptType.IDLE;
     }
 
+    @ConfigItem(
+            keyName = "recoverUnexpectedLogout",
+            name = "Recover from unexpected logout",
+            description = "After an unexpected logout while automation is on, re-login with 5 attempts" +
+                    " and exponential backoff (weather-modulated). Automation is only stopped, with a" +
+                    " Discord notification, after every attempt fails",
+            position = 2,
+            section = automationSection
+    )
+    default boolean recoverUnexpectedLogout() {
+        return true;
+    }
+
     // ── Crafting ────────────────────────────────────────────────
 
     @ConfigSection(
