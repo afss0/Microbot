@@ -37,6 +37,8 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
+import net.runelite.client.plugins.microbot.util.security.LoginLockout;
+import net.runelite.client.plugins.microbot.util.security.LoginManager;
 import net.runelite.client.plugins.microbot.util.settings.Rs2Settings;
 import net.runelite.client.plugins.microbot.util.shop.Rs2Shop;
 
@@ -74,7 +76,7 @@ public class AScript extends Script {
      * High-level <b>automation</b> phase exposed to the overlay. QOL state is not represented
      * here — it runs independently and the overlay reports it on its own line.
      */
-    public enum Phase { DISABLED, IDLE, WAITING, BANKING, RUNNING, ERROR }
+    public enum Phase { DISABLED, IDLE, WAITING, RECOVERING, BANKING, RUNNING, ERROR }
 
     // ── Module registry ─────────────────────────────────────
     /** All modules, in dispatch priority order. First active module wins. */
@@ -187,8 +189,24 @@ public class AScript extends Script {
     private boolean runWasActive = false;
     /** Track if the player was logged in at least once — triggers the logout watcher. */
     private boolean playerWasLoggedIn = false;
-    /** Prevent repeated logout notifications. */
-    private boolean logoutHandled = false;
+    /**
+     * Re-login recovery for an unexpected logout. Tick-driven: the logout branch samples the
+     * waits and dispatches one attempt per deadline, so the loop keeps running and the overlay
+     * keeps counting down while the client sits on the login screen. Only an exhausted budget
+     * stops the automation — and that stop is the flow's single Discord notification.
+     */
+    private final ReloginRecovery reloginRecovery = new ReloginRecovery();
+    /** Random wait before the first re-login attempt, before weather scaling. */
+    private static final int RELOGIN_INITIAL_WAIT_MIN_MS = 5_000;
+    private static final int RELOGIN_INITIAL_WAIT_MAX_MS = 20_000;
+    /** How long a dispatched login gets to report LOGGED_IN before it counts as failed. */
+    private static final int RELOGIN_SETTLE_TIMEOUT_MS = 30_000;
+    /** Log-normal jitter around the nominal backoff step (15 s / 30 s / 60 s / 120 s). */
+    private static final double RELOGIN_BACKOFF_JITTER_MIN = 0.75;
+    private static final double RELOGIN_BACKOFF_JITTER_MAX = 1.5;
+    /** Login-lockout cooldown (~10 min) before the next attempt, weather-modulated. */
+    private static final int RELOGIN_LOCKOUT_WAIT_MIN_MS = 9 * 60_000;
+    private static final int RELOGIN_LOCKOUT_WAIT_MAX_MS = 11 * 60_000;
     /**
      * Game-readiness gate. Every tick samples the client before anything acts; a module must never
      * dispatch (and QOL must never click) on a client that is still building the world or whose
@@ -212,7 +230,7 @@ public class AScript extends Script {
     public boolean run(AScriptConfig config) {
         this.config = config;
         this.playerWasLoggedIn = false;
-        this.logoutHandled = false;
+        this.reloginRecovery.reset();
         this.runWasActive = false;
         this.lastStopMessage = null;
         this.idleHoldAnnounced = false;
@@ -225,24 +243,23 @@ public class AScript extends Script {
 
         mainScheduledFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
-                // Logout watcher: detect login screen while script was active
+                // Unexpected logout: recover while automation is on instead of stopping at the
+                // first login screen. Only the exhausted attempt budget stops the automation.
                 if (!Microbot.isLoggedIn()) {
-                    GameState gs = Microbot.getClient() != null
-                            ? Microbot.getClient().getGameState() : GameState.UNKNOWN;
-                    boolean isAtLoginScreen = gs == GameState.LOGIN_SCREEN
-                            || gs == GameState.LOGIN_SCREEN_AUTHENTICATOR;
-
-                    if (playerWasLoggedIn && isAtLoginScreen && !logoutHandled) {
-                        stopWithMessage("Unexpected Logout",
-                                "aScript detected player logged out while script was running.");
-                        logoutHandled = true;
-                    }
+                    handleUnexpectedLogout();
                     return;
                 }
 
-                // Mark player as logged in and reset logout guard
+                // Any successful login — ours or one another actor performed (AutoLogin, the
+                // break handler) — ends the recovery, without a notification.
+                if (reloginRecovery.isActive()) {
+                    resumeAfterRelogin();
+                } else if (reloginRecovery.isExhausted()) {
+                    // Back in after the budget ran out (manual login or another plugin). The
+                    // automation is already off; the next run starts from a clean machine.
+                    reloginRecovery.reset();
+                }
                 playerWasLoggedIn = true;
-                if (logoutHandled) logoutHandled = false;
 
                 if (!super.run()) return; // heartbeat / pause guard
 
@@ -270,6 +287,218 @@ public class AScript extends Script {
         }, 0, 600, TimeUnit.MILLISECONDS);
 
         return true;
+    }
+
+    // ── Unexpected-logout recovery ──────────────────────────
+
+    /**
+     * Handles one tick on the login screen. Starts the recovery on the first detection, then
+     * either dispatches the attempt that is due or keeps the countdown in the status line.
+     * <p>
+     * <b>Deliberately silent to Discord</b>: the single notification of this flow is the stop in
+     * {@link #stopWithMessage(String, String)} after the budget is exhausted. A logout the
+     * automation did not cause — automation off, nothing selected, the feature switched off, a
+     * break-handler pause, or a plugin run that never logged in — is left alone instead of
+     * being "stopped" and notified about.
+     */
+    private void handleUnexpectedLogout() {
+        if (config == null || !config.enabled() || config.scriptSelection() == ScriptType.IDLE
+                || !config.recoverUnexpectedLogout()) {
+            reloginRecovery.reset();
+            return;
+        }
+
+        if (Microbot.pauseAllScripts.get()) {
+            // A break handler (or another pause) owns this logout — logging back in here would
+            // fight the break. A recovery that was already waiting is abandoned; it restarts
+            // only if the pause clears while the client is still on the login screen.
+            if (reloginRecovery.isActive()) {
+                log.info("[AScript] Re-login recovery abandoned — scripts were paused");
+            }
+            reloginRecovery.reset();
+            return;
+        }
+
+        if (!reloginRecovery.isActive()) {
+            if (reloginRecovery.isExhausted()) {
+                return; // the stop already landed; the cleared switch ends this flow next tick
+            }
+            if (!playerWasLoggedIn) {
+                return; // the plugin started before the first login: the user's own login
+            }
+            GameState gameState = Microbot.getClient() != null
+                    ? Microbot.getClient().getGameState() : GameState.UNKNOWN;
+            if (gameState != GameState.LOGIN_SCREEN
+                    && gameState != GameState.LOGIN_SCREEN_AUTHENTICATOR) {
+                return; // connection lost / hopping: not a logout screen yet
+            }
+            beginRelogin();
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (reloginRecovery.isSettling()) {
+            if (reloginRecovery.settleExpired(now)) {
+                scheduleReloginRetry(now);
+            } else {
+                Microbot.status = "RECONNECTING — attempt " + reloginRecovery.attempts()
+                        + "/" + ReloginRecovery.MAX_ATTEMPTS + " (waiting for login)";
+            }
+            return;
+        }
+        if (reloginRecovery.attemptDue(now)) {
+            dispatchReloginAttempt(now);
+            return;
+        }
+        Microbot.status = "RECONNECTING — attempt " + (reloginRecovery.attempts() + 1)
+                + "/" + ReloginRecovery.MAX_ATTEMPTS + " in "
+                + secondsUntil(reloginRecovery.nextAttemptAt(), now) + " s";
+    }
+
+    /** Opens the recovery: one weather-modulated random wait before the first attempt. */
+    private void beginRelogin() {
+        long now = System.currentTimeMillis();
+        int waitMs = sampleReloginWait(RELOGIN_INITIAL_WAIT_MIN_MS, RELOGIN_INITIAL_WAIT_MAX_MS);
+        reloginRecovery.begin(now, waitMs);
+        currentPhase = Phase.RECOVERING;
+        Microbot.status = "RECONNECTING — attempt 1/" + ReloginRecovery.MAX_ATTEMPTS + " in "
+                + secondsUntil(reloginRecovery.nextAttemptAt(), now) + " s";
+        log.warn("[AScript] Unexpected logout — re-login attempt 1/{} in {} ms",
+                ReloginRecovery.MAX_ATTEMPTS, waitMs);
+    }
+
+    /**
+     * Dispatches one re-login. The attempt is counted before the call: a login API that refuses
+     * (no active profile, throttle) must still spend a slot, or a broken login would retry
+     * forever. A lockout is counted as a failed attempt and answered with the lockout wait —
+     * retrying its screen is exactly what extends the cooldown.
+     */
+    private void dispatchReloginAttempt(long now) {
+        int attempt = reloginRecovery.attempts() + 1;
+        reloginRecovery.attemptStarted(now, RELOGIN_SETTLE_TIMEOUT_MS);
+        log.info("[AScript] Re-login attempt {}/{}", attempt, ReloginRecovery.MAX_ATTEMPTS);
+
+        boolean lockoutScreen = LoginManager.isLoginLockoutScreen();
+        LoginLockout lockout = LoginLockout.getInstance();
+        if (lockoutScreen || lockout.isActive()) {
+            // A lockout is a failed attempt, not a terminal state. The shared tracker records the
+            // cooldown and dismisses the "too many attempts" screen once — retrying that screen is
+            // what extends the cooldown. The next attempt waits ~10 min (weather-modulated), and
+            // longer when the tracker's own cooldown has not expired, so a retry is never swallowed
+            // by the login guard. The attempt counter is preserved, so the backoff sequence keeps
+            // counting from this failure instead of restarting.
+            LoginManager.checkLoginLockout();
+            int waitMs = sampleReloginWait(RELOGIN_LOCKOUT_WAIT_MIN_MS, RELOGIN_LOCKOUT_WAIT_MAX_MS);
+            waitMs = (int) Math.max(waitMs, Math.min(lockout.remainingMillis(), Integer.MAX_VALUE));
+            log.warn("[AScript] Login lockout — attempt {}/{} failed, next in {} ms",
+                    attempt, ReloginRecovery.MAX_ATTEMPTS, waitMs);
+            scheduleReloginRetry(now, waitMs, true);
+            return;
+        }
+        if (LoginManager.getActiveProfile() == null) {
+            log.warn("[AScript] Re-login attempt {}/{} — no active profile", attempt,
+                    ReloginRecovery.MAX_ATTEMPTS);
+            scheduleReloginRetry(now);
+            return;
+        }
+
+        boolean dispatched;
+        try {
+            dispatched = LoginManager.login();
+        } catch (Exception ex) {
+            // A login failure must spend an attempt, never the loop-error budget: five throws
+            // here would otherwise stop the automation with the misleading "Loop Errors" title.
+            log.warn("[AScript] Re-login attempt {}/{} threw", attempt,
+                    ReloginRecovery.MAX_ATTEMPTS, ex);
+            dispatched = false;
+        }
+        if (!dispatched) {
+            log.warn("[AScript] Re-login attempt {}/{} was not dispatched", attempt,
+                    ReloginRecovery.MAX_ATTEMPTS);
+            scheduleReloginRetry(now);
+        }
+    }
+
+    /**
+     * Ends a failed attempt: schedules the next one on the exponential backoff, or stops the
+     * automation once the budget is spent. The wait is weather-modulated exactly like every
+     * other house delay (one three-argument sample — the two-argument overload already applies
+     * weather on its own).
+     */
+    private void scheduleReloginRetry(long now) {
+        int step = ReloginRecovery.backoffStepMs(reloginRecovery.attempts());
+        int waitMs = sampleReloginWait(
+                (int) Math.round(step * RELOGIN_BACKOFF_JITTER_MIN),
+                (int) Math.round(step * RELOGIN_BACKOFF_JITTER_MAX));
+        scheduleReloginRetry(now, waitMs, false);
+    }
+
+    /**
+     * Schedules the next attempt with an explicit wait, or stops the automation when the
+     * attempt budget is spent. The lockout wait goes through here so it spends the same slot
+     * and the backoff sequence keeps counting from it.
+     *
+     * @param now    wall clock of the failure
+     * @param waitMs sampled wait before the next attempt
+     * @param lockout true when the wait is the login-lockout window (minutes, not seconds)
+     */
+    private void scheduleReloginRetry(long now, int waitMs, boolean lockout) {
+        int failed = reloginRecovery.attempts();
+        if (failed >= ReloginRecovery.MAX_ATTEMPTS) {
+            reloginRecovery.scheduleRetry(now, 0);
+            stopWithMessage("aScript Stopped — Re-login Failed",
+                    ReloginRecovery.MAX_ATTEMPTS + " re-login attempts failed after an unexpected"
+                            + " logout — check the active profile's credentials and the login screen.");
+            return;
+        }
+        reloginRecovery.scheduleRetry(now, waitMs);
+        long seconds = secondsUntil(reloginRecovery.nextAttemptAt(), now);
+        Microbot.status = lockout
+                ? "RECONNECTING — login lockout, attempt " + (failed + 1) + "/"
+                        + ReloginRecovery.MAX_ATTEMPTS + " in " + ((seconds + 59) / 60) + " min"
+                : "RECONNECTING — attempt " + (failed + 1) + "/"
+                        + ReloginRecovery.MAX_ATTEMPTS + " in " + seconds + " s";
+        log.warn("[AScript] Re-login attempt {}/{} failed — next in {} ms",
+                failed, ReloginRecovery.MAX_ATTEMPTS, waitMs);
+    }
+
+    /**
+     * Samples a wait with the house weather modulation. {@code logNormalBounded(min, max,
+     * multiplier)} applies ONLY the given multiplier, so the weather factor is computed once
+     * here and the two-argument overload is never stacked on top of it.
+     */
+    private static int sampleReloginWait(int minMs, int maxMs) {
+        WeatherModulation.ensureFresh();
+        double weatherMultiplier = 1.0 / Math.max(0.1, WeatherModulation.combinedSpeedFactor());
+        return Rs2Random.logNormalBounded(minMs, maxMs, weatherMultiplier);
+    }
+
+    /** Whole seconds until {@code deadlineMs}, rounded up so a countdown never shows 0 s early. */
+    private static long secondsUntil(long deadlineMs, long nowMs) {
+        return Math.max(0, (deadlineMs - nowMs + 999) / 1000);
+    }
+
+    /**
+     * The player is logged in again — by our attempt or by another actor (AutoLogin, the break
+     * handler). Resets recovery, the readiness gate and the run counters: modules re-derive
+     * their state from the live inventory instead of carrying a half-finished batch across the
+     * logout. No Discord notification — only the exhausted budget notifies.
+     */
+    private void resumeAfterRelogin() {
+        int attempts = reloginRecovery.attempts();
+        reloginRecovery.reset();
+        resetGameHold();
+        resetRunCounters();
+        AScriptBank.resetSessionState();
+        AScriptClick.reset();
+        for (AModule mod : MODULES) {
+            wasActive.put(mod, false);
+            runKeys.remove(mod);
+            mod.resetExitFlag();
+        }
+        runWasActive = false;
+        Microbot.status = "Re-login succeeded — resuming";
+        log.info("[AScript] Re-login succeeded after {} attempt(s) — automation resuming", attempts);
     }
 
     /**
@@ -957,7 +1186,7 @@ public class AScript extends Script {
         runWasActive = false;
         resetGameHold();
         playerWasLoggedIn = false;
-        logoutHandled = false;
+        reloginRecovery.reset();
         for (AModule mod : MODULES) {
             wasActive.put(mod, false);
             runKeys.remove(mod);

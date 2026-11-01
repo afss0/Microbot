@@ -407,6 +407,16 @@ Used during merges to verify nothing is lost.
   - Gaps between drops are a two-band mixture over caller-chosen bounds: the band boundary sits a third of the way up (50–140 / 140–320 for the default 50–320), and the slow band has a 15% chance that **rises with worse weather** (capped at 55%) instead of simply stretching every gap. Both bands come from the shared `Rs2Random.logNormalBounded`, which skews low inside its band but never forbids the high end. `sampleGapMs`/`nextGapMs` from the first cut were deleted rather than left beside the mixture.
   - Merge check: `grep "setSpeedMultiplier" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptDrop.java | head -1`
   - Merge check: `grep "dropGapMs(int minMs, int maxMs, double weatherMultiplier)" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptDrop.java | head -1`
+- **aScript unexpected-logout recovery: 5 re-login attempts with weather-modulated backoff (Nov 2026):**
+  - The old watcher stopped automation on the first login screen (`stopWithMessage("Unexpected Logout", …)`). Now, while automation is on and the run had logged in at least once, the orchestrator recovers: one random 5–20 s wait (`Rs2Random.logNormalBounded(…, 1/combinedSpeedFactor())`), then up to five `LoginManager.login()` dispatches, each with a 30 s settle window (the call only dispatches — success is `LOGGED_IN` arriving) and a 15 s / 30 s / 60 s / 120 s exponential backoff (log-normal 0.75×–1.5× around the step, weather-modulated).
+  - Tick-driven, not a blocking sleep: `ReloginRecovery` stores deadlines and the 600 ms loop dispatches/holds, so the overlay keeps counting down and QOL is never frozen for minutes.
+  - A successful login — ours or one another actor performed (AutoLogin, break handler) — resets the recovery, the readiness gate, the run counters and every module's exit flag; **no Discord notification**. Only the exhausted budget calls `stopWithMessage` (the single notification, clears `enabled`).
+  - Logouts the automation did not cause are ignored: automation off/IDLE, the `recoverUnexpectedLogout` toggle off, a break-handler pause (`pauseAllScripts` — an in-flight recovery is abandoned), or a plugin run that never logged in.
+  - Login lockout ("too many attempts") counts as a failed attempt: `LoginManager.checkLoginLockout()` records/dismisses the screen once, the next attempt waits ≥10 min (weather-modulated, never shorter than `LoginLockout.remainingMillis()`), and the attempt counter plus the backoff sequence are preserved.
+  - Guardrail: `ReloginRecoveryTest` (initial wait, settle window, 15/30/60/120 schedule, five-attempt exhaustion, reset) — client-free.
+  - Merge check: `grep "class ReloginRecovery" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/ReloginRecovery.java | head -1`
+  - Merge check: `grep "private void handleUnexpectedLogout" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1`
+  - Merge check: `grep "default boolean recoverUnexpectedLogout" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -1`
 ### Project Rename
 - **Files:** `settings.gradle.kts`, `runelite-client/build.gradle.kts`, `build-number.txt`
 - **What:** Renames project to `microbot_afss0` and shaded jar artifact to `microbot_afss0-<version>.jar` to distinguish from upstream builds.
@@ -540,4 +550,9 @@ grep "getClientThread().invoke(object::getId)" runelite-client/src/main/java/net
 grep "getClientThread().runOnClientThreadOptional" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptNotify.java | head -1
 grep "ASCRIPT_UTIL_PACKAGE_PREFIX" runelite-client/src/test/java/net/runelite/client/plugins/microbot/threadsafety/ClientThreadGuardrailTest.java | head -1
 grep "ascript.util.AScriptClick#isOwnActorAction" runelite-client/src/test/resources/threadsafety/client-thread-guardrail-baseline.txt | head -1
+# aScript unexpected-logout recovery (2026-11-01)
+grep "class ReloginRecovery" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/ReloginRecovery.java | head -1
+grep "private void handleUnexpectedLogout" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
+grep "default boolean recoverUnexpectedLogout" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -1
+grep "LoginLockout.getInstance()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
 ```
