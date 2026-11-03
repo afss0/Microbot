@@ -324,6 +324,9 @@ public class Rs2Walker {
             new WorldPoint(3267, 3228, 0),
             new WorldPoint(3268, 3227, 0),
             new WorldPoint(3268, 3228, 0));
+    static final Set<Integer> GUIDOR_GATE_OBJECT_IDS = Set.of(
+            ObjectID.GUIDORGATELCLOSED,
+            ObjectID.GUIDORGATERCLOSED);
 
     /**
      * Max Chebyshev "radius" for Quetzal / near-destination checks — guards use {@code distanceTo2D &lt; OFFSET}.
@@ -351,6 +354,7 @@ public class Rs2Walker {
     static final int POST_HANDLE_OBJECT_LANDING_WAIT_MS = 5_000;
     static final int POST_HANDLE_OBJECT_FAILED_SETTLE_MS = 800;
     static final int AL_KHARID_TOLL_INTERACTION_START_WAIT_MS = 2_500;
+    static final int GUIDOR_GATE_SEARCH_WAIT_MS = 12_000;
 
     /** Teleport “already near destination” skip in path loop — same semantics as prior {@code distanceTo2D &lt; 3}. */
     static final int TELEPORT_NEAR_SKIP_CHEBYSHEV = 3;
@@ -1187,6 +1191,10 @@ public class Rs2Walker {
      * on {@link java.util.concurrent.locks.ReentrantLock#lockInterruptibly()} for the full teleport timeout.
      * <p>No-op release path when the current thread does not hold the lock (e.g. calibration daemon).
      */
+    public static boolean isWalkingOnCurrentThread() {
+        return walkerLock.isHeldByCurrentThread();
+    }
+
     public static void runWithWalkerLockReleased(Runnable action)
     {
         if (action == null)
@@ -3056,7 +3064,7 @@ public class Rs2Walker {
                         }, 1200);
                         WorldPoint afterClickWait = Rs2Player.getWorldLocation();
                         boolean routeRetryClicked = false;
-                        if (afterClickWait != null && afterClickWait.equals(before) && !Rs2Player.isMoving()) {
+                        if (routeClickStillUnanswered(target, before)) {
                             WorldPoint routeRetryTarget = clickMiniMapOrFallback(rawPath, b, before,
                                     MINIMAP_REACH_EUCLIDEAN - 1, false, rawAnchorIndex);
                             if (routeRetryTarget != null) {
@@ -3870,6 +3878,15 @@ public class Rs2Walker {
         routeState.idleNudgeLastObservedLocation = playerLoc;
         routeState.stuckCount = 0;
         return true;
+    }
+
+    static boolean routeClickStillUnanswered(WorldPoint cancelGoal, WorldPoint before) {
+        if (before == null || !before.equals(Rs2Player.getWorldLocation()) || Rs2Player.isMoving()) {
+            return false;
+        }
+        waitForMovementStartAfterRecovery(cancelGoal, before, null, null, -1);
+        return !isWalkCancelled(cancelGoal)
+                && before.equals(Rs2Player.getWorldLocation()) && !Rs2Player.isMoving();
     }
 
     static boolean proximityWaitSatisfied(WorldPoint now,

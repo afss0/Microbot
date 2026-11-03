@@ -633,3 +633,49 @@ return location != null && location.getY() >= 6400;
 **Where this applies:** `Rs2Player.isInCave` and any helper that reads `Rs2Player.getWorldLocation()` during a walk or transport handoff.
 
 **Defensive check:** Mock `Rs2PlayerStateCache.getLocalPlayerPosition()` to return `null` and assert the predicate is `false`, as in `Rs2PlayerIsInCaveTest`.
+
+## 32. Click a dropdown row on the row, not with a placeholder rectangle
+
+`Microbot.doInvoke(entry, new Rectangle(1, 1))` clicks wherever the pointer already rests. After a dropdown toggle that is the toggle itself, so the "row" click toggles the list shut before `Select` lands. Click inside the row's visible bounds, clipped to the scrolling list, and give up when there is no visible list.
+
+**Why this matters:** The Grouping (minigame) teleport opened the dropdown, clicked the toggle again instead of the destination row, and retried every walker pass. The repeated dropdown clicking was noticed in the field. None of those clicks were recorded as transport interactions, so the edge never struck out.
+
+**Pattern to follow:**
+
+```java
+// Wrong: clicks the resting pointer, which is the toggle just clicked.
+Microbot.doInvoke(destinationMenuEntry, new Rectangle(1, 1));
+
+// Right: click the visible part of the row (bounds read on the client thread) and record the interaction.
+Rectangle rowArea = Microbot.getClientThread().runOnClientThreadOptional(
+        () -> visibleRowArea(destinationWidget.getBounds(), minigameWidgetParent.getBounds())).orElse(null);
+if (rowArea == null) return false;
+Microbot.doInvoke(destinationMenuEntry, rowArea);
+noteTransportInteraction();
+```
+
+Teleports have no catalog origin, so key their refusals with `Rs2WalkerTransports.refusalOrigin` (the route step's start tile). Otherwise the verdict never reads "still at origin" and the strike is never recorded.
+
+**Where this applies:** `Rs2WalkerTransports.handleMinigameTeleport`, `Rs2WalkerTransports.dispatchSelectedTransport` and any widget-list selection dispatched through `Microbot.doInvoke`.
+
+**Defensive check:** `Rs2WalkerTransportsMinigameTeleportTest` covers a row inside the list, a row scrolled out of view and a missing list.
+
+## 33. Price teleport hops the same way in bank-vs-direct as in the pathfinder
+
+The pathfinder charges a teleport edge `distanceBeforeUsingTeleport + duration`, plus `CollisionMap.MINIGAME_TELEPORT_PENALTY` for a Grouping teleport. The bank-vs-direct comparison counts path tiles, where a teleport is a single step. Add the same price through `CollisionMap.teleportCost`, or the comparison sees a teleport as one tile while the search sees forty.
+
+**Why this matters:** Minigame teleports were priced at their raw duration and won nearly every comparison, so the walker reached for Grouping, which has a 20-minute cooldown and needs several interface clicks, even on short trips.
+
+**Where this applies:** `CollisionMap` teleport neighbours, `Rs2WalkerBankingPlanner.transportHopCost` and every route-distance comparison that mixes walking tiles and transports.
+
+**Defensive check:** `BankedTransportItemPlanningTest.minigameTeleportIsPricedForItsCooldownNotAsOneTile` and `itemTeleportCostsItsDurationAndObjectTransportsStayOneStep`.
+
+## 34. Walk can't-reach recovery to the template tile, off the client thread
+
+In an instance (player-owned house, Tempoross), `TileObject.getWorldLocation()` and `Actor.getWorldLocation()` return raw instance coordinates such as `(12630, 12568)`, while `Rs2Player.getWorldLocation()` and the walker work in template coordinates. Pass the recovery target through `CantReachTargetRecovery.templateLocation` before walking. `CantReachTargetRecovery.shouldStart` returns `false` on the client thread, because the walker refuses to run there. Count attempts with `CantReachTargetRecovery.countAttempt()` and read them with `CantReachTargetRecovery.retries()`, which drops attempts older than `RETRY_WINDOW_MS`.
+
+**Why this matters:** In 2.6.43 and 2.6.44, Construction (larder hotspot 15403) and Tempoross (object 41010) players saw the "Your bot tried to interact with an object" box and had all scripts paused. In the house every recovery walk targeted a raw instance tile and the walker logged `UNREACHABLE cause=no-walkable-path`. At Tempoross the click ran on the client thread and four attempts were used up in one second. The house count also carried over 47 minutes.
+
+**Where this applies:** `Rs2TileObjectModel.click`, `Rs2NpcModel.click`, `Rs2Npc.interact` and any helper that starts a can't-reach recovery walk.
+
+**Defensive check:** `Rs2TileObjectModelClickRecoveryTest.walksToTheTemplateTileInAnInstance`, `clicksWithoutWalkingOrCountingOnTheClientThread` and `CantReachTargetRecoveryTest.staleAttemptsDoNotCarryOverToALaterRecovery`.
