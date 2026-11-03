@@ -28,6 +28,7 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.RuneLite;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ClientShutdown;
+import net.runelite.client.plugins.microbot.ForkSwitches;
 import net.runelite.client.plugins.microbot.alerts.DeviceLinkFlow;
 import net.runelite.client.plugins.microbot.recovery.StartupRecovery;
 import net.runelite.client.ui.ClientToolbar;
@@ -272,7 +273,8 @@ public class MicrobotTour
 		frame = owner;
 		countAutoShow = auto;
 		sequence = new MicrobotTourSequence(Arrays.asList(MicrobotTourStep.values()),
-			step -> (step != MicrobotTourStep.HELP && step != MicrobotTourStep.REPORT_PROBLEM) || helpMenu.getButton() != null);
+			step -> ((step != MicrobotTourStep.HELP && step != MicrobotTourStep.REPORT_PROBLEM) || helpMenu.getButton() != null)
+				&& (step != MicrobotTourStep.MICROBOT_CLOUD || ForkSwitches.cloudUiEnabled()));
 		callout = new MicrobotTourCallout(frame, this::end, this::neverAgain, this::back, this::next, () -> userPlaced = true);
 		spotlight = new MicrobotTourSpotlight(frame.getLayeredPane());
 		frame.addWindowListener(windowListener);
