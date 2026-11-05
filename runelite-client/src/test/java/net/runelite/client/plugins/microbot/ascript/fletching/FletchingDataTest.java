@@ -137,6 +137,24 @@ public class FletchingDataTest {
         assertEquals(arrow + " FletchingAction level", action.getLevel(), arrow.getLevelRequirement());
     }
 
+    // ── materials per production action ──────────────────────
+
+    /**
+     * Feathering produces a set per action, and the module derives both the batch target
+     * ({@code requested actions × materials per action}) and the bank threshold from these
+     * numbers. A silent change does not fail a build — it makes a finished batch look stalled
+     * or sends the script to the bank after every single action — so they are pinned against
+     * the wiki recipes: darts 10 tips + 10 feathers, bolts 10 unfinished + 10 feathers,
+     * arrows 15 headless + 15 tips, gem-tipped bolts 10 bolts + 10 tips.
+     */
+    @Test
+    public void materialsPerActionMatchTheGameRecipes() {
+        assertEquals(10, FletchingDartType.MATERIALS_PER_ACTION);
+        assertEquals(10, FletchingBoltType.MATERIALS_PER_ACTION);
+        assertEquals(15, FletchingArrowType.MATERIALS_PER_ACTION);
+        assertEquals(10, FletchingBoltTipType.MATERIALS_PER_ACTION);
+    }
+
     // ── bows ─────────────────────────────────────────────────
 
     @Test
