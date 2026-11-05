@@ -52,6 +52,15 @@ public final class FletchingProductionHelper {
     private static String lastPickedQuantity;
 
     /**
+     * Drops the record of the last quantity clicked, so the next prompt is clicked again. A batch
+     * that ended short of its target is the signal that the prompt did not keep the selection we
+     * assumed — skipping the click forever after that would pin the run to the default quantity.
+     */
+    public static void forgetPickedQuantity() {
+        lastPickedQuantity = null;
+    }
+
+    /**
      * Clicks the widget with the given action in the production interface.
      * All widget access happens on the client thread; only the resolved bounds cross back to
      * the caller for the virtual-mouse click. Returns true if the click was dispatched.
@@ -135,6 +144,11 @@ public final class FletchingProductionHelper {
      * That union is what makes the choice deterministic: depending on when the old code sampled,
      * "10" was still actionless while "1" and "5" were already live, so it clicked whichever was
      * ready and the quantity flipped batch after batch.
+     * <p>
+     * The prompt keeps the quantity it was last given, so once the largest has been clicked the
+     * click is skipped on later batches — repeating it only risks a jittered landing on a
+     * neighbouring button. {@link #forgetPickedQuantity()} re-arms it when a batch ends short of
+     * its target, which is the signal that the selection did not stick.
      *
      * @return the clicked option ({@code "10"}, {@code "All"}, ...), or {@code null} when the
      *         prompt is gone or exposes no quantity at all (the previous default stays selected)
@@ -168,15 +182,20 @@ public final class FletchingProductionHelper {
                     describeAvailableButtons());
             return null;
         }
+
+        // The prompt keeps the quantity it was last given, so once the largest has been asked for
+        // it is still selected on the next batch: clicking again only risks a jittered landing on
+        // a neighbouring button. The record is dropped by forgetPickedQuantity() when a batch ends
+        // short of its target, i.e. when the prompt did not actually keep the selection.
+        if (largest.equals(lastPickedQuantity)) {
+            log.debug("[FletchingProduction] Quantity {} already selected — click skipped", largest);
+            return largest;
+        }
         if (!clickWidget(options.get(largest), "quantity '" + largest + "'")) {
             return null;
         }
-        if (largest.equals(lastPickedQuantity)) {
-            log.debug("[FletchingProduction] Quantity {} selected", largest);
-        } else {
-            lastPickedQuantity = largest;
-            log.info("[FletchingProduction] Quantity {} selected — largest the prompt offers", largest);
-        }
+        lastPickedQuantity = largest;
+        log.info("[FletchingProduction] Quantity {} selected — largest the prompt offers", largest);
         return largest;
     }
 
