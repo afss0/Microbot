@@ -237,6 +237,14 @@ Used during merges to verify nothing is lost.
   - Spellbook entry is `218/13` (gameval `MagicSpellbook.XBOWS_ENCHANT`, action "View") — the Hub's `218.10` no longer exists. The row is resolved by item id first, then by the enchanted label; ids are the legacy `ItemID` pairs (the gameval `..._ENCHANTED_2.._5` copies are not the tradeable item).
   - Banking mirrors Jewel Enchant: cosmic locked anchor, staff first (worn > held > bank, worn with the bank closed), contained-inventory sweep. Staff mode is an optimisation — no usable staff anywhere means every rune is carried, never a stop.
   - Merge check: `grep "STALL_MS" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/boltenchant/BoltEnchantScript.java | head -1`
+- **Fletching quantity selection + batch completion (2026-11-05):**
+  - The production prompt is asked for a quantity it actually offers, largest actionable first: `FletchingProductionHelper.clickQuantityOption("10", "5", "1", "All")` walks the SKILLMULTI buttons and clicks the first real one. The bolt prompt offers 1 / 5 / 10 and no "All" button at all, so the old `Rs2Widget.enableQuantityOption("All")` failed on **every** batch (110 INFO lines in 55 min), left whatever default the last player had selected, and the module silently depended on that number.
+  - Only interactive widgets count as quantity buttons: the non-clickable "All" label some prompts draw is skipped, so a dispatched click is never mistaken for a known batch size. When none of the preferences exists, the offered buttons are logged at debug — the per-batch INFO spam is gone.
+  - The clicked option's action count is carried into the batch, which then completes when `actions × materialsPerAction` have been consumed instead of waiting out the 12 s stall window. That window used to fire after every batch (109 × `Attempt failed (1/3): batch stalled with 25800 materials left` in 55 min) and the next batch's first progress reset the counter, so the warning could never reach the 3-strike stop.
+  - A batch whose prompt closed and whose character is idle is treated as a finished repeat (self-healing, and the next tick re-starts it), but only when it actually consumed material — a batch that produced nothing still spends a failure life.
+  - Materials per action are the real recipe ratios (darts 10, bolts 10, arrows 15 — the code said 1 for all three) and now drive both the batch target and the bank threshold, so a sub-action remainder (say 5 unfinished bolts) returns to the bank instead of failing the start three times and stopping the script.
+  - Merge check: `grep "clickQuantityOption" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingProductionHelper.java | head -1`
+  - Merge check: `grep "batchRequestedActions" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingScript.java | head -1`
 - **Firemaking module (Oct 2026):**
   - New `FIREMAKING` module — the robust replacement for the hub GEFiremaker pattern: no persistent "burning" flag (the hub's guard could deadlock forever when the fire died in the unprotected engage window or the loop idled through a burn's end); state is re-derived from the log count + a 20 s stall window every tick, so pause/resume, fire death and restarts self-heal.
   - Fires are found by object id only (`49927` → `26185`, radius 12, `...OnClientThread()`): scenery fires that merely look like fires (e.g. Barbarian Village, id 43475) are not convertible. No fire in range ⇒ light own at the configured spot (tinderbox locked tool slot, numeric-id withdraw) — the tend then creates/converts the campfire.
@@ -555,4 +563,8 @@ grep "class ReloginRecovery" runelite-client/src/main/java/net/runelite/client/p
 grep "private void handleUnexpectedLogout" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
 grep "default boolean recoverUnexpectedLogout" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScriptConfig.java | head -1
 grep "LoginLockout.getInstance()" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/AScript.java | head -1
+# aScript fletching quantity selection + batch completion (2026-11-05)
+grep "clickQuantityOption" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingProductionHelper.java | head -1
+grep "batchRequestedActions" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingScript.java | head -1
+grep "MATERIALS_PER_ACTION = 15" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/fletching/FletchingArrowType.java | head -1
 ```
