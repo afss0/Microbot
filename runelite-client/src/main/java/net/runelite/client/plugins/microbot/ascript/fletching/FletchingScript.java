@@ -966,14 +966,22 @@ public class FletchingScript implements AModule {
             // towards the stop budget.
             if (!Rs2Widget.isProductionWidgetOpen() && !Rs2Player.isAnimating()) {
                 if (consumed > 0) {
+                    if (batchRequestedActions > 0
+                            && consumed < batchRequestedActions * batchMaterialPerAction) {
+                        // Ended short of what was asked: the prompt did not keep our quantity, so
+                        // the next batch clicks it again instead of skipping a needed click.
+                        FletchingProductionHelper.forgetPickedQuantity();
+                    }
                     finishBatch(config, "repeat ended with " + now + " " + materialLabel() + " left");
                 } else {
                     clearBatch();
+                    FletchingProductionHelper.forgetPickedQuantity();
                     registerFailure("batch produced nothing (" + now + " " + materialLabel() + " left)");
                 }
                 return;
             }
             clearBatch();
+            FletchingProductionHelper.forgetPickedQuantity();
             registerFailure("batch stalled with " + now + " " + materialLabel() + " left");
             return;
         }
