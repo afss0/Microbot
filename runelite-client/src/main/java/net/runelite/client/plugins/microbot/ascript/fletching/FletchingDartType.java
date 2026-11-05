@@ -26,6 +26,13 @@ public enum FletchingDartType {
     DRAGON("Dragon dart", "Dragon dart tip", ItemID.DRAGON_DART_TIP, ItemID.DRAGON_DART, 95),
     AMETHYST("Amethyst dart", "Amethyst dart tip", ItemID.AMETHYST_DART_TIP, ItemID.AMETHYST_DART, 90);
 
+    /**
+     * Dart tips (and feathers) consumed per production action. Feathering dart tips makes a
+     * set of ten darts per action, so a batch of N actions needs {@code 10 * N} tips. Pinned by
+     * {@code FletchingDataTest}: the batch target and the bank threshold both depend on it.
+     */
+    public static final int MATERIALS_PER_ACTION = 10;
+
     private final String label;
     private final String materialName;
     private final int materialId;
