@@ -90,22 +90,27 @@ public final class GameReadinessMonitor {
     public static final long STALL_MS = 10_000;
 
     /**
-     * How long the ready conditions must hold before the loop may dispatch.
-     * <p>
-     * The gate answers "logged in, player, scene base, client loop advancing" within one tick of
-     * the world appearing, but the interfaces a module clicks are built and laid out a moment
-     * later: a tick that fires that instant finds inventory slots with no bounds yet and spends a
-     * failure life on it (live 2026-11-05, first tick after login:
-     * {@code no inventory bounds for the item to use (slot 19)} → {@code could not start
-     * BOLT_TIPS batch}). Settling here — once, for the whole loop — costs the automation a few
-     * seconds after any load instead of every module carrying its own guard.
+     * Settle window after a <b>scene reload</b> (teleport, region rebuild): the world is up, the
+     * interfaces are being laid out again.
      */
     public static final long SETTLE_MS = 3_000;
+
+    /**
+     * Settle window after a <b>login</b>. Longer on purpose: {@code LOGGED_IN} with a loaded
+     * player and scene is already true while the client still sits on the welcome screen, and the
+     * game only accepts menu input seconds after the play button is pressed. Live 2026-11-05,
+     * first tick after a relogin at 18:32:48 (welcome screen, play clicked 18:32:54):
+     * {@code the Use row never reached the top of the item menu (slot 18) — not clicking} →
+     * {@code could not start BOLT_TIPS batch}, one failure life spent on a healthy script.
+     */
+    public static final long LOGIN_SETTLE_MS = 12_000;
 
     private int lastCycle = Integer.MIN_VALUE;
     private long lastAdvanceAt;
     /** When the ready conditions started holding, or 0 while they do not. */
     private long readySince;
+    /** Window that applies to the current hold: the login one until a scene-only reload happens. */
+    private long settleWindow = LOGIN_SETTLE_MS;
 
     /**
      * Folds one sample into the readiness verdict.
@@ -115,18 +120,18 @@ public final class GameReadinessMonitor {
      */
     public Readiness update(Sample sample, long nowMs) {
         if (!sample.loggedIn()) {
-            reset();
+            reset(LOGIN_SETTLE_MS);
             return Readiness.NOT_LOGGED_IN;
         }
         if (!sample.playerLoaded()) {
             // While the client is logging in / building the world, cycle continuity from before
             // the transition means nothing: carrying it over would report a stall on the first
             // sample after login.
-            reset();
+            reset(LOGIN_SETTLE_MS);
             return Readiness.PLAYER_NOT_LOADED;
         }
         if (!sample.regionLoaded()) {
-            reset();
+            reset(SETTLE_MS);
             return Readiness.REGION_NOT_LOADED;
         }
 
@@ -143,16 +148,21 @@ public final class GameReadinessMonitor {
         if (readySince == 0) {
             readySince = nowMs;
         }
-        if (nowMs - readySince < SETTLE_MS) {
+        if (nowMs - readySince < settleWindow) {
             return Readiness.SETTLING;
         }
         return Readiness.READY;
     }
 
-    /** Clears all cross-tick state: the stall clock and the settle window. */
+    /** Clears the cross-tick clocks, keeping the settle window that is currently in effect. */
     public void reset() {
+        reset(settleWindow);
+    }
+
+    private void reset(long window) {
         lastCycle = Integer.MIN_VALUE;
         lastAdvanceAt = 0;
         readySince = 0;
+        settleWindow = window;
     }
 }
