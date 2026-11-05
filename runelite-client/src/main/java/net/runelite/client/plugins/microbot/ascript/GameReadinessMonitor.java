@@ -25,6 +25,8 @@ public final class GameReadinessMonitor {
         READY("ready"),
         /** Logged in with the world loaded, but the interfaces are still being laid out. */
         SETTLING("still settling after load"),
+        /** Logged in with the world loaded, but the "click here to play" screen is still up. */
+        WELCOME_SCREEN("waiting on the welcome screen"),
         NOT_LOGGED_IN("not logged in"),
         PLAYER_NOT_LOADED("local player not loaded"),
         REGION_NOT_LOADED("region not loaded"),
@@ -50,18 +52,22 @@ public final class GameReadinessMonitor {
         private final boolean loggedIn;
         private final boolean playerLoaded;
         private final boolean regionLoaded;
+        private final boolean welcomeScreenOpen;
         private final int gameCycle;
 
         /**
-         * @param loggedIn     game state is {@code LOGGED_IN} ({@code Microbot.isLoggedIn()})
-         * @param playerLoaded the local player model exists
-         * @param regionLoaded the top-level scene has a real base coordinate
-         * @param gameCycle    the client game cycle ({@code Client.getGameCycle()}, 20 ms unit)
+         * @param loggedIn          game state is {@code LOGGED_IN} ({@code Microbot.isLoggedIn()})
+         * @param playerLoaded      the local player model exists
+         * @param regionLoaded      the top-level scene has a real base coordinate
+         * @param welcomeScreenOpen the "click here to play" screen is still visible
+         * @param gameCycle         the client game cycle ({@code Client.getGameCycle()}, 20 ms unit)
          */
-        public Sample(boolean loggedIn, boolean playerLoaded, boolean regionLoaded, int gameCycle) {
+        public Sample(boolean loggedIn, boolean playerLoaded, boolean regionLoaded,
+                      boolean welcomeScreenOpen, int gameCycle) {
             this.loggedIn = loggedIn;
             this.playerLoaded = playerLoaded;
             this.regionLoaded = regionLoaded;
+            this.welcomeScreenOpen = welcomeScreenOpen;
             this.gameCycle = gameCycle;
         }
 
@@ -75,6 +81,10 @@ public final class GameReadinessMonitor {
 
         public boolean regionLoaded() {
             return regionLoaded;
+        }
+
+        public boolean welcomeScreenOpen() {
+            return welcomeScreenOpen;
         }
 
         public int gameCycle() {
@@ -133,6 +143,15 @@ public final class GameReadinessMonitor {
         if (!sample.regionLoaded()) {
             reset(SETTLE_MS);
             return Readiness.REGION_NOT_LOADED;
+        }
+        if (sample.welcomeScreenOpen()) {
+            // LOGGED_IN with a loaded player and scene is already true while the client still
+            // shows "click here to play": the game only accepts menu input after that closes, and
+            // a tick that fires before it spends a failure life on a healthy script (live
+            // 2026-11-05 19:02:51 "game ready" with the play button clicked at 19:02:57 → the Use
+            // row never reached the top at 19:03:00).
+            reset(LOGIN_SETTLE_MS);
+            return Readiness.WELCOME_SCREEN;
         }
 
         if (sample.gameCycle() != lastCycle) {
