@@ -6,20 +6,18 @@ import static org.junit.Assert.assertEquals;
 
 /**
  * Truth table for the game-readiness gate: the orchestrator must not dispatch on a client that is
- * still loading, must let the world SETTLE after a load before the first click, and a frozen client
- * game cycle must surface as its own verdict (a crashed client still reports {@code LOGGED_IN} with
- * a stale player, so server ticks are not a liveness signal).
- * <p>
- * Two settle windows are pinned here: a login keeps the client on the welcome screen for seconds
- * after {@code LOGGED_IN} is already true (so it needs the longer window), while a scene reload
- * (teleport) only has to lay the interfaces out again.
+ * still loading, must let the world SETTLE after a load before the first click, and must wait out
+ * the welcome ("click here to play") screen — {@code LOGGED_IN} with a loaded player and scene is
+ * already true while that screen is up, and the game only accepts menu input after it closes.
+ * A frozen client game cycle must surface as its own verdict (a crashed client still reports
+ * {@code LOGGED_IN} with a stale player, so server ticks are not a liveness signal).
  */
 public class GameReadinessMonitorTest {
 
     private static final long T0 = 1_000_000;
 
     private static GameReadinessMonitor.Sample ready(int cycle) {
-        return new GameReadinessMonitor.Sample(true, true, true, cycle);
+        return new GameReadinessMonitor.Sample(true, true, true, false, cycle);
     }
 
     @Test
@@ -27,7 +25,7 @@ public class GameReadinessMonitorTest {
         GameReadinessMonitor monitor = new GameReadinessMonitor();
 
         GameReadinessMonitor.Readiness verdict = monitor.update(
-                new GameReadinessMonitor.Sample(false, false, false, -1), T0);
+                new GameReadinessMonitor.Sample(false, false, false, false, -1), T0);
 
         assertEquals(GameReadinessMonitor.Readiness.NOT_LOGGED_IN, verdict);
     }
@@ -37,7 +35,7 @@ public class GameReadinessMonitorTest {
         GameReadinessMonitor monitor = new GameReadinessMonitor();
 
         GameReadinessMonitor.Readiness verdict = monitor.update(
-                new GameReadinessMonitor.Sample(true, false, true, 10), T0);
+                new GameReadinessMonitor.Sample(true, false, true, false, 10), T0);
 
         assertEquals(GameReadinessMonitor.Readiness.PLAYER_NOT_LOADED, verdict);
     }
@@ -47,7 +45,7 @@ public class GameReadinessMonitorTest {
         GameReadinessMonitor monitor = new GameReadinessMonitor();
 
         assertEquals(GameReadinessMonitor.Readiness.REGION_NOT_LOADED,
-                monitor.update(new GameReadinessMonitor.Sample(true, true, false, 10), T0));
+                monitor.update(new GameReadinessMonitor.Sample(true, true, false, false, 10), T0));
         long sceneBack = T0 + 600;
         assertEquals(GameReadinessMonitor.Readiness.SETTLING, monitor.update(ready(11), sceneBack));
         assertEquals(GameReadinessMonitor.Readiness.SETTLING,
@@ -68,6 +66,25 @@ public class GameReadinessMonitorTest {
     }
 
     @Test
+    public void welcomeScreenIsNotReadyAndRestartsTheSettle() {
+        GameReadinessMonitor monitor = new GameReadinessMonitor();
+        monitor.update(ready(10), T0);
+        long loggedIn = T0 + GameReadinessMonitor.LOGIN_SETTLE_MS;
+
+        // The play screen is still up: everything the gate normally looks at is already true, but
+        // the client is not accepting input yet.
+        assertEquals(GameReadinessMonitor.Readiness.WELCOME_SCREEN,
+                monitor.update(new GameReadinessMonitor.Sample(true, true, true, true, 11), loggedIn));
+
+        long playClicked = loggedIn + 600;
+        assertEquals(GameReadinessMonitor.Readiness.SETTLING, monitor.update(ready(12), playClicked));
+        assertEquals(GameReadinessMonitor.Readiness.SETTLING,
+                monitor.update(ready(13), playClicked + GameReadinessMonitor.LOGIN_SETTLE_MS - 1));
+        assertEquals(GameReadinessMonitor.Readiness.READY,
+                monitor.update(ready(14), playClicked + GameReadinessMonitor.LOGIN_SETTLE_MS));
+    }
+
+    @Test
     public void sceneReloadAfterASettledLoginUsesTheShortWindow() {
         GameReadinessMonitor monitor = new GameReadinessMonitor();
         monitor.update(ready(10), T0);
@@ -77,7 +94,7 @@ public class GameReadinessMonitorTest {
         // Teleport: the scene is rebuilt but no welcome screen is involved, so the short window
         // applies — a hop must not cost another LOGIN_SETTLE_MS.
         assertEquals(GameReadinessMonitor.Readiness.REGION_NOT_LOADED,
-                monitor.update(new GameReadinessMonitor.Sample(true, true, false, 20), loggedIn + 600));
+                monitor.update(new GameReadinessMonitor.Sample(true, true, false, false, 20), loggedIn + 600));
         long sceneBack = loggedIn + 1_200;
         assertEquals(GameReadinessMonitor.Readiness.SETTLING, monitor.update(ready(21), sceneBack));
         assertEquals(GameReadinessMonitor.Readiness.READY,
@@ -119,7 +136,7 @@ public class GameReadinessMonitorTest {
         // must not be judged against a clock from before the transition, and it must settle again
         // before the loop dispatches.
         assertEquals(GameReadinessMonitor.Readiness.PLAYER_NOT_LOADED,
-                monitor.update(new GameReadinessMonitor.Sample(true, false, false, 10), loggedIn + 600));
+                monitor.update(new GameReadinessMonitor.Sample(true, false, false, false, 10), loggedIn + 600));
         long afterLogin = loggedIn + 1_200;
         assertEquals(GameReadinessMonitor.Readiness.SETTLING, monitor.update(ready(10), afterLogin));
         assertEquals(GameReadinessMonitor.Readiness.READY,
