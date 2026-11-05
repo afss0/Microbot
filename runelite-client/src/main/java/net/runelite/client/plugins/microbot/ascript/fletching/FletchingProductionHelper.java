@@ -5,13 +5,16 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
+import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 
 import java.awt.Rectangle;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 
 /**
@@ -35,6 +38,18 @@ public final class FletchingProductionHelper {
 
     private FletchingProductionHelper() {
     }
+
+    /**
+     * Window in which the prompt's quantity options are collected before the largest is picked.
+     * The button {@code actions[]} arrive asynchronously after the interface opens, so one
+     * snapshot would pick whatever is ready at that instant and the quantity would change from
+     * batch to batch.
+     */
+    private static final long QUANTITY_SETTLE_MS = 800;
+    private static final int QUANTITY_POLL_MS = 100;
+
+    /** Last quantity clicked, across prompts: a change is worth an INFO line, the steady state is not. */
+    private static String lastPickedQuantity;
 
     /**
      * Clicks the widget with the given action in the production interface.
@@ -107,46 +122,171 @@ public final class FletchingProductionHelper {
     }
 
     /**
-     * Clicks the first quantity button of {@code preferences} that the open prompt actually
-     * offers. The prompt decides which quantities exist (the bolt prompt has 1 / 5 / 10 only —
-     * there is no "All" button), so a caller must select a real option instead of relying on
-     * the previous default, which is whatever the last player left selected.
+     * Clicks the <b>largest</b> quantity the open prompt offers, waiting for its options to settle
+     * first.
      * <p>
-     * Only interactive widgets count: a widget has to expose a click action, so the
-     * non-interactive "All" label some prompts draw is never mistaken for a button (clicking it
-     * would leave the old quantity selected while the caller believed the batch size was known).
-     * A missing preference is the normal case, so it is logged at debug, never at info.
+     * Two signals are collected over {@link #QUANTITY_SETTLE_MS} and unioned by option:
+     * <ul>
+     *   <li>the button's own {@code actions[]} — the real button (a product row carries an action
+     *       such as "Make sets:", so its subtree is skipped entirely);</li>
+     *   <li>the button's label text ("10" on a TEXT child), which is present from the first render
+     *       and survives the window in which the action list is still empty.</li>
+     * </ul>
+     * That union is what makes the choice deterministic: depending on when the old code sampled,
+     * "10" was still actionless while "1" and "5" were already live, so it clicked whichever was
+     * ready and the quantity flipped batch after batch.
      *
-     * @return the option that was clicked ({@code "All"}, {@code "10"}, ...), or {@code null}
-     *         when the prompt offers none of the preferences and the previous default stays in
-     *         effect
+     * @return the clicked option ({@code "10"}, {@code "All"}, ...), or {@code null} when the
+     *         prompt is gone or exposes no quantity at all (the previous default stays selected)
      */
-    public static String clickQuantityOption(String... preferences) {
-        if (preferences == null || preferences.length == 0 || !Rs2Widget.isProductionWidgetOpen()) {
+    public static String clickLargestQuantity() {
+        if (!Rs2Widget.isProductionWidgetOpen()) {
             return null;
         }
-        AtomicInteger targetId = new AtomicInteger(-1);
-        String clicked = Microbot.getClientThread().runOnClientThreadOptional(() -> {
-            Widget mainWidget = Microbot.getClient().getWidget(InterfaceID.SKILLMULTI, 0);
-            if (mainWidget == null || mainWidget.isHidden()) {
+        Map<String, Integer> options = new LinkedHashMap<>();
+        long deadline = System.currentTimeMillis() + QUANTITY_SETTLE_MS;
+        while (true) {
+            Microbot.getClientThread().runOnClientThreadOptional(() -> {
+                Widget mainWidget = Microbot.getClient().getWidget(InterfaceID.SKILLMULTI, 0);
+                if (mainWidget != null && !mainWidget.isHidden()) {
+                    collectQuantityButtons(mainWidget, options);
+                }
+                return null;
+            });
+            if (!Rs2Widget.isProductionWidgetOpen()) {
                 return null;
             }
-            for (String preference : preferences) {
-                Widget target = findWidget(mainWidget, w -> isQuantityButton(w, preference));
-                if (target != null) {
-                    targetId.set(target.getId());
-                    return preference;
-                }
+            if (System.currentTimeMillis() >= deadline) {
+                break;
             }
-            log.debug("[FletchingProduction] Prompt offers none of {}; previous quantity stays selected. Buttons: {}",
-                    Arrays.toString(preferences), describeButtons(mainWidget));
-            return null;
-        }).orElse(null);
+            AScriptSleep.sleepInterruptibly(QUANTITY_POLL_MS);
+        }
 
-        if (clicked == null || targetId.get() < 0) {
+        String largest = largestQuantity(options.keySet());
+        if (largest == null) {
+            log.debug("[FletchingProduction] Prompt exposes no quantity; previous default stays selected. Buttons: {}",
+                    describeAvailableButtons());
             return null;
         }
-        return clickWidget(targetId.get(), "quantity '" + clicked + "'") ? clicked : null;
+        if (!clickWidget(options.get(largest), "quantity '" + largest + "'")) {
+            return null;
+        }
+        if (largest.equals(lastPickedQuantity)) {
+            log.debug("[FletchingProduction] Quantity {} selected", largest);
+        } else {
+            lastPickedQuantity = largest;
+            log.info("[FletchingProduction] Quantity {} selected — largest the prompt offers", largest);
+        }
+        return largest;
+    }
+
+    /**
+     * Pre-order walk that maps every quantity the prompt exposes to the widget that carries it.
+     * A widget whose actions exist but are not a quantity is a product row: it is recorded as
+     * nothing and not descended into, so its "10 x …" label can never be mistaken for a button.
+     */
+    private static void collectQuantityButtons(Widget widget, Map<String, Integer> options) {
+        if (widget == null || widget.isHidden()) {
+            return;
+        }
+        String byAction = quantityToken(widget.getActions());
+        if (byAction != null) {
+            options.put(byAction, widget.getId());
+        } else {
+            String byLabel = quantityToken(widget.getText());
+            if (byLabel != null) {
+                options.putIfAbsent(byLabel, widget.getId());
+            }
+            if (hasAction(widget)) {
+                return;
+            }
+        }
+        Widget[][] groups = {
+                widget.getChildren(), widget.getNestedChildren(),
+                widget.getDynamicChildren(), widget.getStaticChildren()
+        };
+        for (Widget[] group : groups) {
+            if (group == null) continue;
+            for (Widget child : group) {
+                collectQuantityButtons(child, options);
+            }
+        }
+    }
+
+    private static boolean hasAction(Widget widget) {
+        String[] actions = widget.getActions();
+        if (actions == null || actions.length == 0) {
+            return false;
+        }
+        for (String action : actions) {
+            if (action != null && !stripTags(action).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** {@code "10"} / {@code "All"} as a canonical option, or {@code null} for anything else. */
+    private static String quantityToken(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String clean = stripTags(raw);
+        if (clean.isEmpty() || clean.length() > 4) {
+            return null;
+        }
+        if ("All".equalsIgnoreCase(clean)) {
+            return "All";
+        }
+        for (int i = 0; i < clean.length(); i++) {
+            if (!Character.isDigit(clean.charAt(i))) {
+                return null;
+            }
+        }
+        return clean;
+    }
+
+    private static String quantityToken(String[] actions) {
+        if (actions == null) {
+            return null;
+        }
+        for (String action : actions) {
+            String token = quantityToken(action);
+            if (token != null) {
+                return token;
+            }
+        }
+        return null;
+    }
+
+    /** "All" outranks every number; otherwise the numerically larger option wins. */
+    private static String largestQuantity(Set<String> options) {
+        String best = null;
+        for (String option : options) {
+            if (best == null || quantityRank(option) > quantityRank(best)) {
+                best = option;
+            }
+        }
+        return best;
+    }
+
+    private static int quantityRank(String option) {
+        if ("All".equalsIgnoreCase(option)) {
+            return Integer.MAX_VALUE;
+        }
+        int value = 0;
+        for (int i = 0; i < option.length(); i++) {
+            value = value * 10 + (option.charAt(i) - '0');
+        }
+        return value;
+    }
+
+    /** One-shot read of the prompt's clickable widgets for the "no quantity" debug line. */
+    private static String describeAvailableButtons() {
+        return Microbot.getClientThread().runOnClientThreadOptional(() -> {
+            Widget mainWidget = Microbot.getClient().getWidget(InterfaceID.SKILLMULTI, 0);
+            return mainWidget == null ? "no prompt" : describeButtons(mainWidget);
+        }).orElse("unavailable");
     }
 
     /**
@@ -205,27 +345,6 @@ public final class FletchingProductionHelper {
             }
         }
         return false;
-    }
-
-    /**
-     * True when {@code widget} is an interactive quantity button for {@code quantity}: it must
-     * carry a click action (text labels and layout layers carry none) and either that action or
-     * its own text must be exactly the quantity.
-     */
-    private static boolean isQuantityButton(Widget widget, String quantity) {
-        if (widget == null || widget.isHidden()) {
-            return false;
-        }
-        String[] actions = widget.getActions();
-        if (actions == null || actions.length == 0) {
-            return false;
-        }
-        for (String action : actions) {
-            if (action != null && stripTags(action).equalsIgnoreCase(quantity)) {
-                return true;
-            }
-        }
-        return stripTags(widget.getText()).equalsIgnoreCase(quantity);
     }
 
     /** Short, log-friendly view of the prompt's clickable widgets (text + actions). */

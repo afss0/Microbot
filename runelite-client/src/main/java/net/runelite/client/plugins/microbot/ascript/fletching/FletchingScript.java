@@ -50,14 +50,6 @@ public class FletchingScript implements AModule {
     private static final long BATCH_STALL_MS = 12_000;
     /** Confirmation window after the production click before the batch is counted as failed. */
     private static final int BATCH_START_CONFIRM_MS = 5_000;
-    /**
-     * Quantity buttons the production prompts offer, most useful first. The bolt prompt offers
-     * 1 / 5 / 10 and no "All" button at all, so "10" leads: it is the largest actionable quantity
-     * the prompt actually has, and a batch of a known number of actions is what lets the batch
-     * end on a target instead of relying on the prompt's previous default (whatever the last
-     * player selected). "All" stays last as a fallback for prompts that only offer it.
-     */
-    private static final String[] QUANTITY_PREFERENCES = {"10", "5", "1", "All"};
 
     private Phase currentPhase = Phase.NONE;
     private long lastAfkTime;
@@ -850,8 +842,7 @@ public class FletchingScript implements AModule {
             return false;
         }
 
-        // The prompt decides which quantities exist (the bolt prompt offers 1 / 5 / 10 and no
-        // "All" button), so a real option is selected and the number of actions it stands for is
+        // The prompt is asked for its largest quantity, and how many actions that stands for is
         // carried into the batch: the batch then ends on that target instead of idling until the
         // stall window and reporting a false failure.
         int requestedActions = selectQuantity();
@@ -864,14 +855,14 @@ public class FletchingScript implements AModule {
     }
 
     /**
-     * Clicks the best quantity button the open prompt actually offers.
+     * Clicks the largest quantity the open prompt offers, after its options have settled.
      *
      * @return the number of actions the clicked option requests, or {@code 0} for "All" and for
-     *         the "no option matched" case, where the prompt's previous quantity stays selected
+     *         the "no quantity exposed" case, where the prompt's previous quantity stays selected
      *         and the batch has no fixed action count
      */
     private int selectQuantity() {
-        String option = FletchingProductionHelper.clickQuantityOption(QUANTITY_PREFERENCES);
+        String option = FletchingProductionHelper.clickLargestQuantity();
         if (option == null || "All".equalsIgnoreCase(option)) {
             return 0;
         }
