@@ -23,6 +23,8 @@ public final class GameReadinessMonitor {
     /** Why the game is not ready. {@link #description()} is the user-facing wording. */
     public enum Readiness {
         READY("ready"),
+        /** Logged in with the world loaded, but the interfaces are still being laid out. */
+        SETTLING("still settling after load"),
         NOT_LOGGED_IN("not logged in"),
         PLAYER_NOT_LOADED("local player not loaded"),
         REGION_NOT_LOADED("region not loaded"),
@@ -87,14 +89,29 @@ public final class GameReadinessMonitor {
      */
     public static final long STALL_MS = 10_000;
 
+    /**
+     * How long the ready conditions must hold before the loop may dispatch.
+     * <p>
+     * The gate answers "logged in, player, scene base, client loop advancing" within one tick of
+     * the world appearing, but the interfaces a module clicks are built and laid out a moment
+     * later: a tick that fires that instant finds inventory slots with no bounds yet and spends a
+     * failure life on it (live 2026-11-05, first tick after login:
+     * {@code no inventory bounds for the item to use (slot 19)} → {@code could not start
+     * BOLT_TIPS batch}). Settling here — once, for the whole loop — costs the automation a few
+     * seconds after any load instead of every module carrying its own guard.
+     */
+    public static final long SETTLE_MS = 3_000;
+
     private int lastCycle = Integer.MIN_VALUE;
     private long lastAdvanceAt;
+    /** When the ready conditions started holding, or 0 while they do not. */
+    private long readySince;
 
     /**
      * Folds one sample into the readiness verdict.
      *
      * @param sample current client snapshot
-     * @param nowMs  wall clock of the sample, used only for the stall window
+     * @param nowMs  wall clock of the sample, used for the stall and settle windows
      */
     public Readiness update(Sample sample, long nowMs) {
         if (!sample.loggedIn()) {
@@ -122,12 +139,20 @@ public final class GameReadinessMonitor {
             // clears the verdict on its own.
             return Readiness.LOOP_STALLED;
         }
+
+        if (readySince == 0) {
+            readySince = nowMs;
+        }
+        if (nowMs - readySince < SETTLE_MS) {
+            return Readiness.SETTLING;
+        }
         return Readiness.READY;
     }
 
-    /** Clears all cross-tick state, including the stall clock. */
+    /** Clears all cross-tick state: the stall clock and the settle window. */
     public void reset() {
         lastCycle = Integer.MIN_VALUE;
         lastAdvanceAt = 0;
+        readySince = 0;
     }
 }
