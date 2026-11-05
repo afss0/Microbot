@@ -50,6 +50,14 @@ public class FletchingScript implements AModule {
     private static final long BATCH_STALL_MS = 12_000;
     /** Confirmation window after the production click before the batch is counted as failed. */
     private static final int BATCH_START_CONFIRM_MS = 5_000;
+    /**
+     * Quantity buttons the production prompts offer, most useful first. The bolt prompt offers
+     * 1 / 5 / 10 and no "All" button at all, so "10" leads: it is the largest actionable quantity
+     * the prompt actually has, and a batch of a known number of actions is what lets the batch
+     * end on a target instead of relying on the prompt's previous default (whatever the last
+     * player selected). "All" stays last as a fallback for prompts that only offer it.
+     */
+    private static final String[] QUANTITY_PREFERENCES = {"10", "5", "1", "All"};
 
     private Phase currentPhase = Phase.NONE;
     private long lastAfkTime;
@@ -68,6 +76,10 @@ public class FletchingScript implements AModule {
     private long batchLastProgressAt;
     private int batchProductId;
     private String batchProductionAction;
+    /** Actions requested from the prompt; 0 when "All" (or an unknown default) is in effect. */
+    private int batchRequestedActions;
+    /** Material count at batch start: the completion target is measured from here. */
+    private int batchStartCount;
 
     public enum Phase {
         NONE, DARTS, BOLTS, BOLT_TIPS, ARROWS, BOWS, UNSTRUNG_BOWS, ARROW_SHAFTS, STOCKS, SHIELDS
@@ -220,18 +232,28 @@ public class FletchingScript implements AModule {
         return blockingWornRecipeItemIds(config).isEmpty();
     }
 
+    /**
+     * Fewer than one action's worth of a material left in the inventory. The recipe cannot run
+     * with a remainder, but {@link AScriptFletching#hasUnnoted(int)} still reports material
+     * present — so a leftover has to go back to the bank and a full stack come out, instead of
+     * the start failing once per tick.
+     */
+    private boolean belowOneAction(int itemId, int materialsPerAction) {
+        return AScriptFletching.inventoryQuantity(itemId) < materialsPerAction;
+    }
+
     private boolean needsBankDarts(AScriptConfig config) {
         FletchingDartType dart = config.fletchingDartType();
         return dart == null
-                || !AScriptFletching.hasUnnoted(dart.getMaterialId())
-                || !AScriptFletching.hasUnnoted(ItemID.FEATHER);
+                || belowOneAction(dart.getMaterialId(), FletchingDartType.MATERIALS_PER_ACTION)
+                || belowOneAction(ItemID.FEATHER, FletchingDartType.MATERIALS_PER_ACTION);
     }
 
     private boolean needsBankBolts(AScriptConfig config) {
         FletchingBoltType bolt = config.fletchingBoltType();
         return bolt == null
-                || !AScriptFletching.hasUnnoted(bolt.getUnfinishedId())
-                || !AScriptFletching.hasUnnoted(ItemID.FEATHER);
+                || belowOneAction(bolt.getUnfinishedId(), FletchingBoltType.MATERIALS_PER_ACTION)
+                || belowOneAction(ItemID.FEATHER, FletchingBoltType.MATERIALS_PER_ACTION);
     }
 
     private boolean needsBankBoltTips(AScriptConfig config) {
@@ -244,8 +266,8 @@ public class FletchingScript implements AModule {
     private boolean needsBankArrows(AScriptConfig config) {
         FletchingArrowType arrow = config.fletchingArrowType();
         return arrow == null
-                || !AScriptFletching.hasUnnoted(FletchingArrowType.HEADLESS_ARROW_ID)
-                || !AScriptFletching.hasUnnoted(arrow.getTipId());
+                || belowOneAction(FletchingArrowType.HEADLESS_ARROW_ID, FletchingArrowType.MATERIALS_PER_ACTION)
+                || belowOneAction(arrow.getTipId(), FletchingArrowType.MATERIALS_PER_ACTION);
     }
 
     private boolean needsBankBows(AScriptConfig config) {
@@ -285,15 +307,15 @@ public class FletchingScript implements AModule {
     private boolean bankMissingDarts(AScriptConfig config) {
         FletchingDartType dart = config.fletchingDartType();
         if (dart == null) return true;
-        return !AScriptFletching.combinedAtLeast(dart.getMaterialId(), 1)
-                || !AScriptFletching.combinedAtLeast(ItemID.FEATHER, 1);
+        return !AScriptFletching.combinedAtLeast(dart.getMaterialId(), FletchingDartType.MATERIALS_PER_ACTION)
+                || !AScriptFletching.combinedAtLeast(ItemID.FEATHER, FletchingDartType.MATERIALS_PER_ACTION);
     }
 
     private boolean bankMissingBolts(AScriptConfig config) {
         FletchingBoltType bolt = config.fletchingBoltType();
         if (bolt == null) return true;
-        return !AScriptFletching.combinedAtLeast(bolt.getUnfinishedId(), 1)
-                || !AScriptFletching.combinedAtLeast(ItemID.FEATHER, 1);
+        return !AScriptFletching.combinedAtLeast(bolt.getUnfinishedId(), FletchingBoltType.MATERIALS_PER_ACTION)
+                || !AScriptFletching.combinedAtLeast(ItemID.FEATHER, FletchingBoltType.MATERIALS_PER_ACTION);
     }
 
     private boolean bankMissingBoltTips(AScriptConfig config) {
@@ -307,8 +329,9 @@ public class FletchingScript implements AModule {
     private boolean bankMissingArrows(AScriptConfig config) {
         FletchingArrowType arrow = config.fletchingArrowType();
         if (arrow == null) return true;
-        return !AScriptFletching.combinedAtLeast(FletchingArrowType.HEADLESS_ARROW_ID, 1)
-                || !AScriptFletching.combinedAtLeast(arrow.getTipId(), 1);
+        return !AScriptFletching.combinedAtLeast(FletchingArrowType.HEADLESS_ARROW_ID,
+                FletchingArrowType.MATERIALS_PER_ACTION)
+                || !AScriptFletching.combinedAtLeast(arrow.getTipId(), FletchingArrowType.MATERIALS_PER_ACTION);
     }
 
     private boolean bankMissingBows(AScriptConfig config) {
@@ -336,17 +359,19 @@ public class FletchingScript implements AModule {
             case DARTS: {
                 FletchingDartType dart = config.fletchingDartType();
                 if (dart != null) {
-                    addMissing(missing, dart.getMaterialId(), 1, dart.getMaterialName());
+                    addMissing(missing, dart.getMaterialId(), FletchingDartType.MATERIALS_PER_ACTION,
+                            dart.getMaterialName());
                 }
-                addMissing(missing, ItemID.FEATHER, 1, "Feather");
+                addMissing(missing, ItemID.FEATHER, FletchingDartType.MATERIALS_PER_ACTION, "Feather");
                 break;
             }
             case BOLTS: {
                 FletchingBoltType bolt = config.fletchingBoltType();
                 if (bolt != null) {
-                    addMissing(missing, bolt.getUnfinishedId(), 1, bolt.getUnfinishedName());
+                    addMissing(missing, bolt.getUnfinishedId(), FletchingBoltType.MATERIALS_PER_ACTION,
+                            bolt.getUnfinishedName());
                 }
-                addMissing(missing, ItemID.FEATHER, 1, "Feather");
+                addMissing(missing, ItemID.FEATHER, FletchingBoltType.MATERIALS_PER_ACTION, "Feather");
                 break;
             }
             case BOLT_TIPS: {
@@ -359,9 +384,11 @@ public class FletchingScript implements AModule {
             }
             case ARROWS: {
                 FletchingArrowType arrow = config.fletchingArrowType();
-                addMissing(missing, FletchingArrowType.HEADLESS_ARROW_ID, 1, "Headless arrow");
+                addMissing(missing, FletchingArrowType.HEADLESS_ARROW_ID,
+                        FletchingArrowType.MATERIALS_PER_ACTION, "Headless arrow");
                 if (arrow != null) {
-                    addMissing(missing, arrow.getTipId(), 1, arrow.getTipName());
+                    addMissing(missing, arrow.getTipId(), FletchingArrowType.MATERIALS_PER_ACTION,
+                            arrow.getTipName());
                 }
                 break;
             }
@@ -607,7 +634,7 @@ public class FletchingScript implements AModule {
         if (dart == null) return false;
         Microbot.status = "MAKING " + dart.getLabel().toUpperCase();
         return startRecipe(dart.getMaterialId(), ItemID.FEATHER,
-                dart.getMaterialId(), 1, dart.getProductId(), null);
+                dart.getMaterialId(), FletchingDartType.MATERIALS_PER_ACTION, dart.getProductId(), null);
     }
 
     private boolean craftBolts(AScriptConfig config) {
@@ -615,7 +642,7 @@ public class FletchingScript implements AModule {
         if (bolt == null) return false;
         Microbot.status = "MAKING " + bolt.getLabel().toUpperCase();
         return startRecipe(bolt.getUnfinishedId(), ItemID.FEATHER,
-                bolt.getUnfinishedId(), 1, bolt.getFinishedId(), null);
+                bolt.getUnfinishedId(), FletchingBoltType.MATERIALS_PER_ACTION, bolt.getFinishedId(), null);
     }
 
     private boolean craftBoltTips(AScriptConfig config) {
@@ -634,7 +661,8 @@ public class FletchingScript implements AModule {
         if (arrow == null) return false;
         Microbot.status = "MAKING " + arrow.getLabel().toUpperCase();
         return startRecipe(FletchingArrowType.HEADLESS_ARROW_ID, arrow.getTipId(),
-                FletchingArrowType.HEADLESS_ARROW_ID, 1, arrow.getFinishedId(), null);
+                FletchingArrowType.HEADLESS_ARROW_ID, FletchingArrowType.MATERIALS_PER_ACTION,
+                arrow.getFinishedId(), null);
     }
 
     private boolean craftBows(AScriptConfig config) {
@@ -789,12 +817,13 @@ public class FletchingScript implements AModule {
         // been observed in time). Re-select the item recipe then; clicking the product row again is
         // the retry, not using the items behind an open interface.
         if (Rs2Widget.isProductionWidgetOpen()) {
-            Rs2Widget.enableQuantityOption("All");
+            int requestedActions = selectQuantity();
             if (!Rs2Widget.isProductionWidgetOpen()) {
-                return beginBatch(trackedMaterialId, materialPerAction, materialBefore, productId, productionAction);
+                return beginBatch(trackedMaterialId, materialPerAction, materialBefore, productId,
+                        productionAction, requestedActions);
             }
             return clickProductionAndBegin(trackedMaterialId, materialPerAction, materialBefore,
-                    productId, productionAction);
+                    productId, productionAction, requestedActions);
         }
 
         Rs2ItemModel selected = AScriptPick.pick(selectedId);
@@ -821,18 +850,42 @@ public class FletchingScript implements AModule {
             return false;
         }
 
-        // "All" is the quantity option; some single-product prompts start production immediately
-        // when it is clicked, others need the product row afterwards.
-        Rs2Widget.enableQuantityOption("All");
+        // The prompt decides which quantities exist (the bolt prompt offers 1 / 5 / 10 and no
+        // "All" button), so a real option is selected and the number of actions it stands for is
+        // carried into the batch: the batch then ends on that target instead of idling until the
+        // stall window and reporting a false failure.
+        int requestedActions = selectQuantity();
         if (!Rs2Widget.isProductionWidgetOpen()) {
-            return beginBatch(trackedMaterialId, materialPerAction, materialBefore, productId, productionAction);
+            return beginBatch(trackedMaterialId, materialPerAction, materialBefore, productId,
+                    productionAction, requestedActions);
         }
         return clickProductionAndBegin(trackedMaterialId, materialPerAction, materialBefore,
-                productId, productionAction);
+                productId, productionAction, requestedActions);
+    }
+
+    /**
+     * Clicks the best quantity button the open prompt actually offers.
+     *
+     * @return the number of actions the clicked option requests, or {@code 0} for "All" and for
+     *         the "no option matched" case, where the prompt's previous quantity stays selected
+     *         and the batch has no fixed action count
+     */
+    private int selectQuantity() {
+        String option = FletchingProductionHelper.clickQuantityOption(QUANTITY_PREFERENCES);
+        if (option == null || "All".equalsIgnoreCase(option)) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(option);
+        } catch (NumberFormatException unexpected) {
+            log.debug("[Fletching] Quantity option '{}' is not an action count", option);
+            return 0;
+        }
     }
 
     private boolean clickProductionAndBegin(int trackedMaterialId, int materialPerAction,
-                                            int materialBefore, int productId, String productionAction) {
+                                            int materialBefore, int productId, String productionAction,
+                                            int requestedActions) {
         boolean clicked = productionAction != null
                 ? FletchingProductionHelper.clickProductionAction(productionAction)
                 : FletchingProductionHelper.clickProductionProduct(productId);
@@ -842,7 +895,8 @@ public class FletchingScript implements AModule {
             return false;
         }
 
-        if (!beginBatch(trackedMaterialId, materialPerAction, materialBefore, productId, productionAction)) {
+        if (!beginBatch(trackedMaterialId, materialPerAction, materialBefore, productId,
+                productionAction, requestedActions)) {
             return false;
         }
 
@@ -864,12 +918,14 @@ public class FletchingScript implements AModule {
     }
 
     private boolean beginBatch(int materialId, int perAction, int countBefore,
-                               int productId, String productionAction) {
+                               int productId, String productionAction, int requestedActions) {
         if (countBefore < perAction) return false;
         batchInFlight = true;
         batchMaterialId = materialId;
         batchMaterialPerAction = perAction;
         batchMaterialCount = countBefore;
+        batchStartCount = countBefore;
+        batchRequestedActions = requestedActions;
         batchProductId = productId;
         batchProductionAction = productionAction;
         batchLastProgressAt = System.currentTimeMillis();
@@ -879,17 +935,22 @@ public class FletchingScript implements AModule {
     private void continueBatch(AScriptConfig config) {
         int now = AScriptFletching.inventoryQuantity(batchMaterialId);
         long nowMs = System.currentTimeMillis();
+        int consumed = Math.max(0, batchStartCount - now);
 
         if (now < batchMaterialCount) {
             batchMaterialCount = now;
             batchLastProgressAt = nowMs;
             consecutiveCraftFailures = 0;
-            if (now < batchMaterialPerAction) {
-                finishBatch(config);
-            } else {
-                Microbot.status = "FLETCHING — " + now + " " + materialLabel() + " left";
-                AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(400, 900, weatherMultiplier));
-            }
+        }
+
+        // A known quantity ends the repeat by itself: once the requested actions have consumed
+        // their materials the batch is over. Detecting that here (instead of waiting out the
+        // stall window) is what keeps a completed batch from being reported as a stall — the
+        // old path logged one "Attempt failed (1/3)" after every single batch.
+        if (batchRequestedActions > 0
+                && consumed >= batchRequestedActions * batchMaterialPerAction) {
+            finishBatch(config, "batch complete: " + batchRequestedActions + " actions, "
+                    + consumed + " " + materialLabel() + " used");
             return;
         }
 
@@ -908,6 +969,19 @@ public class FletchingScript implements AModule {
                     return;
                 }
             }
+            // Prompt closed and the character idle: the repeat ended on its own (materials ran
+            // out mid-batch, or the request was cut short). Ending the batch is the self-healing
+            // path; a batch that never produced anything is still a real failure and counts
+            // towards the stop budget.
+            if (!Rs2Widget.isProductionWidgetOpen() && !Rs2Player.isAnimating()) {
+                if (consumed > 0) {
+                    finishBatch(config, "repeat ended with " + now + " " + materialLabel() + " left");
+                } else {
+                    clearBatch();
+                    registerFailure("batch produced nothing (" + now + " " + materialLabel() + " left)");
+                }
+                return;
+            }
             clearBatch();
             registerFailure("batch stalled with " + now + " " + materialLabel() + " left");
             return;
@@ -918,6 +992,17 @@ public class FletchingScript implements AModule {
     }
 
     private void finishBatch(AScriptConfig config) {
+        finishBatch(config, null);
+    }
+
+    /**
+     * Ends the batch. The reason is a normal outcome line, so it stays at debug: a batch that
+     * completed its requested actions must not read like the stalls that stop the script.
+     */
+    private void finishBatch(AScriptConfig config, String reason) {
+        if (reason != null) {
+            log.debug("[Fletching] {}", reason);
+        }
         clearBatch();
         Microbot.status = "IDLE";
         consecutiveCraftFailures = 0;
@@ -962,6 +1047,8 @@ public class FletchingScript implements AModule {
         batchMaterialId = 0;
         batchMaterialPerAction = 0;
         batchMaterialCount = 0;
+        batchStartCount = 0;
+        batchRequestedActions = 0;
         batchProductId = 0;
         batchProductionAction = null;
         batchLastProgressAt = 0;

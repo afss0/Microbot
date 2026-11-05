@@ -42,6 +42,14 @@ public enum FletchingBoltType {
     DRAGON("Dragon bolts", "Dragon bolts (unf)",
             ItemID.DRAGON_BOLTS_UNFEATHERED, ItemID.DRAGON_BOLTS, 84);
 
+    /**
+     * Unfinished bolts (and feathers) consumed per production action: feathering makes a set of
+     * ten bolts per action, so a batch of N actions needs {@code 10 * N} unfinished bolts.
+     * Confirmed against the live run (a 10-action batch moved the stack by exactly 100) and
+     * pinned by {@code FletchingDataTest}.
+     */
+    public static final int MATERIALS_PER_ACTION = 10;
+
     private final String label;
     private final String unfinishedName;
     private final int unfinishedId;

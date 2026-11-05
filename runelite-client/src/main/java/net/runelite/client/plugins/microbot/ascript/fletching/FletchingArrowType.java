@@ -32,6 +32,13 @@ public enum FletchingArrowType {
     /** Shared material for every arrow recipe. */
     public static final int HEADLESS_ARROW_ID = ItemID.HEADLESS_ARROW;
 
+    /**
+     * Headless arrows (and arrowtips) consumed per production action: arrows are made in sets of
+     * fifteen, so a batch of N actions needs {@code 15 * N} headless arrows. Pinned by
+     * {@code FletchingDataTest}.
+     */
+    public static final int MATERIALS_PER_ACTION = 15;
+
     private final String label;
     private final String tipName;
     private final int tipId;
