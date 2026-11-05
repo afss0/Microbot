@@ -2,8 +2,10 @@ package net.runelite.client.plugins.microbot.ascript;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Skill;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.ComponentID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
@@ -565,12 +567,30 @@ public class AScript extends Script {
     private static GameReadinessMonitor.Sample sampleGame() {
         var client = Microbot.getClient();
         if (client == null || !Microbot.isLoggedIn()) {
-            return new GameReadinessMonitor.Sample(false, false, false, -1);
+            return new GameReadinessMonitor.Sample(false, false, false, false, -1);
         }
         var worldView = client.getTopLevelWorldView();
         boolean regionLoaded = worldView != null && worldView.getBaseX() > 0;
         return new GameReadinessMonitor.Sample(
-                true, client.getLocalPlayer() != null, regionLoaded, client.getGameCycle());
+                true, client.getLocalPlayer() != null, regionLoaded, welcomeScreenOpen(client),
+                client.getGameCycle());
+    }
+
+    /**
+     * The welcome ("click here to play") screen is still up.
+     * <p>
+     * Read straight from the client's widget array instead of {@code Rs2Widget.isWidgetVisible},
+     * which hops to the client thread: the readiness probe must answer even when that thread is the
+     * thing that died, or the probe becomes the hang. Same read as
+     * {@code WelcomeScreenEvent.validate()}, without the hop.
+     */
+    private static boolean welcomeScreenOpen(Client client) {
+        try {
+            var play = client.getWidget(InterfaceID.WelcomeScreen.PLAY);
+            return play != null && !play.isHidden();
+        } catch (RuntimeException clientNotReady) {
+            return false;
+        }
     }
 
     /** Drops the hold state — the next sample starts the gate from scratch. */
