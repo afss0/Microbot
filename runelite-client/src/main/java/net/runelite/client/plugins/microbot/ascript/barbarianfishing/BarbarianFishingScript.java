@@ -67,8 +67,6 @@ public class BarbarianFishingScript implements AModule {
     private static final int BANK_CLOSE_DISTANCE = 10;
 
     private static final int FISHING_ANIMATION_DEFAULT_MS = 600;
-    private static final int POST_DROP_PAUSE_MIN_MS = 800;
-    private static final int POST_DROP_PAUSE_MAX_MS = 1600;
     private static final int AFK_MIN_MS = 3_000;
     private static final int AFK_MAX_MS = 120_000;
     private static final long AFK_MIN_GAP_MS = 5_000;
@@ -337,7 +335,15 @@ public class BarbarianFishingScript implements AModule {
         spotClickRetries = 0;
         consecutiveFailures = 0;
         Microbot.status = "FISHING — fishing";
+
         AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(235, 798, weatherMultiplier));
+
+        if (config.barbarianFishingAfk() && System.currentTimeMillis() - lastAfkTime > AFK_MIN_GAP_MS) {
+            int afkMs = Rs2Random.logNormalBounded(AFK_MIN_MS, AFK_MAX_MS, weatherMultiplier);
+            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+            AScriptSleep.sleepInterruptibly(afkMs);
+            lastAfkTime = System.currentTimeMillis();
+        }
     }
 
     /**
@@ -370,7 +376,6 @@ public class BarbarianFishingScript implements AModule {
             if (droppedInSession) {
                 droppedInSession = false;
                 consecutiveFailures = 0;
-                postDropBreak(config);
             } else if (Rs2Inventory.isFull()) {
                 // Full inventory with nothing droppable — loud stop instead of a silent spin.
                 fail("inventory full but nothing droppable (unexpected items?)");
@@ -411,24 +416,6 @@ public class BarbarianFishingScript implements AModule {
             fail("could not reach the fishing area");
         } else {
             consecutiveFailures = 0;
-        }
-    }
-
-    // ── Post-batch randomness layer ──────────────────────────────
-
-    /**
-     * Post-batch break — the Jewelry/Crafting randomness pattern: a short randomized
-     * pause after every dropped batch, then the optional random AFK (log-normal,
-     * weather-modulated, interruptible so blocking events still fire).
-     */
-    private void postDropBreak(AScriptConfig config) {
-        AScriptSleep.sleepInterruptibly(
-                Rs2Random.logNormalBounded(POST_DROP_PAUSE_MIN_MS, POST_DROP_PAUSE_MAX_MS, weatherMultiplier));
-        if (config.barbarianFishingAfk() && System.currentTimeMillis() - lastAfkTime > AFK_MIN_GAP_MS) {
-            int afkMs = Rs2Random.logNormalBounded(AFK_MIN_MS, AFK_MAX_MS, weatherMultiplier);
-            Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
-            AScriptSleep.sleepInterruptibly(afkMs);
-            lastAfkTime = System.currentTimeMillis();
         }
     }
 

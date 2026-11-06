@@ -612,15 +612,15 @@ public class CraftingScript implements AModule {
             return false; // waitForInventoryChanges timed out — retry next tick
         }
 
-        // Withdraw bar. Bars are NOT stackable, so the bar count has to leave the gem stack a
-        // slot: one slot is reserved for it up front (cut gems stack into a single slot). Free
-        // slots already exclude the locked mould and any XP lamp, so a locked slot shrinks the
-        // batch instead of filling the bag and making the gem withdraw impossible.
+        // Bars and cut gems are both non-stackable: one jewel consumes one slot of each,
+        // so a gem batch is capped at half the free slots (the classic half-bag batch).
+        // Free slots already exclude the locked mould and any XP lamp.
         String barRef = Integer.toString(item.getJewelryType().getMetalBarId());
         int freeSlots = AScriptBank.freeSlots();
-        int batch = Math.min(AScriptBank.bankQuantity(barRef), Math.max(0, freeSlots - 1));
+        int batch = Math.min(AScriptBank.bankQuantity(barRef), Math.max(0, freeSlots));
         if (item.hasGem()) {
-            // One gem per bar is consumed — never withdraw bars the gems cannot match.
+            // One bar and one gem per jewel; both materials need their own slot.
+            batch = Math.min(batch, Math.max(0, freeSlots / 2));
             batch = Math.min(batch, AScriptBank.bankQuantity(Integer.toString(item.getGem().getCutItemID())));
         }
         if (batch < 1) {
@@ -641,8 +641,8 @@ public class CraftingScript implements AModule {
         }
 
         // If gem jewelry, withdraw cut gems — and verify the count, not just the presence:
-        // withdrawVerified(name, batch) confirms the inventory count delta, so a gem stack that
-        // only partly landed (or landed as banknotes) fails here instead of starting a batch
+        // withdrawVerified(name, batch) confirms the inventory count delta, so a gem withdrawal
+        // that only partly landed (or landed as banknotes) fails here instead of starting a batch
         // that stalls on its second bar.
         if (item.hasGem()) {
             if (!AScriptBank.ensureBankOpen()) return false;
