@@ -48,6 +48,9 @@ public class BarbarianVillageFisherScript implements AModule {
     private static final int MAX_ACTION_FAILURES = 5;
     private static final int MAX_BANK_FAILURES = 3;
     private static final int SPOT_CLICK_RETRIES = 5;
+    private static final int AFK_MIN_MS = 3_000;
+    private static final int AFK_MAX_MS = 120_000;
+    private static final long AFK_MIN_GAP_MS = 5_000;
 
     /**
      * Landed wait for a fishing click. Deliberately long: a lagging client can delay the
@@ -522,7 +525,15 @@ public class BarbarianVillageFisherScript implements AModule {
             spotClickRetries = 0;
             Microbot.status = "FISHING — clicked spot";
             consecutiveFailures = 0;
+
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(235, 798, weatherMultiplier));
+
+            if (config.barbarianVillageFisherAfk() && System.currentTimeMillis() - lastAfkTime > AFK_MIN_GAP_MS) {
+                int afkMs = Rs2Random.logNormalBounded(AFK_MIN_MS, AFK_MAX_MS, weatherMultiplier);
+                Microbot.status = "AFK (" + (afkMs / 1000) + "s)";
+                AScriptSleep.sleepInterruptibly(afkMs);
+                lastAfkTime = System.currentTimeMillis();
+            }
         } else {
             fail("failed to click fishing spot");
         }
