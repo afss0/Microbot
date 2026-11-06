@@ -13,6 +13,7 @@ import net.runelite.api.Tile;
 import net.runelite.api.TileItem;
 import net.runelite.api.TileObject;
 import net.runelite.api.coords.LocalPoint;
+import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.ComponentID;
 import net.runelite.api.widgets.Widget;
@@ -28,7 +29,10 @@ import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.keyboard.Rs2Keyboard;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.misc.Rs2UiHelper;
+import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.tabs.Rs2Tab;
+import net.runelite.client.plugins.microbot.util.tile.Rs2Tile;
+import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
 import net.runelite.client.plugins.microbot.util.widget.Rs2Widget;
 import net.runelite.client.util.Text;
 
@@ -111,6 +115,9 @@ public final class AScriptClick {
 
     /** How far (px) the cursor steps off the point, and back on, to force a rebuild. */
     private static final int NUDGE_PX = 2;
+
+    /** Within this range a camera/zoom nudge is the first visibility response. */
+    private static final int CLOSE_VISIBILITY_RANGE = 14;
 
     /**
      * Bounded attempts to open the option menu with the target's own entry in it. Each
@@ -310,6 +317,9 @@ public final class AScriptClick {
         }
         if (!Rs2Camera.isTileOnScreen(object)) {
             Rs2Camera.turnTo(object);
+            if (closeEnoughToNudge(object)) {
+                Rs2Camera.zoomOutFully();
+            }
             return new Target(null, false, Miss.CAMERA_TURNED);
         }
         Rectangle clickbox = realClickbox(Rs2UiHelper.getObjectClickbox(object));
@@ -317,7 +327,55 @@ public final class AScriptClick {
             AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(150, 300));
             clickbox = realClickbox(Rs2UiHelper.getObjectClickbox(object));
         }
+        if (clickbox == null && closeEnoughToNudge(object)) {
+            // The object is close but has not produced a hull (render-distance/fog
+            // boundary). A zoom-out rebuilds the scene frame without moving the player;
+            // the caller retries on a later tick before considering an approach walk.
+            Rs2Camera.zoomOutFully();
+        }
         return clickbox == null ? notRendered() : new Target(clickbox, false, Miss.NONE);
+    }
+
+    /**
+     * Whether a camera/zoom nudge is a sensible first response: the target is close
+     * enough to be rendered and standing on a reachable tile. Beyond this range the
+     * caller should walk toward the target instead of spinning the camera.
+     */
+    private static boolean closeEnoughToNudge(TileObject object) {
+        WorldPoint player = Rs2Player.getWorldLocation();
+        WorldPoint target = object.getWorldLocation();
+        return player != null && target != null
+                && player.distanceTo(target) <= CLOSE_VISIBILITY_RANGE
+                && Rs2Tile.isTileReachable(target);
+    }
+
+    /**
+     * Walk to a random reachable tile within {@code radius} of {@code center}. Used as
+     * the fallback when an object cannot be made visible by camera/zoom alone: the
+     * player takes a few steps near the target so the scene re-renders around it.
+     * Returns the walker's dispatch result; the caller keeps its own retry budget.
+     */
+    public static boolean walkNear(WorldPoint center, int radius) {
+        if (center == null) {
+            return false;
+        }
+        WorldPoint player = Rs2Player.getWorldLocation();
+        if (player == null) {
+            return false;
+        }
+        int span = Math.max(1, radius);
+        for (int attempt = 0; attempt < 8; attempt++) {
+            int dx = Rs2Random.between(-span, span);
+            int dy = Rs2Random.between(-span, span);
+            if (dx == 0 && dy == 0) {
+                continue;
+            }
+            WorldPoint candidate = new WorldPoint(center.getX() + dx, center.getY() + dy, center.getPlane());
+            if (Rs2Tile.isTileReachable(candidate)) {
+                return Rs2Walker.walkTo(candidate, 1);
+            }
+        }
+        return Rs2Walker.walkTo(center, 1);
     }
 
     /**
