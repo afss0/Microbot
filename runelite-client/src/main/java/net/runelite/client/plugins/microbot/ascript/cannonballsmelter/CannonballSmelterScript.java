@@ -71,6 +71,10 @@ public class CannonballSmelterScript implements AModule {
      * and it must not spend {@link #MAX_ACTION_FAILURES} lives.
      */
     private static final int MAX_RENDER_MISSES = 20;
+    /** Reposition attempts after the render budget is exhausted, before stopping loudly. */
+    private static final int MAX_VISIBILITY_RECOVERIES = 3;
+    /** Minimum gap between "walk near the furnace" recovery steps. */
+    private static final long FURNACE_APPROACH_COOLDOWN_MS = 3_000L;
 
     private Phase currentPhase = Phase.NONE;
     private boolean exitRequested = false;
@@ -96,6 +100,9 @@ public class CannonballSmelterScript implements AModule {
     private long lastTravelMoveAt = 0L;
     /** Consecutive furnace render misses — its own budget, never the action-failure counter. */
     private int renderMisses = 0;
+    /** Reposition walks after the render budget expired. */
+    private int visibilityRecoveries = 0;
+    private long lastFurnaceApproachAt = 0L;
 
     public enum Phase {
         NONE, WALK_TO_BANK, WALK_TO_FURNACE, SMELTING
@@ -113,6 +120,8 @@ public class CannonballSmelterScript implements AModule {
         postBatchBreakDone = false;
         batchRanSinceBank = false;
         renderMisses = 0;
+        visibilityRecoveries = 0;
+        lastFurnaceApproachAt = 0L;
         resetTravelWatchdog();
     }
 
@@ -309,6 +318,19 @@ public class CannonballSmelterScript implements AModule {
             return;
         }
         if (!isFurnaceResolvable(site)) {
+            WorldPoint here = Rs2Player.getWorldLocation();
+            WorldPoint anchor = site.getBankLocation().getWorldPoint();
+            long now = System.currentTimeMillis();
+            if (here != null && here.distanceTo(anchor) <= 14) {
+                // At the site but the furnace is outside the rendered scene: take a
+                // few random steps near the anchor so the scene reloads around it.
+                if (now - lastFurnaceApproachAt >= FURNACE_APPROACH_COOLDOWN_MS) {
+                    lastFurnaceApproachAt = now;
+                    Microbot.status = "SMELTING — moving to the furnace";
+                    AScriptClick.walkNear(anchor, 4);
+                }
+                return;
+            }
             walkToSite(site, "FURNACE");
             return;
         }
@@ -363,7 +385,14 @@ public class CannonballSmelterScript implements AModule {
         if (Rs2Widget.getWidget(SMELT_INTERFACE_WIDGET) == null) {
             Rs2TileObjectModel furnace = findFurnace(choice);
             if (furnace == null) {
-                fail("furnace not found (" + choice + ")");
+                // The furnace despawned/reloaded between the phase check and the click:
+                // reposition near the site instead of spending an action-failure life.
+                long now = System.currentTimeMillis();
+                if (now - lastFurnaceApproachAt >= FURNACE_APPROACH_COOLDOWN_MS) {
+                    lastFurnaceApproachAt = now;
+                    Microbot.status = "SMELTING — moving to the furnace";
+                    AScriptClick.walkNear(choice.getBankLocation().getWorldPoint(), 4);
+                }
                 return;
             }
             // The shared house object recipe (AScriptClick), now dispatch-verified: camera
@@ -383,15 +412,23 @@ public class CannonballSmelterScript implements AModule {
                 log.debug("[CannonballSmelter] Furnace not rendered yet ({}/{})",
                         renderMisses, MAX_RENDER_MISSES);
                 if (renderMisses >= MAX_RENDER_MISSES) {
+                    if (visibilityRecoveries < MAX_VISIBILITY_RECOVERIES) {
+                        visibilityRecoveries++;
+                        renderMisses = 0;
+                        Microbot.status = "SMELTING — repositioning for the furnace";
+                        AScriptClick.walkNear(furnace.getWorldLocation(), 3);
+                        return;
+                    }
                     exitRequested = true;
                     stopWithMessage("furnace not rendered after " + renderMisses
-                            + " attempts (" + choice + ")");
+                            + " attempts and " + visibilityRecoveries + " reposition steps (" + choice + ")");
                     return;
                 }
                 Rs2Camera.turnTo(furnace.getLocalLocation()); // rotation rebuilds the frame
                 return;
             }
             renderMisses = 0;
+            visibilityRecoveries = 0;
             if (!target.clicked()) {
                 // Hover/menu failure (row not ranked, menu stuck, cursor lost) — the smelt
                 // interface wait below would otherwise report a false "did not open" start.

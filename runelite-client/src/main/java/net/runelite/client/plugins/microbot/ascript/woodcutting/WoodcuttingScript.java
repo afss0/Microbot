@@ -57,6 +57,14 @@ public class WoodcuttingScript implements AModule {
     private static final int TREE_RENDER_WAIT_STEPS = 2;
     /** No choppable tree in range for this long → stop loudly (trees respawn fast). */
     private static final long NO_TREE_STOP_MS = 90_000L;
+    /** No tree visible for this long → walk a few tiles near the anchor to reload the scene. */
+    private static final long TREE_APPROACH_AFTER_MS = 4_000L;
+    /** Minimum gap between approach walks (the tick runs every ~600 ms). */
+    private static final long TREE_APPROACH_COOLDOWN_MS = 5_000L;
+    /** Consecutive camera turns before walking near the tree instead of turning again. */
+    private static final int MAX_CAMERA_TURNS = 2;
+    /** Click/start misses before the module spends an action-failure life. */
+    private static final int MAX_CLICK_MISSES = 3;
     /** No position change while travelling for this long → stop loudly (cannonball watchdog). */
     private static final long TRAVEL_STAGNATION_MS = 120_000L;
     /** Bird-nest loot radius around the player (hub parity). */
@@ -106,6 +114,12 @@ public class WoodcuttingScript implements AModule {
     private boolean dropping = false;
     /** When the first tick saw no choppable tree (0 = a tree is available). */
     private long noTreeSinceMs = 0L;
+    /** Last time the module walked a few tiles to reload the tree scene. */
+    private long lastApproachAt = 0L;
+    /** Consecutive camera turns toward the current tree before trying an approach walk. */
+    private int cameraTurns = 0;
+    /** Consecutive click/start misses; a successful chop clears it. */
+    private int clickMisses = 0;
     /** Timestamp of the last random AFK — minimum 5 s between AFKs. */
     private long lastAfkTime = 0L;
     /** Set once the batch-end break ran; cleared when logs are back in hand. */
@@ -133,6 +147,9 @@ public class WoodcuttingScript implements AModule {
         dropping = false;
         noTreeSinceMs = 0L;
         lastAfkTime = 0L;
+        lastApproachAt = 0L;
+        cameraTurns = 0;
+        clickMisses = 0;
         postBatchBreakDone = false;
         batchRanSinceBank = false;
         lastTravelPos = null;
@@ -479,9 +496,20 @@ public class WoodcuttingScript implements AModule {
 
         Rs2TileObjectModel tree = findTree(treeChoice, anchor, config.woodcuttingRadius());
         if (tree == null) {
-            if (noTreeSinceMs == 0L) noTreeSinceMs = System.currentTimeMillis();
-            if (System.currentTimeMillis() - noTreeSinceMs > NO_TREE_STOP_MS) {
+            long now = System.currentTimeMillis();
+            if (noTreeSinceMs == 0L) noTreeSinceMs = now;
+            if (now - noTreeSinceMs > NO_TREE_STOP_MS) {
                 fail("no choppable " + treeChoice.getName() + " near the starting spot");
+                return;
+            }
+            // The tree may be just outside the loaded/rendered scene. Walk a few
+            // random tiles around the cutting spot to reload it instead of idling
+            // in place until the stop timer expires.
+            if (now - noTreeSinceMs >= TREE_APPROACH_AFTER_MS
+                    && now - lastApproachAt >= TREE_APPROACH_COOLDOWN_MS) {
+                lastApproachAt = now;
+                Microbot.status = "WOODCUTTING — moving to find a tree";
+                AScriptClick.walkNear(anchor, Math.max(3, Math.min(8, config.woodcuttingRadius())));
                 return;
             }
             Microbot.status = "WOODCUTTING — waiting for a tree";
@@ -495,9 +523,39 @@ public class WoodcuttingScript implements AModule {
         Microbot.status = "WOODCUTTING — chopping " + treeChoice.getName();
         AScriptClick.Target target = AScriptClick.clickObject(tree, TREE_RENDER_WAIT_STEPS);
         if (target.cameraTurned()) {
+            cameraTurns++;
+            // A camera turn alone did not resolve the target after a couple of
+            // attempts: step toward the tree so the scene re-renders around it.
+            if (cameraTurns > MAX_CAMERA_TURNS) {
+                cameraTurns = 0;
+                long now = System.currentTimeMillis();
+                if (now - lastApproachAt >= 1_500L) {
+                    lastApproachAt = now;
+                    AScriptClick.walkNear(tree.getWorldLocation(), 3);
+                }
+            }
             return; // retry next tick — a camera turn is not a failure
         }
+        if (!target.ready()) {
+            // The tree is loaded but has no real hull yet (render-distance/fog
+            // boundary). Walk a few tiles near it rather than spending a failure
+            // life on a render race.
+            long now = System.currentTimeMillis();
+            if (now - lastApproachAt >= 1_500L) {
+                lastApproachAt = now;
+                AScriptClick.walkNear(tree.getWorldLocation(), 3);
+            }
+            return;
+        }
+        cameraTurns = 0;
         if (!target.clicked()) {
+            // The tree can despawn between the query and the click (another player
+            // chopped it). Re-query and retry; only a repeated miss spends a life.
+            if (++clickMisses < MAX_CLICK_MISSES) {
+                Microbot.status = "WOODCUTTING — retrying the tree";
+                return;
+            }
+            clickMisses = 0;
             fail("tree click did not land (not rendered)");
             return;
         }
@@ -506,9 +564,15 @@ public class WoodcuttingScript implements AModule {
         int before = count;
         if (!sleepUntil(() -> isChopping() || Rs2Inventory.itemQuantity(logId) > before,
                 Rs2Random.logNormalBounded(2000, 4000, weatherMultiplier))) {
+            if (++clickMisses < MAX_CLICK_MISSES) {
+                Microbot.status = "WOODCUTTING — retrying the tree";
+                return;
+            }
+            clickMisses = 0;
             fail("click did not start chopping");
             return;
         }
+        clickMisses = 0;
         consecutiveFailures = 0;
         lastLogCount = Math.max(lastLogCount, Rs2Inventory.itemQuantity(logId));
         batchRanSinceBank = true;
