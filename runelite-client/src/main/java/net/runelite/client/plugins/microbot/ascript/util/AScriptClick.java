@@ -120,6 +120,25 @@ public final class AScriptClick {
     private static final int CLOSE_VISIBILITY_RANGE = 14;
 
     /**
+     * Camera tolerance for the obstruction reveal. {@link Rs2Camera#turnTo(TileObject)}
+     * deliberately accepts a wide 40° tolerance, which is fine for bringing an off-screen
+     * target into view but can leave a click point under a HUD widget. The reveal needs the
+     * object centred tightly instead.
+     */
+    private static final int CLICK_REVEAL_MAX_ANGLE = 6;
+
+    /**
+     * When the camera is already pointing at the object (within {@link
+     * #CLICK_REVEAL_MAX_ANGLE}), a plain turn is a no-op. Rotate past the target by this
+     * many degrees so a click point hidden under a HUD widget moves out from under it.
+     */
+    private static final int CLICK_REVEAL_NUDGE_MIN_DEGREES = 12;
+    private static final int CLICK_REVEAL_NUDGE_MAX_DEGREES = 20;
+
+    /** Wind adds a little angular imprecision to the reveal, like a hand on the arrow key. */
+    private static final int CLICK_REVEAL_WIND_JITTER_MAX_DEGREES = 10;
+
+    /**
      * Bounded attempts to open the option menu with the target's own entry in it. Each
      * retry closes the menu, re-nudges the hover and right-clicks again — an open menu is
      * frozen, so one that came up without our entry never fixes itself either.
@@ -165,7 +184,7 @@ public final class AScriptClick {
         NONE,
         /** No real hull yet (canvas-sized fallback rejected) — a render race, retry. */
         NOT_RENDERED,
-        /** The target was off camera and the camera has just been turned — retry. */
+        /** The target was off camera, or its click point was obstructed, and the camera has just been turned — retry. */
         CAMERA_TURNED,
         /** The cursor never settled on the resolved press point. */
         CURSOR_LOST,
@@ -225,8 +244,9 @@ public final class AScriptClick {
         }
 
         /**
-         * True when the target was off camera and the camera has just been turned —
-         * retry on a later tick; this is not a failure and must not spend lives.
+         * True when the target was off camera, or its click point was obstructed, and the
+         * camera has just been turned — retry on a later tick; this is not a failure and
+         * must not spend lives.
          */
         public boolean cameraTurned() {
             return miss == Miss.CAMERA_TURNED;
@@ -251,6 +271,10 @@ public final class AScriptClick {
      * ranked top means a plain left click dispatches it; a higher-priority entity sharing the
      * hover (a player standing on the object) sends the recipe through the open menu, where
      * OUR row is pressed out of a menu the client freezes. No row at all means no click.
+     * When the object is visible but the hover proves its press point is obstructed — a HUD
+     * widget such as the minimap or chatbox sits over it — the recipe turns the camera and
+     * reports {@link Target#cameraTurned()} so the caller retries on a later tick instead of
+     * spending an action life; {@link #revealObject(TileObject)} is that reveal step.
      *
      * @param object the target object (a {@code Rs2TileObjectModel} or a raw tile object)
      * @return the outcome — {@link Target#clicked()} when the press was issued
@@ -288,8 +312,101 @@ public final class AScriptClick {
         if (!target.ready()) {
             return target;
         }
-        return pressVerified(target, describeObject(object, action),
+        Target pressed = pressVerified(target, describeObject(object, action),
                 entry -> isOwnObjectAction(entry, object, action), MENU_CLOSED_IS_ENOUGH);
+        if (pressed.miss() == Miss.HOVER_GONE && object != null) {
+            // The object has a real hull, so it is in the scene, but the hover at the press
+            // point exposed nothing for it. The usual cause is a HUD widget sitting over that
+            // point (minimap, chatbox, an open side panel): a visible object is not
+            // necessarily a clickable one. Recentre it before the caller retries instead of
+            // spending an action life on a click the widget would swallow.
+            log.info("[AScriptClick] {} is visible but not clickable at its press point — moving the camera",
+                    describeObject(object, action));
+            return revealObject(object);
+        }
+        return pressed;
+    }
+
+    /**
+     * Recentre {@code object} so its click point is no longer hidden under a HUD widget.
+     * <p>
+     * This is the obstruction counterpart to {@link #resolveObject}'s off-camera turn:
+     * {@link Rs2Camera#isTileOnScreen(TileObject)} only proves that some part of the target
+     * projects into the viewport — a minimap, chatbox or side panel can still cover the point
+     * the recipe would press. When the verified hover proves the point is not usable, the
+     * camera is aimed tightly at the object (the usual reveal path), or deliberately past it
+     * when it is already centred (a plain {@link Rs2Camera#turnTo(TileObject)} would be a
+     * no-op inside its 40° tolerance and the widget would keep swallowing the click).
+     * <p>
+     * The turn is humanised with the house weather modulation: a short weather-scaled
+     * hesitation before the key hold and wind-gust angular jitter, matching the click-point
+     * jitter {@link Rs2UiHelper#getClickingPoint} already applies. It returns
+     * {@link Miss#CAMERA_TURNED}, so the caller retries on a later tick without spending a
+     * render or action budget.
+     *
+     * @param object the object whose click point is obstructed
+     * @return a {@link Miss#CAMERA_TURNED} outcome (the turn is the whole action)
+     */
+    public static Target revealObject(TileObject object) {
+        if (object == null) {
+            return notRendered();
+        }
+
+        int currentAngle = Rs2Camera.getAngle();
+        int targetAngle = Rs2Camera.getObjectAngle(object);
+        int currentDelta = shortestAngleDelta(currentAngle, targetAngle);
+        if (Math.abs(currentDelta) <= CLICK_REVEAL_MAX_ANGLE) {
+            int nudge = Rs2Random.betweenInclusive(CLICK_REVEAL_NUDGE_MIN_DEGREES,
+                    CLICK_REVEAL_NUDGE_MAX_DEGREES);
+            // Push away from the object on the same side the camera is already on: a
+            // random sign can cancel against a small existing offset and leave the angle
+            // inside the tolerance, making the turn a no-op.
+            targetAngle += currentDelta >= 0 ? nudge : -nudge;
+        }
+
+        WeatherModulation.ensureFresh();
+        int windJitter = (int) Math.round((1.0 - WeatherModulation.windGustFactor())
+                * CLICK_REVEAL_WIND_JITTER_MAX_DEGREES);
+        if (windJitter > 0) {
+            targetAngle += Rs2Random.betweenInclusive(-windJitter, windJitter);
+        }
+        // A small existing offset plus the jitter can bring the nudged angle back inside
+        // the tolerance; force it clearly past the object so the key hold cannot no-op.
+        int finalDelta = shortestAngleDelta(currentAngle, targetAngle);
+        if (Math.abs(finalDelta) <= CLICK_REVEAL_MAX_ANGLE) {
+            int escape = CLICK_REVEAL_MAX_ANGLE + 2;
+            targetAngle += finalDelta >= 0 ? escape : -escape;
+        }
+
+        // Two-argument logNormalBounded already applies the weather multiplier.
+        AScriptSleep.sleepInterruptibly(Rs2Random.logNormalBounded(90, 240));
+        int cameraTarget = normalizeAngle(targetAngle);
+        // Rs2Camera#getAngleTo (used by setAngle for its key-hold decision) adds 360 to
+        // the current angle when it sits below the target, so a target just past north
+        // from a current angle just before it would compare as +340 rather than -20.
+        // Hand setAngle an equivalent target in the next revolution instead.
+        if (cameraTarget < currentAngle && currentAngle - cameraTarget > 180) {
+            cameraTarget += 360;
+        }
+        Rs2Camera.setAngle(cameraTarget, CLICK_REVEAL_MAX_ANGLE);
+        return new Target(null, false, Miss.CAMERA_TURNED);
+    }
+
+    /** Normalise a degree value into the camera's 0–359 range. */
+    private static int normalizeAngle(int degrees) {
+        int normalized = degrees % 360;
+        return normalized < 0 ? normalized + 360 : normalized;
+    }
+
+    /** Shortest signed turn from {@code from} to {@code to}, in degrees. */
+    private static int shortestAngleDelta(int from, int to) {
+        int delta = normalizeAngle(to) - normalizeAngle(from);
+        if (delta > 180) {
+            delta -= 360;
+        } else if (delta < -180) {
+            delta += 360;
+        }
+        return delta;
     }
 
     /**
@@ -343,7 +460,9 @@ public final class AScriptClick {
      */
     private static boolean closeEnoughToNudge(TileObject object) {
         WorldPoint player = Rs2Player.getWorldLocation();
-        WorldPoint target = object.getWorldLocation();
+        WorldPoint target = Microbot.getClientThread()
+                .runOnClientThreadOptional(object::getWorldLocation)
+                .orElse(null);
         return player != null && target != null
                 && player.distanceTo(target) <= CLOSE_VISIBILITY_RANGE
                 && Rs2Tile.isTileReachable(target);
