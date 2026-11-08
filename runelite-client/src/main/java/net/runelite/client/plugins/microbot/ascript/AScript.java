@@ -635,6 +635,11 @@ public class AScript extends Script {
             chainStatus = null;
             try {
                 moduleChain = ModuleChain.parse(spec);
+                String settingsError = ChainSettings.validate(moduleChain);
+                if (settingsError != null) {
+                    moduleChain = null;
+                    throw new IllegalArgumentException(settingsError);
+                }
                 if (!moduleChain.isEmpty()) {
                     log.info("[AScript] Module chain configured: {}", describeChain(moduleChain));
                 }
@@ -655,9 +660,15 @@ public class AScript extends Script {
             // A finished chain does not auto-start on the next IDLE tick, but a manual
             // selection of one of its steps is a deliberate restart.
             if (selection != ScriptType.IDLE && moduleChain.contains(selection)) {
-                moduleChain.startAt(selection);
-                updateChainStatus();
-                log.info("[AScript] Chain restarted at manual selection: {}", chainStatus);
+                ModuleChain.Step seeded = moduleChain.startAtStep(selection);
+                if (seeded != null && applyStepSettings(seeded)) {
+                    resetChainStepState();
+                    updateChainStatus();
+                    log.info("[AScript] Chain restarted at manual selection: {}", chainStatus);
+                } else {
+                    rejectChainStep();
+                    return ScriptType.IDLE;
+                }
             } else {
                 chainStatus = null;
             }
@@ -675,17 +686,28 @@ public class AScript extends Script {
 
         if (!moduleChain.isStarted()) {
             if (selection == ScriptType.IDLE) {
-                ScriptType first = moduleChain.start();
-                if (first != null) {
-                    setScriptSelection(first);
+                ModuleChain.Step first = moduleChain.startStep();
+                if (first != null && applyStepSettings(first)) {
+                    resetChainStepState();
+                    setScriptSelection(first.getType());
                     updateChainStatus();
                     log.info("[AScript] Chain started: {}", chainStatus);
-                    return first;
+                    return first.getType();
+                }
+                if (first != null) {
+                    rejectChainStep();
+                    return ScriptType.IDLE;
                 }
             } else if (moduleChain.contains(selection)) {
                 // A manual selection of a configured module seeds the chain at that step.
-                moduleChain.startAt(selection);
-                updateChainStatus();
+                ModuleChain.Step seeded = moduleChain.startAtStep(selection);
+                if (seeded != null && applyStepSettings(seeded)) {
+                    resetChainStepState();
+                    updateChainStatus();
+                } else {
+                    rejectChainStep();
+                    return ScriptType.IDLE;
+                }
             }
             return selection;
         }
@@ -698,10 +720,15 @@ public class AScript extends Script {
             return advanceChain("module stopped");
         }
         if (moduleChain.contains(selection)) {
-            moduleChain.startAt(selection);
-            updateChainStatus();
-            log.info("[AScript] Chain restarted at manual selection: {}", chainStatus);
-            return selection;
+            ModuleChain.Step seeded = moduleChain.startAtStep(selection);
+            if (seeded != null && applyStepSettings(seeded)) {
+                resetChainStepState();
+                updateChainStatus();
+                log.info("[AScript] Chain restarted at manual selection: {}", chainStatus);
+                return selection;
+            }
+            rejectChainStep();
+            return ScriptType.IDLE;
         }
 
         // The user picked a module outside the configured chain: honour the manual choice
@@ -722,21 +749,27 @@ public class AScript extends Script {
         if (moduleChain == null || !moduleChain.isStarted()) {
             return ScriptType.IDLE;
         }
-        ScriptType previous = moduleChain.current();
-        ScriptType next = moduleChain.advance(config.chainLoop());
+        ModuleChain.Step previous = moduleChain.currentStep();
+        ModuleChain.Step next = moduleChain.advanceStep(config.chainLoop());
         if (next == null) {
             chainStatus = null;
             setScriptSelection(ScriptType.IDLE);
             Microbot.status = "CHAIN — finished";
             log.info("[AScript] Chain finished after {}: {} ({} step(s))",
-                    reason, previous, moduleChain.size());
+                    reason, previous == null ? null : previous.getType(), moduleChain.size());
             return ScriptType.IDLE;
         }
-        setScriptSelection(next);
+        if (!applyStepSettings(next)) {
+            rejectChainStep();
+            return ScriptType.IDLE;
+        }
+        resetChainStepState();
+        setScriptSelection(next.getType());
         updateChainStatus();
-        Microbot.status = "CHAIN — starting " + next.getName();
-        log.info("[AScript] Chain advanced after {}: {} -> {}", reason, previous, next);
-        return next;
+        Microbot.status = "CHAIN — starting " + next.getType().getName();
+        log.info("[AScript] Chain advanced after {}: {} -> {}", reason,
+                previous == null ? null : previous.getType(), next.getType());
+        return next.getType();
     }
 
     /**
@@ -749,23 +782,66 @@ public class AScript extends Script {
                 || moduleChain == null || !moduleChain.isStarted()) {
             return false;
         }
-        ScriptType previous = moduleChain.current();
-        ScriptType next = moduleChain.advance(config.chainLoop());
+        ModuleChain.Step previous = moduleChain.currentStep();
+        ModuleChain.Step next = moduleChain.advanceStep(config.chainLoop());
         if (next == null) {
             chainStatus = null;
             setScriptSelection(ScriptType.IDLE);
-            log.info("[AScript] Chain finished after {}: {}", reason, previous);
+            log.info("[AScript] Chain finished after {}: {}",
+                    reason, previous == null ? null : previous.getType());
             return false;
         }
-        setScriptSelection(next);
+        if (!applyStepSettings(next)) {
+            rejectChainStep();
+            return false;
+        }
+        resetChainStepState();
+        setScriptSelection(next.getType());
         updateChainStatus();
         stopRequested = false;
         lastStopMessage = null;
         currentPhase = Phase.IDLE;
-        Microbot.status = "CHAIN — starting " + next.getName();
-        log.warn("[AScript] Chain advanced after {}: {} -> {}", reason, previous, next);
-        AScriptNotify.notify("aScript chain", reason + " — starting " + next.getName());
+        Microbot.status = "CHAIN — starting " + next.getType().getName();
+        log.warn("[AScript] Chain advanced after {}: {} -> {}", reason,
+                previous == null ? null : previous.getType(), next.getType());
+        AScriptNotify.notify("aScript chain", reason + " — starting "
+                + next.getType().getName());
         return true;
+    }
+
+    /** Apply a step's config overrides before its module is selected. */
+    private boolean applyStepSettings(ModuleChain.Step step) {
+        if (step == null || step.getSettings().isEmpty()) {
+            return true;
+        }
+        String error = ChainSettings.apply(Microbot.getConfigManager(), step);
+        if (error == null) {
+            log.info("[AScript] Chain step {} applied {} config override(s)",
+                    step.getType(), step.getSettings().size());
+            return true;
+        }
+        log.warn("[AScript] Chain step {} has invalid config: {}", step.getType(), error);
+        Microbot.status = "CHAIN — config error: " + error;
+        return false;
+    }
+
+    /** The selected step could not be configured: do not run it with stale settings. */
+    private void rejectChainStep() {
+        if (moduleChain != null) {
+            moduleChain.finish();
+        }
+        chainStatus = null;
+        setScriptSelection(ScriptType.IDLE);
+    }
+
+    /** Start a repeated module step from a clean run scope, even when its type did not change. */
+    private void resetChainStepState() {
+        for (AModule mod : MODULES) {
+            wasActive.put(mod, false);
+        }
+        runKeys.clear();
+        AScriptBank.resetSessionState();
+        resetRunCounters();
     }
 
     private void updateChainStatus() {
@@ -773,17 +849,21 @@ public class AScript extends Script {
             chainStatus = null;
             return;
         }
-        chainStatus = moduleChain.current().getName() + " (" + moduleChain.position()
-                + "/" + moduleChain.size() + ")";
+        ModuleChain.Step step = moduleChain.currentStep();
+        String label = step == null ? "?" : step.getType().getName();
+        if (step != null && !step.getSettings().isEmpty()) {
+            label += " [" + step.getSettings().size() + " override(s)]";
+        }
+        chainStatus = label + " (" + moduleChain.position() + "/" + moduleChain.size() + ")";
     }
 
     private static String describeChain(ModuleChain chain) {
         StringBuilder text = new StringBuilder();
-        for (ScriptType step : chain.steps()) {
+        for (ModuleChain.Step step : chain.entries()) {
             if (text.length() > 0) {
                 text.append(" -> ");
             }
-            text.append(step.name());
+            text.append(step.toConfigText());
         }
         return text.toString();
     }

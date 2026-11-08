@@ -78,7 +78,7 @@ public interface AScriptConfig extends Config {
     @ConfigItem(
             keyName = "chainModules",
             name = "Module chain",
-            description = "Comma/semicolon separated module tags, e.g. MINING,CRAFTING. Edit it from the aScript Chain panel",
+            description = "Chain steps, e.g. MINING;FLETCHING(fletchingActivity=BOLTS,fletchingBoltType=MITHRIL). Edit it from the aScript Chain panel",
             position = 3,
             section = automationSection
     )
