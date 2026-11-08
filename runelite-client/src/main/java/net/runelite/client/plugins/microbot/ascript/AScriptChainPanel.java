@@ -25,16 +25,19 @@ import java.awt.Dimension;
 import java.awt.GridLayout;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
  * Sidebar editor for the aScript module chain.
  * <p>
- * The dropdown adds a module tag to the comma-separated field; the list is a parsed preview;
- * Save persists the canonical enum tags (plus the enable/loop toggles) in the active RuneLite
- * profile, and Delete removes the saved chain. Manual editing of the field is supported, so a
- * user can reorder or paste a chain without adding one dropdown entry at a time.
+ * The dropdown adds a module tag to the comma-separated field; the list is a parsed preview.
+ * Save active persists the canonical enum tags (plus the enable/loop toggles) in the active
+ * RuneLite profile, while Save as/Load/Delete manage a named library of step-only presets in
+ * {@link ChainPresetStore}. Manual editing of the field is supported, so a user can reorder or
+ * paste a chain without adding one dropdown entry at a time.
  */
 public class AScriptChainPanel extends PluginPanel {
 
@@ -52,7 +55,10 @@ public class AScriptChainPanel extends PluginPanel {
     private final JList<ModuleChain.Step> chainList = new JList<>(chainModel);
     private final JCheckBox enabledBox = new JCheckBox("Enable chain");
     private final JCheckBox loopBox = new JCheckBox("Loop at the end");
+    private final JTextField presetNameField = new JTextField();
+    private final JComboBox<String> presetBox = new JComboBox<>();
     private final JLabel status = new JLabel(" ");
+    private final Map<String, String> presets = new LinkedHashMap<>();
     private boolean loading;
 
     AScriptChainPanel(AScriptConfig config, ConfigManager configManager) {
@@ -121,6 +127,37 @@ public class AScriptChainPanel extends PluginPanel {
         add(removeButton);
         add(Box.createRigidArea(new Dimension(0, 8)));
 
+        JLabel presetsLabel = new JLabel("Saved chains");
+        presetsLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        add(presetsLabel);
+        presetNameField.setAlignmentX(Component.LEFT_ALIGNMENT);
+        presetNameField.setMaximumSize(new Dimension(Integer.MAX_VALUE,
+                presetNameField.getPreferredSize().height));
+        presetNameField.setToolTipText("Name for the current chain steps");
+        add(presetNameField);
+        add(Box.createRigidArea(new Dimension(0, 4)));
+        presetBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        presetBox.setMaximumSize(new Dimension(Integer.MAX_VALUE,
+                presetBox.getPreferredSize().height));
+        presetBox.setToolTipText("Select a saved chain, then Load");
+        add(presetBox);
+        add(Box.createRigidArea(new Dimension(0, 4)));
+
+        JPanel presetActions = new JPanel(new GridLayout(1, 3, 4, 0));
+        presetActions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        presetActions.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
+        JButton savePresetButton = new JButton("Save as");
+        savePresetButton.addActionListener(e -> savePreset());
+        JButton loadPresetButton = new JButton("Load");
+        loadPresetButton.addActionListener(e -> loadPreset());
+        JButton deletePresetButton = new JButton("Delete");
+        deletePresetButton.addActionListener(e -> deletePreset());
+        presetActions.add(savePresetButton);
+        presetActions.add(loadPresetButton);
+        presetActions.add(deletePresetButton);
+        add(presetActions);
+        add(Box.createRigidArea(new Dimension(0, 8)));
+
         enabledBox.setAlignmentX(Component.LEFT_ALIGNMENT);
         loopBox.setAlignmentX(Component.LEFT_ALIGNMENT);
         add(enabledBox);
@@ -130,9 +167,9 @@ public class AScriptChainPanel extends PluginPanel {
         JPanel actions = new JPanel(new GridLayout(1, 2, 6, 0));
         actions.setAlignmentX(Component.LEFT_ALIGNMENT);
         actions.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
-        JButton saveButton = new JButton("Save");
+        JButton saveButton = new JButton("Save active");
         saveButton.addActionListener(e -> save());
-        JButton deleteButton = new JButton("Delete");
+        JButton deleteButton = new JButton("Delete active");
         deleteButton.addActionListener(e -> delete());
         actions.add(saveButton);
         actions.add(deleteButton);
@@ -154,14 +191,27 @@ public class AScriptChainPanel extends PluginPanel {
             return;
         }
         loading = true;
+        String presetError = null;
         try {
             enabledBox.setSelected(config.chainEnabled());
             loopBox.setSelected(config.chainLoop());
             String spec = config.chainModules() == null ? "" : config.chainModules();
             chainField.setText(spec);
-            updatePreview(false);
+            try {
+                presets.clear();
+                presets.putAll(ChainPresetStore.parse(config.chainPresets()));
+            } catch (IllegalArgumentException ex) {
+                presets.clear();
+                presetError = ex.getMessage();
+            }
+            refreshPresetBox(null);
+            presetNameField.setText("");
         } finally {
             loading = false;
+        }
+        updatePreview(false);
+        if (presetError != null) {
+            setStatus(presetError, ERROR_COLOR);
         }
     }
 
@@ -221,27 +271,126 @@ public class AScriptChainPanel extends PluginPanel {
         }
     }
 
-    private void save() {
-        final ModuleChain chain;
+    /** Validate the editor and return its canonical chain text, or {@code null} on error. */
+    private String canonicalChain() {
         try {
-            chain = ModuleChain.parse(chainField.getText());
+            ModuleChain chain = ModuleChain.parse(chainField.getText());
             String settingsError = ChainSettings.validate(chain);
             if (settingsError != null) {
                 setStatus(settingsError, ERROR_COLOR);
-                return;
+                return null;
             }
+            return chain.entries().stream()
+                    .map(ModuleChain.Step::toConfigText)
+                    .collect(Collectors.joining(";"));
         } catch (IllegalArgumentException ex) {
             setStatus(ex.getMessage(), ERROR_COLOR);
+            return null;
+        }
+    }
+
+    /** Save the editor under a name in this profile's saved-chain library. */
+    private void savePreset() {
+        String canonical = canonicalChain();
+        if (canonical == null) {
             return;
         }
-        String canonical = chain.entries().stream()
-                .map(ModuleChain.Step::toConfigText)
-                .collect(Collectors.joining(";"));
+        if (canonical.isEmpty()) {
+            setStatus("Add at least one module before saving a named chain", ERROR_COLOR);
+            return;
+        }
+        String name = presetNameField.getText() == null ? "" : presetNameField.getText().trim();
+        if (name.isEmpty()) {
+            setStatus("Type a name for the saved chain", ERROR_COLOR);
+            return;
+        }
+        boolean replaced = presets.containsKey(name);
+        presets.put(name, canonical);
+        if (!persistPresets()) {
+            return;
+        }
+        refreshPresetBox(name);
+        presetNameField.setText(name);
+        setStatus((replaced ? "Updated" : "Saved") + " chain preset '" + name + "'", OK_COLOR);
+    }
+
+    /** Load the selected named chain into the editor; Save active still publishes it. */
+    private void loadPreset() {
+        String name = selectedPreset();
+        if (name == null) {
+            setStatus("Select a saved chain first", ERROR_COLOR);
+            return;
+        }
+        String spec = presets.get(name);
+        if (spec == null) {
+            setStatus("Saved chain '" + name + "' is no longer available", ERROR_COLOR);
+            refreshPresetBox(null);
+            return;
+        }
+        chainField.setText(spec);
+        updatePreview();
+        presetNameField.setText(name);
+        setStatus("Loaded '" + name + "' — click Save active to run it", OK_COLOR);
+    }
+
+    /** Delete only the selected preset; the active chain is left untouched. */
+    private void deletePreset() {
+        String name = selectedPreset();
+        if (name == null) {
+            setStatus("Select a saved chain first", ERROR_COLOR);
+            return;
+        }
+        presets.remove(name);
+        if (!persistPresets()) {
+            return;
+        }
+        refreshPresetBox(null);
+        setStatus("Deleted chain preset '" + name + "'", OK_COLOR);
+    }
+
+    private String selectedPreset() {
+        Object selected = presetBox.getSelectedItem();
+        return selected == null ? null : selected.toString();
+    }
+
+    private void refreshPresetBox(String select) {
+        presetBox.removeAllItems();
+        for (String name : presets.keySet()) {
+            presetBox.addItem(name);
+        }
+        if (select != null) {
+            presetBox.setSelectedItem(select);
+        } else if (presetBox.getItemCount() > 0) {
+            presetBox.setSelectedIndex(0);
+        }
+    }
+
+    private boolean persistPresets() {
+        try {
+            if (presets.isEmpty()) {
+                configManager.unsetConfiguration(AScriptConfig.GROUP, ChainPresetStore.CONFIG_KEY);
+            } else {
+                configManager.setConfiguration(AScriptConfig.GROUP, ChainPresetStore.CONFIG_KEY,
+                        ChainPresetStore.serialize(presets));
+            }
+            return true;
+        } catch (RuntimeException ex) {
+            setStatus("Could not persist saved chains: " + ex.getMessage(), ERROR_COLOR);
+            return false;
+        }
+    }
+
+    private void save() {
+        String canonical = canonicalChain();
+        if (canonical == null) {
+            return;
+        }
         configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_MODULES, canonical);
         configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_ENABLED, enabledBox.isSelected());
         configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_LOOP, loopBox.isSelected());
         chainField.setText(canonical);
-        setStatus("Saved " + chain.size() + " module(s) for this profile", OK_COLOR);
+        setStatus("Saved active chain (" + ModuleChain.parse(canonical).size()
+                + " module(s)) for this profile", OK_COLOR);
     }
 
     private void delete() {
