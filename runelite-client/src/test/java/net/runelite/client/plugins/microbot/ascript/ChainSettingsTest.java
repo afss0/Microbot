@@ -25,6 +25,19 @@ public class ChainSettingsTest {
     }
 
     @Test
+    public void dragonBoltChainIsValid() {
+        ModuleChain chain = ModuleChain.parse(
+                "FLETCHING(fletchingActivity=BOLTS,fletchingBoltType=DRAGON);"
+                        + "FLETCHING(fletchingActivity=BOLT_TIPS,fletchingBoltTipType=DRAGON_RUBY);"
+                        + "BOLT_ENCHANT(boltEnchantBoltType=RUBY_DRAGON)");
+        assertNull(ChainSettings.validate(chain));
+        assertEquals(3, chain.size());
+        assertEquals(ScriptType.FLETCHING, chain.entries().get(0).getType());
+        assertEquals(ScriptType.FLETCHING, chain.entries().get(1).getType());
+        assertEquals(ScriptType.BOLT_ENCHANT, chain.entries().get(2).getType());
+    }
+
+    @Test
     public void appliesTypedOverridesThroughConfigManager() {
         ModuleChain.Step step = ModuleChain.parse(
                 "FLETCHING(fletchingActivity=BOLTS,fletchingBoltType=MITHRIL)")
