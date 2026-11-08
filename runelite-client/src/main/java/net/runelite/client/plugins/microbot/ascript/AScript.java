@@ -178,6 +178,15 @@ public class AScript extends Script {
     private ScriptType lastSelection = ScriptType.IDLE;
     /** Last "waiting for configuration" message logged — the hold logs once per change. */
     private String lastSelectionError = null;
+    /** Configured chain and its session cursor; {@code null} until the first enabled tick. */
+    private ModuleChain moduleChain;
+    /** Last chainModules text parsed — a config edit starts a fresh chain session. */
+    private String chainSpecCache;
+    /** Whether the current invalid chain text has already been logged. */
+    private boolean chainParseErrorLogged;
+    /** Human-readable chain position for the overlay, or {@code null} when no chain is active. */
+    @Getter
+    private String chainStatus;
     /**
      * True while the last tick actually ran automation (config enabled + a module selected).
      * The idle branch uses it to close only a bank THIS run may have left open — and clears
@@ -236,6 +245,10 @@ public class AScript extends Script {
         this.runWasActive = false;
         this.lastStopMessage = null;
         this.idleHoldAnnounced = false;
+        this.moduleChain = null;
+        this.chainSpecCache = null;
+        this.chainParseErrorLogged = false;
+        this.chainStatus = null;
         resetGameHold();
         resetQolState();
         // A previous run must not leave a slot-lock capability failure or a menu swap armed.
@@ -600,8 +613,201 @@ public class AScript extends Script {
         gameHoldSince = 0;
     }
 
+    /**
+     * Apply the configured module chain to the selection read from config.
+     * <p>
+     * The chain owns only the transition rule, not module internals: a self-stop writes
+     * {@link ScriptType#IDLE} (the existing module contract), and this method turns that
+     * IDLE into the next configured step. A hard orchestrator stop disables automation and
+     * never reaches this method; the only orchestrator stop that is chainable is the
+     * "No Materials" verdict, handled in {@link #stopWithMessage(String, String, boolean)}.
+     */
+    private ScriptType applyConfiguredChain(ScriptType selection) {
+        if (!config.chainEnabled()) {
+            resetChainSession();
+            return selection;
+        }
+
+        String spec = config.chainModules() == null ? "" : config.chainModules().trim();
+        if (!spec.equals(chainSpecCache)) {
+            chainSpecCache = spec;
+            chainParseErrorLogged = false;
+            chainStatus = null;
+            try {
+                moduleChain = ModuleChain.parse(spec);
+                if (!moduleChain.isEmpty()) {
+                    log.info("[AScript] Module chain configured: {}", describeChain(moduleChain));
+                }
+            } catch (IllegalArgumentException ex) {
+                moduleChain = null;
+                if (!chainParseErrorLogged) {
+                    chainParseErrorLogged = true;
+                    log.warn("[AScript] Invalid module chain '{}': {}", spec, ex.getMessage());
+                }
+            }
+        }
+
+        if (moduleChain == null || moduleChain.isEmpty()) {
+            chainStatus = null;
+            return selection;
+        }
+        if (moduleChain.isFinished()) {
+            // A finished chain does not auto-start on the next IDLE tick, but a manual
+            // selection of one of its steps is a deliberate restart.
+            if (selection != ScriptType.IDLE && moduleChain.contains(selection)) {
+                moduleChain.startAt(selection);
+                updateChainStatus();
+                log.info("[AScript] Chain restarted at manual selection: {}", chainStatus);
+            } else {
+                chainStatus = null;
+            }
+            return selection;
+        }
+        if (!config.enabled()) {
+            // An IDLE selection while automation is off is not a module stop: do not let a
+            // stale cursor turn it into an advance when the switch is turned back on.
+            if (selection == ScriptType.IDLE && moduleChain != null) {
+                moduleChain.reset();
+                chainStatus = null;
+            }
+            return selection;
+        }
+
+        if (!moduleChain.isStarted()) {
+            if (selection == ScriptType.IDLE) {
+                ScriptType first = moduleChain.start();
+                if (first != null) {
+                    setScriptSelection(first);
+                    updateChainStatus();
+                    log.info("[AScript] Chain started: {}", chainStatus);
+                    return first;
+                }
+            } else if (moduleChain.contains(selection)) {
+                // A manual selection of a configured module seeds the chain at that step.
+                moduleChain.startAt(selection);
+                updateChainStatus();
+            }
+            return selection;
+        }
+
+        if (selection == moduleChain.current()) {
+            updateChainStatus();
+            return selection;
+        }
+        if (selection == ScriptType.IDLE) {
+            return advanceChain("module stopped");
+        }
+        if (moduleChain.contains(selection)) {
+            moduleChain.startAt(selection);
+            updateChainStatus();
+            log.info("[AScript] Chain restarted at manual selection: {}", chainStatus);
+            return selection;
+        }
+
+        // The user picked a module outside the configured chain: honour the manual choice
+        // and end this chain session instead of fighting the dropdown.
+        log.info("[AScript] Chain stopped: manual selection {} is outside the chain",
+                selection.getName());
+        moduleChain.finish();
+        chainStatus = null;
+        return selection;
+    }
+
+    /**
+     * Move to the next chain step. Returns {@link ScriptType#IDLE} when the chain ends without
+     * looping. The next selection is written to config here; the caller only has to carry the
+     * returned value through the current tick.
+     */
+    private ScriptType advanceChain(String reason) {
+        if (moduleChain == null || !moduleChain.isStarted()) {
+            return ScriptType.IDLE;
+        }
+        ScriptType previous = moduleChain.current();
+        ScriptType next = moduleChain.advance(config.chainLoop());
+        if (next == null) {
+            chainStatus = null;
+            setScriptSelection(ScriptType.IDLE);
+            Microbot.status = "CHAIN — finished";
+            log.info("[AScript] Chain finished after {}: {} ({} step(s))",
+                    reason, previous, moduleChain.size());
+            return ScriptType.IDLE;
+        }
+        setScriptSelection(next);
+        updateChainStatus();
+        Microbot.status = "CHAIN — starting " + next.getName();
+        log.info("[AScript] Chain advanced after {}: {} -> {}", reason, previous, next);
+        return next;
+    }
+
+    /**
+     * Chainable orchestrator stop: if a next step exists, select it and keep automation
+     * enabled. Hard failures never call this path, so a broken bank/login/config still stops
+     * the whole run instead of marching through the chain.
+     */
+    private boolean advanceChainAfterStop(String reason) {
+        if (config == null || !config.chainEnabled()
+                || moduleChain == null || !moduleChain.isStarted()) {
+            return false;
+        }
+        ScriptType previous = moduleChain.current();
+        ScriptType next = moduleChain.advance(config.chainLoop());
+        if (next == null) {
+            chainStatus = null;
+            setScriptSelection(ScriptType.IDLE);
+            log.info("[AScript] Chain finished after {}: {}", reason, previous);
+            return false;
+        }
+        setScriptSelection(next);
+        updateChainStatus();
+        stopRequested = false;
+        lastStopMessage = null;
+        currentPhase = Phase.IDLE;
+        Microbot.status = "CHAIN — starting " + next.getName();
+        log.warn("[AScript] Chain advanced after {}: {} -> {}", reason, previous, next);
+        AScriptNotify.notify("aScript chain", reason + " — starting " + next.getName());
+        return true;
+    }
+
+    private void updateChainStatus() {
+        if (moduleChain == null || !moduleChain.isStarted()) {
+            chainStatus = null;
+            return;
+        }
+        chainStatus = moduleChain.current().getName() + " (" + moduleChain.position()
+                + "/" + moduleChain.size() + ")";
+    }
+
+    private static String describeChain(ModuleChain chain) {
+        StringBuilder text = new StringBuilder();
+        for (ScriptType step : chain.steps()) {
+            if (text.length() > 0) {
+                text.append(" -> ");
+            }
+            text.append(step.name());
+        }
+        return text.toString();
+    }
+
+    private void setScriptSelection(ScriptType selection) {
+        if (Microbot.getConfigManager() != null) {
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP,
+                    "scriptSelection", selection);
+        }
+    }
+
+    /** Drop the chain session; the configured text and its parsed steps are re-read next tick. */
+    private void resetChainSession() {
+        moduleChain = null;
+        chainSpecCache = null;
+        chainParseErrorLogged = false;
+        chainStatus = null;
+    }
+
     private void tick() {
         ScriptType selection = config == null ? ScriptType.IDLE : config.scriptSelection();
+        if (config != null) {
+            selection = applyConfiguredChain(selection);
+        }
         if (selection != lastSelection) {
             // A different module starts from zero: a bank/missing streak earned by the
             // previous selection must never decide the new one's fate. QOL state is
@@ -787,7 +993,7 @@ public class AScript extends Script {
                 } else if (mirrorLive && consecutiveMissingVerdicts >= MISSING_CONFIRMATION_TICKS) {
                     stopWithMessage("aScript Stopped — No Materials ("
                                     + bankModule.getClass().getSimpleName() + ")",
-                            bankModule.describeMissing(config));
+                            bankModule.describeMissing(config), true);
                 }
                 return;
             }
@@ -1171,7 +1377,20 @@ public class AScript extends Script {
      * this switch alone.
      */
     private void stopWithMessage(String title, String message) {
+        stopWithMessage(title, message, false);
+    }
+
+    /**
+     * @param chainable {@code true} only for a module-completion stop (today: "No Materials").
+     *                  When the chain has a next step, automation stays enabled and the next
+     *                  module is selected; hard infrastructure failures pass {@code false}.
+     */
+    private void stopWithMessage(String title, String message, boolean chainable) {
         if (stopRequested) return; // already stopping
+        if (chainable && advanceChainAfterStop(title + ": " + message)) {
+            enterAutomationIdle();
+            return;
+        }
         stopRequested = true;
         consecutiveBankFailures = 0;
         consecutiveBankOpenFailures = 0;
@@ -1202,6 +1421,10 @@ public class AScript extends Script {
         lastSelection = ScriptType.IDLE;
         lastSelectionError = null;
         lastStopMessage = null;
+        moduleChain = null;
+        chainSpecCache = null;
+        chainParseErrorLogged = false;
+        chainStatus = null;
         idleHoldAnnounced = false;
         runWasActive = false;
         resetGameHold();

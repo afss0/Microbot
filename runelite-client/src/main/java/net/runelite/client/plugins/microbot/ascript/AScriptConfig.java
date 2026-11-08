@@ -65,12 +65,45 @@ public interface AScriptConfig extends Config {
     }
 
     @ConfigItem(
+            keyName = "chainEnabled",
+            name = "Enable module chain",
+            description = "Run the configured module chain. When the current module stops, the next step is selected automatically",
+            position = 2,
+            section = automationSection
+    )
+    default boolean chainEnabled() {
+        return false;
+    }
+
+    @ConfigItem(
+            keyName = "chainModules",
+            name = "Module chain",
+            description = "Comma/semicolon separated module tags, e.g. MINING,CRAFTING. Edit it from the aScript Chain panel",
+            position = 3,
+            section = automationSection
+    )
+    default String chainModules() {
+        return "";
+    }
+
+    @ConfigItem(
+            keyName = "chainLoop",
+            name = "Loop module chain",
+            description = "After the last module stops, start the first chain module again",
+            position = 4,
+            section = automationSection
+    )
+    default boolean chainLoop() {
+        return false;
+    }
+
+    @ConfigItem(
             keyName = "recoverUnexpectedLogout",
             name = "Recover from unexpected logout",
             description = "After an unexpected logout while automation is on, re-login with 5 attempts" +
                     " and exponential backoff (weather-modulated). Automation is only stopped, with a" +
                     " Discord notification, after every attempt fails",
-            position = 2,
+            position = 5,
             section = automationSection
     )
     default boolean recoverUnexpectedLogout() {

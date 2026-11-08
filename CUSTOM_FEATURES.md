@@ -177,8 +177,9 @@ Used during merges to verify nothing is lost.
 ## Build
 
 ### aScript — AIO Multi-Script Orchestrator
-- **Files:** `ascript/` package (AScript.java, AScriptConfig.java, AScriptPlugin.java, AScriptOverlay.java, ScriptType.java, crafting/)
+- **Files:** `ascript/` package (AScript.java, AScriptConfig.java, AScriptPlugin.java, AScriptOverlay.java, ScriptType.java, ModuleChain.java, AScriptChainPanel.java, crafting/)
 - **What:** AIO script hosting multiple automation scripts under one plugin, built on standard `Script` (Phase enum: DISABLED/IDLE/WAITING/BANKING/RUNNING/ERROR — migrated from StateMachineScript). `Phase` describes the **automation** state only; QOL state (auto-eat) is reported separately. Modules are plain helper classes (no Guice, no Script inheritance).
+- **Module chain:** an optional ordered list of module tags (`MINING,CRAFTING,...`) edited in the aScript Chain sidebar panel. When the current module self-stops (`scriptSelection = IDLE`), or the orchestrator's "No Materials" verdict fires, the next configured module is selected and automation stays on; the last step stops normally unless "Loop at the end" is enabled. Hard orchestrator failures (bank unreachable, bank will not close, invalid selection) never advance the chain. The chain list is stored per RuneLite profile (`chainEnabled`, `chainModules`, `chainLoop`), and the panel saves/deletes it explicitly.
 - **Current modules:**
   - **Crafting** (`ascript/crafting/`) — Gem Cutting, Glassblowing, Staff Making, Flax Spinning, Dragon Leather, Jewelry
   - **Random event handler** (`ascript/eventdismiss/`) — always-on Genie/Count Check dismissal + XP lamp use (lamp skill configurable); banking interlock keeps lamps out of deposits (locked lamp slot + bank yield)
@@ -194,9 +195,9 @@ Used during merges to verify nothing is lost.
   - AFK timing: `Rs2Random.logNormalBounded(3000, 60000, weatherMultiplier)`
   - Animation waits: `Rs2Random.logNormalBounded(15000, 45000, weatherMultiplier)`
   - Widget interactions use `sleepUntilTrue()` for production widget detection (no fixed sleeps)
-  - Missing materials → immediate stop with status message (no silent failures)
+  - Missing materials → stop with status message (or advance to the next chain step when a chain is active)
 - **Weather integration:** `WeatherModulation.ensureFresh()` called once per craft cycle; `combinedSpeedFactor()` scales all waits
-- **Config:** Automation section (enabled + dropdown) at position 0, QOL section at position 1, per-module sections (closedByDefault) after them in alphabetical order — see the config-order entry below
+- **Config:** Automation section (enabled + dropdown + module-chain controls) at position 0, QOL section at position 1, per-module sections (closedByDefault) after them in alphabetical order — see the config-order entry below
 - **Review fixes (Aug 2026):**
   - Flax Spinning now walks to the configured spinning wheel (`flaxSpinLocation`), turns camera, interacts with "Spin"; stops once + Discord notify when wheel/location missing (was: no navigation at all)
   - `tick()` honors `Rs2Bank.openBank()` return value — failed open retries next tick instead of checking stock against an empty bank snapshot (false "missing materials" stop)
@@ -374,7 +375,7 @@ Used during merges to verify nothing is lost.
   - Merge check: `grep "DRAGON_PICKAXE_PRETTY" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/motherloadmine/Pickaxe.java | head -1`
 - **Inventory drops install the Drop entry as the left-click (Oct 2026):**
   - A raw left click on an inventory slot dispatches the item's **default** action — `Use` for raw fish, ore and logs — so the sliced droppers used every item instead of dropping it (live report 2026-10-24), and the count-drop verification stopped the module.
-  - Fix, in the aScript plugin only (no shared Microbot API change): `AScriptClick.dropAtSlot(slot, itemId)` uses Menu Entry Swapper mechanics. The client builds the slot's real menu entries on hover; `AScriptClick.onPostMenuSort()` (subscribed by the aScript plugin, same `client.isMenuOpen()` guard as MES) moves the item's real `Drop` entry to the top of that array, so the left click dispatches the game's own entry. No fabricated entry, no injection, no open menu, one click per drop.
+  - Fix, in the aScript plugin only (no shared Microbot API change): `AScriptClick.dropAtSlot(slot, itemId)` uses Menu Entry Swapper mechanics. The client builds the slot's real menu entries on hover; `AScriptClick.onPostMenuSort()` (subscribed by the aScript plugin, same `client.isMenuOpen()` guard as MES) moves the item's real `Drop` entry to the top of that array, so the left click dispatches the game's own entry. No fabricated entry, no injection, no open menu, one click per drop. If that swap cannot resolve (pending cursor selection, stale hover, missed `PostMenuSort` at low FPS), the recipe's last resort is a right-click and a click on the client's real `Drop` row; it never falls back to a blind left click.
   - `AScriptPick.dropRoute(itemId)` precomputes the route: the slots holding that item right now, shuffled once (Fisher-Yates), so a pass never draws a slot twice; `dropAtSlot` re-reads the slot and skips one already emptied — one pass clears the bag.
   - Modules: BVF, Barbarian Fishing, Mining, Motherload Mine (gems + hammer cleanup), Woodcutting.
   - Merge check: `grep "dropAtSlot" runelite-client/src/main/java/net/runelite/client/plugins/microbot/ascript/util/AScriptClick.java | head -1`
