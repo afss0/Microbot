@@ -76,6 +76,14 @@ public class AScriptOverlay extends OverlayPanel {
                     .right(automation)
                     .build());
 
+            if (config.chainEnabled()) {
+                String chain = script.getChainStatus();
+                panelComponent.getChildren().add(LineComponent.builder()
+                        .left("Chain:")
+                        .right(chain == null ? "idle" : chain)
+                        .build());
+            }
+
             // QOL is independent of the automation switch and stays visible while it is off.
             panelComponent.getChildren().add(LineComponent.builder()
                     .left("QOL:")
