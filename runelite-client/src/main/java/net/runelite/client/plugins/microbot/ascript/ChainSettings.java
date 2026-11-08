@@ -27,7 +27,8 @@ final class ChainSettings {
             "scriptSelection",
             "chainEnabled",
             "chainModules",
-            "chainLoop"
+            "chainLoop",
+            ChainPresetStore.CONFIG_KEY
     );
 
     private static final Map<String, Setting> SETTINGS = buildSettings();
