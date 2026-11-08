@@ -19,7 +19,6 @@ import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
@@ -49,8 +48,8 @@ public class AScriptChainPanel extends PluginPanel {
     private final ConfigManager configManager;
     private final JComboBox<ScriptType> moduleBox;
     private final JTextField chainField = new JTextField();
-    private final DefaultListModel<ScriptType> chainModel = new DefaultListModel<>();
-    private final JList<ScriptType> chainList = new JList<>(chainModel);
+    private final DefaultListModel<ModuleChain.Step> chainModel = new DefaultListModel<>();
+    private final JList<ModuleChain.Step> chainList = new JList<>(chainModel);
     private final JCheckBox enabledBox = new JCheckBox("Enable chain");
     private final JCheckBox loopBox = new JCheckBox("Loop at the end");
     private final JLabel status = new JLabel(" ");
@@ -83,7 +82,7 @@ public class AScriptChainPanel extends PluginPanel {
         add(addButton);
         add(Box.createRigidArea(new Dimension(0, 8)));
 
-        JLabel fieldLabel = new JLabel("Tags (comma-separated)");
+        JLabel fieldLabel = new JLabel("Steps (comma/semicolon separated; overrides in parentheses)");
         fieldLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         add(fieldLabel);
         chainField.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -172,7 +171,7 @@ public class AScriptChainPanel extends PluginPanel {
             return;
         }
         String current = chainField.getText().trim();
-        chainField.setText(current.isEmpty() ? selected.name() : current + "," + selected.name());
+        chainField.setText(current.isEmpty() ? selected.name() : current + ";" + selected.name());
         chainField.requestFocusInWindow();
     }
 
@@ -181,15 +180,15 @@ public class AScriptChainPanel extends PluginPanel {
         if (index < 0) {
             return;
         }
-        List<ScriptType> remaining = new ArrayList<>();
+        List<ModuleChain.Step> remaining = new ArrayList<>();
         for (int i = 0; i < chainModel.size(); i++) {
             if (i != index) {
                 remaining.add(chainModel.get(i));
             }
         }
         chainField.setText(remaining.stream()
-                .map(Enum::name)
-                .collect(Collectors.joining(",")));
+                .map(ModuleChain.Step::toConfigText)
+                .collect(Collectors.joining(";")));
     }
 
     private void updatePreview() {
@@ -203,8 +202,13 @@ public class AScriptChainPanel extends PluginPanel {
         chainModel.clear();
         try {
             ModuleChain chain = ModuleChain.parse(chainField.getText());
-            for (ScriptType type : chain.steps()) {
-                chainModel.addElement(type);
+            String settingsError = ChainSettings.validate(chain);
+            if (settingsError != null) {
+                setStatus(settingsError, ERROR_COLOR);
+                return;
+            }
+            for (ModuleChain.Step step : chain.entries()) {
+                chainModel.addElement(step);
             }
             if (chain.isEmpty()) {
                 setStatus("No modules configured", Color.GRAY);
@@ -221,13 +225,18 @@ public class AScriptChainPanel extends PluginPanel {
         final ModuleChain chain;
         try {
             chain = ModuleChain.parse(chainField.getText());
+            String settingsError = ChainSettings.validate(chain);
+            if (settingsError != null) {
+                setStatus(settingsError, ERROR_COLOR);
+                return;
+            }
         } catch (IllegalArgumentException ex) {
             setStatus(ex.getMessage(), ERROR_COLOR);
             return;
         }
-        String canonical = chain.steps().stream()
-                .map(Enum::name)
-                .collect(Collectors.joining(","));
+        String canonical = chain.entries().stream()
+                .map(ModuleChain.Step::toConfigText)
+                .collect(Collectors.joining(";"));
         configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_MODULES, canonical);
         configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_ENABLED, enabledBox.isSelected());
         configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_LOOP, loopBox.isSelected());
