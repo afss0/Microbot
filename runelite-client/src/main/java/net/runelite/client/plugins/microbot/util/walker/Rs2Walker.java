@@ -975,6 +975,10 @@ public class Rs2Walker {
         return seasonalTransportHandlers;
     }
 
+    public static String getLastUnreachableReason() {
+        return Telemetry.lastReason;
+    }
+
     /**
      * Externally observable counters for walker health checks. The benchmark probe
      * (or any diagnostic script) reads these to decide whether a walk completed
