@@ -213,6 +213,11 @@ public class Rs2Player {
         }
     }
 
+    /**
+     * Handles animation changes for the local player. Animation ID 0 is not a real animation
+     * on the current client (some updates report it between animations); only positive ids
+     * extend the recent-animation window.
+     */
     public static void handleAnimationChanged(AnimationChanged event) {
         if (!(event.getActor() instanceof Player)) {
             return;
@@ -223,7 +228,7 @@ public class Rs2Player {
             return;
         }
 
-        if (player.getAnimation() != AnimationID.IDLE) {
+        if (player.getAnimation() > 0) {
             lastAnimationTime = Instant.now();
             lastAnimationID = player.getAnimation();
         }
@@ -324,14 +329,27 @@ public class Rs2Player {
 
     /**
      * Checks if the player has been animating within the past specified milliseconds.
+     * <p>
+     * Only positive animation ids count. The current client can report {@code 0} between
+     * animations (and {@link AnimationID#IDLE} is {@code -1}), so the old
+     * {@code != AnimationID.IDLE} check treated an idle player as permanently animating.
      *
      * @param ms The time window (in milliseconds) to check for recent animations.
-     * @return {@code true} if the player has been animating within the last {@code ms} milliseconds,
-     *         or if the player's current animation is not {@code AnimationID.IDLE}, {@code false} otherwise.
+     * @return {@code true} if the player has been animating within the last {@code ms}
+     *         milliseconds, or if the player's current animation is positive, {@code false}
+     *         otherwise.
      */
     public static boolean isAnimating(int ms) {
-        return (lastAnimationTime != null && Duration.between(lastAnimationTime, Instant.now()).toMillis() < ms)
-                || getAnimation() != AnimationID.IDLE;
+        int current = getAnimation();
+        if (current > 0) {
+            // Keep the recent-animation window fresh even when AnimationChanged did not fire
+            // (the event is not guaranteed for every animation transition on every client).
+            lastAnimationTime = Instant.now();
+            lastAnimationID = current;
+        }
+        return current > 0
+                || (lastAnimationTime != null
+                && Duration.between(lastAnimationTime, Instant.now()).toMillis() < ms);
     }
 
     /**

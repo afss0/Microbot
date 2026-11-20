@@ -245,6 +245,13 @@ public class AntibanPlugin extends Plugin {
                     Rs2Antiban.TIMEOUT = 0;
                     Rs2AntibanSettings.actionCooldownActive = false;
                 }
+                // A restart/logout can interrupt an action cooldown after it paused all
+                // scripts. Clearing only actionCooldownActive would leave that pause orphaned:
+                // performActionBreak() no longer runs, and the next login stays paused until
+                // the user disables/re-enables the automation plugin. Release only the pause
+                // this cooldown owns; a user/break-handler pause is untouched.
+                Rs2Antiban.releaseCooldownPause();
+                break;
             case LOGGING_IN:
             case HOPPING:
                 ready = true;

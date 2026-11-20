@@ -1218,6 +1218,11 @@ public class CraftingScript implements AModule {
             }
         }
 
+        // Snapshot the bars BEFORE the product click. Taking it afterwards loses a bar that
+        // the client consumes during the click, so the count-drop confirmation can never fire
+        // and a batch that did start is reported as "craft did not start".
+        int before = Rs2Inventory.count(item.getJewelryType().getMetalBarId());
+
         // Click our item. The option can populate a tick after the interface appears and the
         // name search can miss while the widget tree settles — RETRY until the click is
         // actually dispatched. A single silent miss here is what used to send the old loop
@@ -1238,11 +1243,12 @@ public class CraftingScript implements AModule {
             return false;
         }
 
-        // Confirm the batch started: the player animates or a bar is consumed.
-        int before = Rs2Inventory.count(item.getJewelryType().getMetalBarId());
+        // Confirm the batch started: a bar was consumed, XP arrived, or the player animates.
+        // The longer window covers the client's click-to-first-bar latency on busy worlds.
         if (!sleepUntil(() -> Rs2Player.isAnimating()
-                || Rs2Inventory.count(item.getJewelryType().getMetalBarId()) < before,
-                Rs2Random.logNormalBounded(1500, 3000, weatherMultiplier))) {
+                        || Microbot.isGainingExp
+                        || Rs2Inventory.count(item.getJewelryType().getMetalBarId()) < before,
+                Rs2Random.logNormalBounded(4000, 7000, weatherMultiplier))) {
             failJewelryAttempt("craft did not start");
             return false;
         }
