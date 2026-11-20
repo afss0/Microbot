@@ -20,9 +20,10 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 /**
- * Contract of the transient cursor-speed multiplier used by the sliced inventory drop
- * ({@code AScriptDrop}): the setter hands back the previous value so a caller can restore it,
- * out-of-range requests are clamped instead of applied, and the default is inert.
+ * Contract of the transient cursor-speed multiplier used for slow-only pacing scopes:
+ * the setter hands back the previous value so a caller can restore it, out-of-range
+ * requests are clamped instead of applied, the default is inert, and no caller can
+ * accelerate past the forced-slow tier.
  * <p>
  * Pure static state — no client, no mouse motion — so it runs in the plain unit suite.
  */
@@ -44,12 +45,12 @@ public class NaturalMouseSpeedMultiplierTest
 	}
 
 	@Test
-	public void tripleIsAppliedAndReportsThePreviousValue()
+	public void halfSlowdownIsAppliedAndReportsThePreviousValue()
 	{
 		original = NaturalMouse.getSpeedMultiplier();
-		double previous = NaturalMouse.setSpeedMultiplier(3.0);
+		double previous = NaturalMouse.setSpeedMultiplier(0.5);
 		assertEquals("setter returns the value it replaced", original, previous, 0.0);
-		assertEquals("the boost is observable while it is armed", 3.0,
+		assertEquals("the slowdown is observable while it is armed", 0.5,
 				NaturalMouse.getSpeedMultiplier(), 0.0);
 	}
 
@@ -57,27 +58,27 @@ public class NaturalMouseSpeedMultiplierTest
 	public void restoringThePreviousValueReturnsToBaseline()
 	{
 		original = NaturalMouse.getSpeedMultiplier();
-		double previous = NaturalMouse.setSpeedMultiplier(3.0);
+		double previous = NaturalMouse.setSpeedMultiplier(0.5);
 		NaturalMouse.setSpeedMultiplier(previous);
-		assertEquals("the drop must not leak its speed into later actions", original,
+		assertEquals("the action must not leak its slowdown into later actions", original,
 				NaturalMouse.getSpeedMultiplier(), 0.0);
 	}
 
 	@Test
-	public void aboveTheCeilingClampsInsteadOfTeleporting()
+	public void aboveTheBaselineClampsInsteadOfAccelerating()
 	{
 		original = NaturalMouse.getSpeedMultiplier();
-		NaturalMouse.setSpeedMultiplier(50.0);
-		assertEquals("a runaway multiplier is clamped to the ceiling", 5.0,
+		NaturalMouse.setSpeedMultiplier(3.0);
+		assertEquals("a caller cannot speed up past the forced-slow tier", 1.0,
 				NaturalMouse.getSpeedMultiplier(), 0.0);
 	}
 
 	@Test
-	public void belowOneIsIgnored()
+	public void belowTheSlowFloorClamps()
 	{
 		original = NaturalMouse.getSpeedMultiplier();
-		NaturalMouse.setSpeedMultiplier(0.25);
-		assertEquals("slowing the cursor below 1x is not a supported boost", 1.0,
+		NaturalMouse.setSpeedMultiplier(0.1);
+		assertEquals("a runaway slowdown is clamped to the floor", 0.5,
 				NaturalMouse.getSpeedMultiplier(), 0.0);
 	}
 }
