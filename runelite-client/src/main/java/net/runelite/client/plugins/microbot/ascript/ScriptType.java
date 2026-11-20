@@ -7,6 +7,11 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum ScriptType {
     IDLE("Idle"),
+    /**
+     * Virtual selection: run the configured module chain. It is never a module step and is
+     * resolved to the first step by the orchestrator before dispatch.
+     */
+    MODULE_CHAIN("Module Chain"),
     CRAFTING("Crafting"),
     FLETCHING("Fletching"),
     MOTHERLOAD_MINE("Motherload Mine"),

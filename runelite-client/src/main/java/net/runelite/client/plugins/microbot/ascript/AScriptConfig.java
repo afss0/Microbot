@@ -56,7 +56,7 @@ public interface AScriptConfig extends Config {
     @ConfigItem(
             keyName = "scriptSelection",
             name = "Script",
-            description = "Automation script to run. Idle = no script selected",
+            description = "Automation script to run. Idle = no script selected; Module Chain = run the configured chain",
             position = 1,
             section = automationSection
     )
@@ -67,7 +67,7 @@ public interface AScriptConfig extends Config {
     @ConfigItem(
             keyName = "chainEnabled",
             name = "Enable module chain",
-            description = "Run the configured module chain. When the current module stops, the next step is selected automatically",
+            description = "Allow the configured chain to run. Selecting Module Chain in Script enables this automatically",
             position = 2,
             section = automationSection
     )

@@ -74,7 +74,7 @@ public class AScriptChainPanel extends PluginPanel {
         add(Box.createRigidArea(new Dimension(0, 8)));
 
         List<ScriptType> modules = Arrays.stream(ScriptType.values())
-                .filter(type -> type != ScriptType.IDLE)
+                .filter(type -> type != ScriptType.IDLE && type != ScriptType.MODULE_CHAIN)
                 .collect(Collectors.toList());
         moduleBox = new JComboBox<>(modules.toArray(new ScriptType[0]));
         moduleBox.setAlignmentX(Component.LEFT_ALIGNMENT);

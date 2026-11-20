@@ -10,6 +10,7 @@ import net.runelite.api.widgets.ComponentID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.Script;
+import net.runelite.client.plugins.microbot.ScriptPauseController;
 import net.runelite.client.plugins.microbot.ascript.ammonitecrabs.AmmoniteCrabsScript;
 import net.runelite.client.plugins.microbot.ascript.barbarianfishing.BarbarianFishingScript;
 import net.runelite.client.plugins.microbot.ascript.barbarianvillagefisher.BarbarianVillageFisherScript;
@@ -60,7 +61,8 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@code AScriptConfig#enabled()} — <b>automation</b> permission: may a module
  *       dispatch at all;</li>
  *   <li>{@code AScriptConfig#scriptSelection()} — <b>which</b> module; {@link ScriptType#IDLE}
- *       means "none selected".</li>
+ *       means "none selected", and {@link ScriptType#MODULE_CHAIN} is the virtual selection
+ *       that starts the configured module chain.</li>
  * </ol>
  * QOL features are not automation: they run on every tick regardless of the automation
  * switch and the selection, each gated only by its own config toggle. The random-event
@@ -230,6 +232,9 @@ public class AScript extends Script {
     private GameReadinessMonitor.Readiness gameHoldReason;
     /** When this hold started; {@code 0} while ready. */
     private long gameHoldSince;
+    /** Last time the current hold reason was logged; periodic proof that the gate is sampling. */
+    private long gameHoldLastLog;
+    private static final long GAME_HOLD_LOG_MS = 5_000;
     /**
      * How long automation may wait for a ready game before stopping loudly. Covers a slow region
      * load plus the monitor's own {@link GameReadinessMonitor#STALL_MS} window.
@@ -276,12 +281,12 @@ public class AScript extends Script {
                 }
                 playerWasLoggedIn = true;
 
-                if (!super.run()) return; // heartbeat / pause guard
-
-                // Nothing touches the client until the game is actually running: not the modules
-                // and not QOL. A logged-in client can still be building the scene, and a dead
-                // client keeps reporting LOGGED_IN with a stale player (see GameReadinessMonitor).
+                // Readiness is sampled even while scripts are paused: a pause (break handler,
+                // antiban cooldown, manual input) must not freeze the verdict forever. It only
+                // reads client fields, so it is safe ahead of the pause/blocking-event guard.
                 if (!awaitGameReady()) return;
+
+                if (!super.run()) return; // heartbeat / pause guard
 
                 tick();
                 consecutiveTickErrors = 0;
@@ -541,15 +546,19 @@ public class AScript extends Script {
             return true;
         }
 
-        // A configured chain counts as an automation request even before the chain has started
-        // its first step. The chain is started inside tick(), and tick() is behind this gate:
-        // while scriptSelection is still IDLE (the fresh-start state) the old check below saw
-        // "no module selected" and skipped the timeout, so a stuck readiness sample held the
-        // whole chain forever. A finished chain still has no pending work.
+        // A Module Chain selection counts as an automation request even before the chain has
+        // started its first step. The chain is started inside tick(), and tick() is behind this
+        // gate: while scriptSelection is still MODULE_CHAIN the old check saw "no module
+        // selected" and skipped the timeout, so a stuck readiness sample held the whole chain
+        // forever. A finished chain returns to IDLE and has no pending work.
         boolean automationRequested = automationRequested();
+        // A pause/blocking event must not turn a slow load into a hard stop: keep sampling and
+        // reporting the hold, but leave the timeout for a running (unpaused) loop.
+        boolean paused = Microbot.pauseAllScripts.get() || ScriptPauseController.isPaused();
 
-        if (gameHoldReason != readiness) {
+        if (gameHoldReason != readiness || now - gameHoldLastLog >= GAME_HOLD_LOG_MS) {
             gameHoldReason = readiness;
+            gameHoldLastLog = now;
             // Nothing else writes Microbot.status while the tick is held, so the overlay's status
             // line can carry the reason without racing the QOL block. The sample fields make a
             // future stall diagnosable from the log without attaching a debugger.
@@ -563,7 +572,7 @@ public class AScript extends Script {
             gameHoldSince = now;
         }
 
-        if (automationRequested) {
+        if (automationRequested && !paused) {
             currentPhase = Phase.WAITING;
             if (now - gameHoldSince >= GAME_READY_TIMEOUT_MS) {
                 stopWithMessage("aScript Stopped — Game Not Ready",
@@ -578,27 +587,17 @@ public class AScript extends Script {
     /**
      * Whether the user has asked automation to do something right now.
      * <p>
-     * A non-IDLE selection is the obvious case. A configured, unfinished module chain is the
-     * second one: its selection only becomes non-IDLE when {@code tick()} starts the first step,
-     * but {@code tick()} is blocked by the readiness gate. Without this case a chain stuck in
-     * the gate has no timeout at all.
+     * Any non-idle selection is a request. {@link ScriptType#MODULE_CHAIN} is included even
+     * before its first step has been selected: it is resolved inside {@code tick()}, which
+     * is behind the readiness gate, so treating it as idle here would let a chain wait
+     * forever on a client that never becomes ready. A finished chain returns to IDLE and is
+     * therefore no longer pending work.
      */
     private boolean automationRequested() {
         if (config == null || !config.enabled()) {
             return false;
         }
-        if (config.scriptSelection() != ScriptType.IDLE) {
-            return true;
-        }
-        if (!config.chainEnabled()) {
-            return false;
-        }
-        String spec = config.chainModules();
-        if (spec == null || spec.isBlank()) {
-            return false;
-        }
-        // null = the chain has not been parsed/started yet; a later tick would start it.
-        return moduleChain == null || !moduleChain.isFinished();
+        return config.scriptSelection() != ScriptType.IDLE;
     }
 
     /**
@@ -643,19 +642,31 @@ public class AScript extends Script {
         gameReadiness.reset();
         gameHoldReason = null;
         gameHoldSince = 0;
+        gameHoldLastLog = 0;
     }
 
     /**
      * Apply the configured module chain to the selection read from config.
      * <p>
+     * {@link ScriptType#MODULE_CHAIN} is the explicit chain request; it is resolved to the
+     * first step before dispatch. {@link ScriptType#IDLE} is now a true idle and never starts
+     * a chain. A started chain still uses IDLE as the existing module self-stop contract:
+     * when the current step stops, this method advances to the next one. Selecting Module
+     * Chain also enables the chain switch so the dropdown alone is enough to run the chain.
+     * <p>
      * The chain owns only the transition rule, not module internals: a self-stop writes
      * {@link ScriptType#IDLE} (the existing module contract), and this method turns that
-     * IDLE into the next configured step. A hard orchestrator stop disables automation and
-     * never reaches this method; the only orchestrator stop that is chainable is the
-     * "No Materials" verdict, handled in {@link #stopWithMessage(String, String, boolean)}.
+     * IDLE into the next configured step while the chain session is active. A hard
+     * orchestrator stop disables automation and never reaches this method; the only
+     * orchestrator stop that is chainable is the "No Materials" verdict, handled in
+     * {@link #stopWithMessage(String, String, boolean)}.
      */
     private ScriptType applyConfiguredChain(ScriptType selection) {
-        if (!config.chainEnabled()) {
+        boolean chainSelected = selection == ScriptType.MODULE_CHAIN;
+        if (chainSelected && !config.chainEnabled()) {
+            enableChainForSelection();
+        }
+        if (!config.chainEnabled() && !chainSelected) {
             resetChainSession();
             return selection;
         }
@@ -689,9 +700,12 @@ public class AScript extends Script {
             return selection;
         }
         if (moduleChain.isFinished()) {
-            // A finished chain does not auto-start on the next IDLE tick, but a manual
-            // selection of one of its steps is a deliberate restart.
-            if (selection != ScriptType.IDLE && moduleChain.contains(selection)) {
+            // Re-selecting Module Chain after a completed run is a deliberate restart. A
+            // finished chain still does not restart from a stray IDLE tick.
+            if (chainSelected) {
+                moduleChain.reset();
+                chainStatus = null;
+            } else if (selection != ScriptType.IDLE && moduleChain.contains(selection)) {
                 ModuleChain.Step seeded = moduleChain.startAtStep(selection);
                 if (seeded != null && applyStepSettings(seeded)) {
                     resetChainStepState();
@@ -701,15 +715,16 @@ public class AScript extends Script {
                     rejectChainStep();
                     return ScriptType.IDLE;
                 }
+                return selection;
             } else {
                 chainStatus = null;
+                return selection;
             }
-            return selection;
         }
         if (!config.enabled()) {
-            // An IDLE selection while automation is off is not a module stop: do not let a
-            // stale cursor turn it into an advance when the switch is turned back on.
-            if (selection == ScriptType.IDLE && moduleChain != null) {
+            // An IDLE/MODULE_CHAIN selection while automation is off is not a module stop:
+            // do not let a stale cursor turn it into an advance when the switch is turned on.
+            if ((selection == ScriptType.IDLE || chainSelected) && moduleChain != null) {
                 moduleChain.reset();
                 chainStatus = null;
             }
@@ -717,7 +732,7 @@ public class AScript extends Script {
         }
 
         if (!moduleChain.isStarted()) {
-            if (selection == ScriptType.IDLE) {
+            if (chainSelected) {
                 ModuleChain.Step first = moduleChain.startStep();
                 if (first != null && applyStepSettings(first)) {
                     resetChainStepState();
@@ -748,6 +763,14 @@ public class AScript extends Script {
             updateChainStatus();
             return selection;
         }
+        if (chainSelected) {
+            // The chain is already running; reasserting Module Chain keeps the current step
+            // rather than treating the virtual selection as a module outside the chain.
+            ScriptType current = moduleChain.current();
+            setScriptSelection(current);
+            updateChainStatus();
+            return current;
+        }
         if (selection == ScriptType.IDLE) {
             return advanceChain("module stopped");
         }
@@ -770,6 +793,15 @@ public class AScript extends Script {
         moduleChain.finish();
         chainStatus = null;
         return selection;
+    }
+
+    /** Selecting Module Chain is the explicit request; keep the legacy switch in sync. */
+    private void enableChainForSelection() {
+        if (Microbot.getConfigManager() != null) {
+            Microbot.getConfigManager().setConfiguration(AScriptConfig.GROUP,
+                    "chainEnabled", true);
+            log.info("[AScript] Module Chain selected — enabling the configured chain");
+        }
     }
 
     /**
@@ -940,8 +972,9 @@ public class AScript extends Script {
         runQol(config);
 
         // 2. Automation gate. The switch grants permission to run a module; IDLE means the
-        //    permission is granted but no module is selected. Both are distinct from the
-        //    plugin being off, where this loop does not run at all.
+        //    permission is granted but no module is selected. MODULE_CHAIN is also an idle
+        //    selection at this point when the chain is empty or its switch is off: it is a
+        //    virtual selection, not a module.
         if (!config.enabled()) {
             currentPhase = Phase.DISABLED;
             stopRequested = false;
@@ -952,12 +985,14 @@ public class AScript extends Script {
         // Re-enabling automation clears the previous stop banner, even before a script is
         // picked (the banner belongs to the stopped run, not to the idle selection).
         lastStopMessage = null;
-        if (selection == ScriptType.IDLE) {
+        if (selection == ScriptType.IDLE || selection == ScriptType.MODULE_CHAIN) {
             currentPhase = Phase.IDLE;
             stopRequested = false;
             if (!idleHoldAnnounced) {
                 idleHoldAnnounced = true;
-                log.info("[AScript] Automation idle — no script selected");
+                log.info(selection == ScriptType.MODULE_CHAIN
+                        ? "[AScript] Automation idle — module chain is not configured"
+                        : "[AScript] Automation idle — no script selected");
             }
             enterAutomationIdle();
             return;

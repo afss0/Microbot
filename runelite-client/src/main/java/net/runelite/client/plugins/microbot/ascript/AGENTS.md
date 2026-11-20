@@ -35,7 +35,7 @@ Three layers, each with exactly one meaning:
 |---|---|---|
 | RuneLite plugin toggle | `runelite.<plugin>` | **Master switch** — the loop, overlay and random-event handlers exist only while it is on |
 | `enabled()` | `aScript.enabled` | **Automation permission** — may a module dispatch? |
-| `scriptSelection()` | `aScript.scriptSelection` | **Which** module; `ScriptType.IDLE` = none selected (the dropdown default) |
+| `scriptSelection()` | `aScript.scriptSelection` | **Which** module; `ScriptType.IDLE` = none selected, `ScriptType.MODULE_CHAIN` = run the configured chain |
 
 | plugin | `enabled` | selection | Automation | QOL |
 |---|---|---|---|---|
@@ -264,7 +264,7 @@ public class MyModuleScript implements AModule {
 public interface AScriptConfig {
     // Automation section — position 0
     boolean enabled();            // Automation permission — may a module dispatch?
-    ScriptType scriptSelection(); // Which module; default ScriptType.IDLE (none)
+    ScriptType scriptSelection(); // Which module; default ScriptType.IDLE (none), MODULE_CHAIN = chain
 
     // QOL section — position 1, independent of the automation switch
     // autoZoomOut(), autoEat(), eventDismiss*()

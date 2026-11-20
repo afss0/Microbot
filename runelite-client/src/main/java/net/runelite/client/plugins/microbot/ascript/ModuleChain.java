@@ -285,8 +285,8 @@ public final class ModuleChain {
         } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("unknown module '" + raw + "'", ex);
         }
-        if (type == ScriptType.IDLE) {
-            throw new IllegalArgumentException("IDLE is not a chain step");
+        if (type == ScriptType.IDLE || type == ScriptType.MODULE_CHAIN) {
+            throw new IllegalArgumentException("IDLE and MODULE_CHAIN are not chain steps");
         }
         return type;
     }

@@ -34,6 +34,8 @@ public class AScriptOverlay extends OverlayPanel {
 
             boolean automationOn = config != null && config.enabled();
             boolean idle = config != null && config.scriptSelection() == ScriptType.IDLE;
+            boolean chainSelected = config != null
+                    && config.scriptSelection() == ScriptType.MODULE_CHAIN;
 
             // Colour: red = the last orchestrator stop, orange = automation off,
             // yellow = idle/configuration hold, green = automation running.
@@ -67,6 +69,9 @@ public class AScriptOverlay extends OverlayPanel {
                 automation = stop == null ? "Disabled" : "Stopped — " + stop;
             } else if (idle) {
                 automation = "Idle — select a script";
+            } else if (chainSelected) {
+                String chain = script.getChainStatus();
+                automation = "Module Chain — " + (chain == null ? "not configured" : chain);
             } else {
                 automation = config.scriptSelection().getName()
                         + " (" + script.getCurrentPhase() + ")";

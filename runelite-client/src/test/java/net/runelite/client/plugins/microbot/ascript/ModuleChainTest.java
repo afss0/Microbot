@@ -34,6 +34,11 @@ public class ModuleChainTest {
         ModuleChain.parse("MINING,IDLE");
     }
 
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsTheVirtualModuleChainSelectionAsAStep() {
+        ModuleChain.parse("MINING,MODULE_CHAIN");
+    }
+
     @Test
     public void parsesPerStepConfigOverrides() {
         ModuleChain chain = ModuleChain.parse(
