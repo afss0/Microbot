@@ -529,7 +529,8 @@ public class AScript extends Script {
      */
     private boolean awaitGameReady() {
         long now = System.currentTimeMillis();
-        GameReadinessMonitor.Readiness readiness = gameReadiness.update(sampleGame(), now);
+        GameReadinessMonitor.Sample sample = sampleGame();
+        GameReadinessMonitor.Readiness readiness = gameReadiness.update(sample, now);
 
         if (readiness == GameReadinessMonitor.Readiness.READY) {
             if (gameHoldReason != null) {
@@ -540,18 +541,23 @@ public class AScript extends Script {
             return true;
         }
 
-        // Only an automation request turns a hold into a timed stop. With the switch off — or no
-        // module selected — the player may sit on a loading screen for as long as they like; the
-        // hold still blocks the tick (QOL has nothing to act on while the world is loading).
-        boolean automationRequested = config != null && config.enabled()
-                && config.scriptSelection() != ScriptType.IDLE;
+        // A configured chain counts as an automation request even before the chain has started
+        // its first step. The chain is started inside tick(), and tick() is behind this gate:
+        // while scriptSelection is still IDLE (the fresh-start state) the old check below saw
+        // "no module selected" and skipped the timeout, so a stuck readiness sample held the
+        // whole chain forever. A finished chain still has no pending work.
+        boolean automationRequested = automationRequested();
 
         if (gameHoldReason != readiness) {
             gameHoldReason = readiness;
             // Nothing else writes Microbot.status while the tick is held, so the overlay's status
-            // line can carry the reason without racing the QOL block.
+            // line can carry the reason without racing the QOL block. The sample fields make a
+            // future stall diagnosable from the log without attaching a debugger.
             Microbot.status = "WAITING FOR GAME — " + readiness.description();
-            log.info("[AScript] Holding the tick — game not ready: {}", readiness.description());
+            log.info("[AScript] Holding the tick — game not ready: {} "
+                            + "(loggedIn={}, playerLoaded={}, regionLoaded={}, welcome={}, cycle={})",
+                    readiness.description(), sample.loggedIn(), sample.playerLoaded(),
+                    sample.regionLoaded(), sample.welcomeScreenOpen(), sample.gameCycle());
         }
         if (gameHoldSince == 0) {
             gameHoldSince = now;
@@ -567,6 +573,32 @@ public class AScript extends Script {
             }
         }
         return false;
+    }
+
+    /**
+     * Whether the user has asked automation to do something right now.
+     * <p>
+     * A non-IDLE selection is the obvious case. A configured, unfinished module chain is the
+     * second one: its selection only becomes non-IDLE when {@code tick()} starts the first step,
+     * but {@code tick()} is blocked by the readiness gate. Without this case a chain stuck in
+     * the gate has no timeout at all.
+     */
+    private boolean automationRequested() {
+        if (config == null || !config.enabled()) {
+            return false;
+        }
+        if (config.scriptSelection() != ScriptType.IDLE) {
+            return true;
+        }
+        if (!config.chainEnabled()) {
+            return false;
+        }
+        String spec = config.chainModules();
+        if (spec == null || spec.isBlank()) {
+            return false;
+        }
+        // null = the chain has not been parsed/started yet; a later tick would start it.
+        return moduleChain == null || !moduleChain.isFinished();
     }
 
     /**
