@@ -7,6 +7,7 @@ import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
+import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.NaturalMouse;
 
 import java.util.function.Predicate;
 
@@ -62,12 +63,12 @@ public final class AScriptDrop {
     private static final double DROP_GAP_SLOW_CHANCE_MAX = 0.55;
 
     /**
-     * Cursor speed is deliberately NOT boosted here. The fork's NaturalMouse is pinned to the
-     * slow tier and the weather factor only slows it further; a scoped 3x drop boost was
-     * removed because it overrode both and made exactly the click burst that should look
-     * human read as a fast, mechanical sweep. A drop now pays the same natural travel time as
-     * every other action.
+     * Cursor-speed multiplier applied while a slice is being clicked. A drop's travel time is
+     * pure overhead (the same 20–40 px hop, 5–9 times per slice), so it runs at 3x; the click
+     * gaps and hold times are left alone because those carry the anti-ban pacing.
      */
+    private static final double DROP_SPEED_MULTIPLIER = 3.0;
+
     private AScriptDrop() {
         // static utility
     }
@@ -153,21 +154,30 @@ public final class AScriptDrop {
 
         int limit = sliceLimit(before, minPerTick, maxPerTick);
         int clicked = 0;
-        // Precomputed route over the matching slots, shuffled once: no slot is drawn twice and
-        // dropAtSlot re-reads the slot, so one emptied by an earlier drop is skipped.
-        for (int slot : AScriptPick.dropRoute(filter)) {
-            if (clicked >= limit) {
-                break;
+        // Cursor travel runs at 3x for the duration of this slice only: a drop is a
+        // mechanically repetitive click burst whose travel time is pure overhead, unlike its
+        // pacing (gap/hold/verify), which stays untouched. Restored in the finally so an
+        // early return, an interrupt or a throw can never leak the boost into other actions.
+        double previousSpeed = NaturalMouse.setSpeedMultiplier(DROP_SPEED_MULTIPLIER);
+        try {
+            // Precomputed route over the matching slots, shuffled once: no slot is drawn twice and
+            // dropAtSlot re-reads the slot, so one emptied by an earlier drop is skipped.
+            for (int slot : AScriptPick.dropRoute(filter)) {
+                if (clicked >= limit) {
+                    break;
+                }
+                Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
+                if (item == null || !filter.test(item)) {
+                    continue;
+                }
+                if (!AScriptClick.dropAtSlot(slot, item.getId())) {
+                    continue;
+                }
+                clicked++;
+                AScriptSleep.sleepInterruptibly(dropGapMs(gapMinMs, gapMaxMs, weatherMultiplier));
             }
-            Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
-            if (item == null || !filter.test(item)) {
-                continue;
-            }
-            if (!AScriptClick.dropAtSlot(slot, item.getId())) {
-                continue;
-            }
-            clicked++;
-            AScriptSleep.sleepInterruptibly(dropGapMs(gapMinMs, gapMaxMs, weatherMultiplier));
+        } finally {
+            NaturalMouse.setSpeedMultiplier(previousSpeed);
         }
 
         if (clicked == 0) {

@@ -52,32 +52,34 @@ public class NaturalMouse {
     private volatile MouseMotionFactory cachedFactory;
 
     /**
-     * Transient cursor-speed multiplier applied to the natural-mouse travel time.
-     * 1.0 is the forced-slow baseline; values below 1.0 make the movement slower.
-     * Values above 1.0 are clamped back to 1.0: the fork's policy is that no caller may
-     * accelerate the cursor past the forced-slow tier or cancel the weather penalty. This
-     * is deliberately not a config knob.
+     * Transient cursor-speed multiplier applied to the natural-mouse travel time
+     * (1.0 = normal, 2.0 = twice as fast). Deliberately <b>not</b> a config knob: it
+     * exists so a short, mechanically repetitive action (the sliced inventory drop) can
+     * compress its own travel without touching the global pacing. Click hold times, the
+     * inter-click gaps and the verify windows are NOT affected — those are anti-ban
+     * pacing, not cursor speed.
+     * <p>
+     * Volatile and read inside the cached factory's speed manager, so a change takes
+     * effect on the next movement without rebuilding the factory. Callers restore the
+     * previous value in a {@code finally} block — see
+     * {@code AScriptDrop#drop(Predicate, String, double, int, int)}.
      */
     private static volatile double speedMultiplier = 1.0;
 
-    /** Lower bound: twice as slow as the forced tier; below that a movement stalls. */
-    private static final double MIN_SLOW_MULTIPLIER = 0.5;
-
-    /** Baseline ceiling: the forced-slow tier is the fastest any caller may request. */
-    private static final double MAX_SPEED_MULTIPLIER = 1.0;
+    /** Upper bound of {@link #speedMultiplier}: past this the path stops reading as human. */
+    private static final double MAX_SPEED_MULTIPLIER = 5.0;
 
     /**
-     * Sets the transient cursor-slowdown multiplier. Values below
-     * {@value #MIN_SLOW_MULTIPLIER} are clamped up and values above
-     * {@value #MAX_SPEED_MULTIPLIER} are clamped down to the forced baseline, so a caller
-     * cannot turn the movement into a fast sweep or a teleport.
+     * Sets the transient cursor-speed multiplier. Values below 1.0 (slower) are ignored
+     * and values above {@value #MAX_SPEED_MULTIPLIER} are clamped, so a caller cannot turn
+     * the movement into a teleport.
      *
      * @return the value that was in effect before this call, to be handed back to
      * {@link #setSpeedMultiplier(double)} when the action ends
      */
     public static double setSpeedMultiplier(double multiplier) {
         double previous = speedMultiplier;
-        double clamped = Math.min(MAX_SPEED_MULTIPLIER, Math.max(MIN_SLOW_MULTIPLIER, multiplier));
+        double clamped = Math.min(MAX_SPEED_MULTIPLIER, Math.max(1.0, multiplier));
         if (clamped != multiplier) {
             log.warn("Cursor speed multiplier {} clamped to {}", multiplier, clamped);
         }
@@ -140,8 +142,8 @@ public class NaturalMouse {
         factory.setSpeedManager(distance -> {
             var pair = baseManager.getFlowWithTime(distance);
             double factor = WeatherModulation.combinedSpeedFactor();
-            // The transient slowdown is read per movement (not captured), so a slow-only
-            // scope applies without rebuilding the cached factory.
+            // The transient multiplier is read per movement (not captured), so a scoped
+            // boost applies without rebuilding the cached factory.
             long adjustedTime = (long) (pair.y / Math.max(0.1, factor)
                     / Math.max(0.1, speedMultiplier));
             return new Pair<>(pair.x, adjustedTime);
