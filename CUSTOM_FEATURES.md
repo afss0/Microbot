@@ -27,7 +27,7 @@ Used during merges to verify nothing is lost.
 
 ### Activity Intensity Lock (mouse-speed slider no-op)
 - **Files:** `Rs2Antiban.java`
-- **What:** `activityIntensity` pinned to `VERY_LOW`; `setActivityIntensity(...)` is a no-op and `setActivity()` no longer overwrites the field (playStyle seeding still uses the activity's own intensity, so cooldown cadence is unchanged). Scripts, hub plugins (e.g. AutoWoodcutting), the dynamic-intensity feature and the UI slider can no longer churn it — it was constantly flipping Very Low ↔ Low. Mouse speed is unaffected: forced independently in `NaturalMouse.getFactory()`.
+- **What:** `activityIntensity` pinned to `VERY_LOW`; `setActivityIntensity(...)` is a no-op and `setActivity()` no longer overwrites the field (playStyle seeding still uses the activity's own intensity, so cooldown cadence is unchanged). Scripts, hub plugins (e.g. AutoWoodcutting), the dynamic-intensity feature and the UI slider can no longer churn it — it was constantly flipping Very Low ↔ Low. `NaturalMouse.getFactory()` reads the locked value and caches one factory per tier; `AntibanPlugin.startUp()` requests `VERY_LOW` (not `EXTREME`), so a merge that restores the API setter cannot turn normal travel super-fast at startup.
 
 ## Anti-Detection
 

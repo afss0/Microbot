@@ -6,7 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.Global;
+import net.runelite.client.plugins.microbot.util.antiban.Rs2Antiban;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
+import net.runelite.client.plugins.microbot.util.antiban.enums.ActivityIntensity;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.SpeedManager;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.mouse.naturalmouse.api.MouseInfoAccessor;
@@ -50,6 +52,14 @@ public class NaturalMouse {
     );
 
     private volatile MouseMotionFactory cachedFactory;
+
+    /**
+     * Intensity the cached factory was built for. The API is pinned to VERY_LOW today, but
+     * reading it here keeps the mouse speed owned by the antiban API instead of duplicating
+     * the tier decision in this class (an upstream merge used to replace this method and
+     * silently reintroduce the intensity switch).
+     */
+    private volatile ActivityIntensity cachedIntensity;
 
     /**
      * Transient cursor-speed multiplier applied to the natural-mouse travel time
@@ -131,24 +141,50 @@ public class NaturalMouse {
     }
 
     public MouseMotionFactory getFactory() {
-        if (cachedFactory != null) {
+        ActivityIntensity intensity = Rs2Antiban.getActivityIntensity();
+        if (intensity == null) {
+            // A null API value used to fall through to the super-fast template. The fork's
+            // policy is slow-first: keep the slowest tier if the API has not been seeded yet.
+            intensity = ActivityIntensity.VERY_LOW;
+        }
+        if (cachedFactory != null && cachedIntensity == intensity) {
             return cachedFactory;
         }
-        // Forced slow mouse — ignore ActivityIntensity set by scripts
-        log.debug("Creating average computer user motion factory (forced slow)");
-        MouseMotionFactory factory = FactoryTemplates.createAverageComputerUserMotionFactory(nature);
-        // Apply weather speed factor: divide time by factor so lower factor = slower movement
+
+        MouseMotionFactory factory;
+        switch (intensity) {
+            case VERY_LOW:
+                log.debug("Creating average computer user motion factory (VERY_LOW)");
+                factory = FactoryTemplates.createAverageComputerUserMotionFactory(nature);
+                break;
+            case LOW:
+                log.debug("Creating normal gamer motion factory (LOW)");
+                factory = FactoryTemplates.createNormalGamerMotionFactory(nature);
+                break;
+            case MODERATE:
+            case HIGH:
+                log.debug("Creating fast gamer motion factory ({})", intensity);
+                factory = FactoryTemplates.createFastGamerMotionFactory(nature);
+                break;
+            case EXTREME:
+            default:
+                log.debug("Creating super fast gamer motion factory ({})", intensity);
+                factory = FactoryTemplates.createSuperFastGamerMotionFactory(nature);
+                break;
+        }
+        // Apply the weather speed factor: divide time by factor so a lower factor = slower
+        // movement. The transient drop multiplier is read per movement (not captured), so a
+        // scoped boost applies without rebuilding the cached factory.
         SpeedManager baseManager = factory.getSpeedManager();
         factory.setSpeedManager(distance -> {
             var pair = baseManager.getFlowWithTime(distance);
             double factor = WeatherModulation.combinedSpeedFactor();
-            // The transient multiplier is read per movement (not captured), so a scoped
-            // boost applies without rebuilding the cached factory.
             long adjustedTime = (long) (pair.y / Math.max(0.1, factor)
                     / Math.max(0.1, speedMultiplier));
             return new Pair<>(pair.x, adjustedTime);
         });
         cachedFactory = factory;
+        cachedIntensity = intensity;
         return factory;
 
 //		var factory = new MouseMotionFactory();

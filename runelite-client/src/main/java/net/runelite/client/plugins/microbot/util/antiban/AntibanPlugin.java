@@ -167,7 +167,11 @@ public class AntibanPlugin extends Plugin {
 
     @Override
     protected void startUp() throws AWTException {
-        Rs2Antiban.setActivityIntensity(ActivityIntensity.EXTREME);
+        // Keep the startup intensity at the fork's pinned VERY_LOW. Requesting EXTREME here
+        // was a latent fast-mouse trap: it is harmless while setActivityIntensity() is a
+        // no-op, but any merge that restores the upstream setter (or NaturalMouse's
+        // intensity switch) would immediately hand normal travel the super-fast factory.
+        Rs2Antiban.setActivityIntensity(ActivityIntensity.VERY_LOW);
         final MasterPanel panel = injector.getInstance(MasterPanel.class);
         final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "antiban.png");
         navButton = NavigationButton.builder()

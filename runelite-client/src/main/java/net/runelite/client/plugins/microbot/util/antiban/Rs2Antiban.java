@@ -130,9 +130,9 @@ public class Rs2Antiban {
     private static Activity activity;
     /**
      * LOCKED (fork customization): pinned to {@link ActivityIntensity#VERY_LOW} and never reassigned.
-     * Mouse speed is forced independently in {@code NaturalMouse.getFactory()} and ignores this value;
-     * the lock stops scripts, hub plugins, the dynamic-intensity feature and the UI slider from
-     * churning it (it was constantly flipping Very Low ↔ Low). See {@link #setActivityIntensity}.
+     * Mouse speed follows this value in {@code NaturalMouse.getFactory()} (cached per tier), and the
+     * lock stops scripts, hub plugins, the dynamic-intensity feature and the UI slider from churning
+     * it (it was constantly flipping Very Low ↔ Low). See {@link #setActivityIntensity}.
      */
     @Getter
     private static ActivityIntensity activityIntensity = ActivityIntensity.VERY_LOW;
@@ -171,9 +171,9 @@ public class Rs2Antiban {
     /**
      * No-op (fork customization): the activity intensity is locked to VERY_LOW.
      * Calls from scripts, hub plugins, the dynamic intensity feature and the UI slider are all
-     * ignored, so the value cannot churn (it was constantly flipping Very Low ↔ Low). Mouse speed
-     * is forced separately in NaturalMouse.getFactory() and ignores intensity anyway; the lock
-     * only keeps the panels and the per-activity playStyle seeding stable.
+     * ignored, so the value cannot churn (it was constantly flipping Very Low ↔ Low).
+     * {@code NaturalMouse.getFactory()} consumes the locked value, so the mouse speed and the
+     * displayed tier cannot drift apart.
      */
     public static void setActivityIntensity(ActivityIntensity activityIntensity) {
         logDebug("setActivityIntensity(" + activityIntensity + ") ignored — intensity is locked to VERY_LOW");
