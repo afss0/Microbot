@@ -35,9 +35,10 @@ import java.util.stream.Collectors;
  * <p>
  * The dropdown adds a module tag to the comma-separated field; the list is a parsed preview.
  * Save active persists the canonical enum tags (plus the enable/loop toggles) in the active
- * RuneLite profile, while Save as/Load/Delete manage a named library of step-only presets in
- * {@link ChainPresetStore}. Manual editing of the field is supported, so a user can reorder or
- * paste a chain without adding one dropdown entry at a time.
+ * RuneLite profile; Load applies a named preset to that profile and selects Module Chain, while
+ * Save as/Delete manage a named library of step-only presets in {@link ChainPresetStore}.
+ * Manual editing of the field is supported, so a user can reorder or paste a chain without
+ * adding one dropdown entry at a time.
  */
 public class AScriptChainPanel extends PluginPanel {
 
@@ -314,8 +315,14 @@ public class AScriptChainPanel extends PluginPanel {
         setStatus((replaced ? "Updated" : "Saved") + " chain preset '" + name + "'", OK_COLOR);
     }
 
-    /** Load the selected named chain into the editor; Save active still publishes it. */
-    private void loadPreset() {
+    /**
+     * Load the selected named chain and publish it to the active profile. Loading is the
+     * activation action, not just an editor fill: the main aScript panel must see the new
+     * {@code chainModules} value and the selection must move to {@link ScriptType#MODULE_CHAIN}
+     * so the next tick executes the chain. The named preset itself is step-only; the current
+     * loop setting is left untouched.
+     */
+    void loadPreset() {
         String name = selectedPreset();
         if (name == null) {
             setStatus("Select a saved chain first", ERROR_COLOR);
@@ -327,10 +334,28 @@ public class AScriptChainPanel extends PluginPanel {
             refreshPresetBox(null);
             return;
         }
+
+        // Parse through the editor so display names and overrides are canonicalized exactly
+        // like a manual edit, then persist that canonical form rather than the stored text.
         chainField.setText(spec);
-        updatePreview();
+        String canonical = canonicalChain();
+        if (canonical == null) {
+            return;
+        }
+        if (canonical.isEmpty()) {
+            setStatus("Saved chain '" + name + "' is empty", ERROR_COLOR);
+            return;
+        }
+
+        chainField.setText(canonical);
+        updatePreview(false);
+        enabledBox.setSelected(true);
+        configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_MODULES, canonical);
+        configManager.setConfiguration(AScriptConfig.GROUP, CHAIN_ENABLED, true);
+        configManager.setConfiguration(AScriptConfig.GROUP, "scriptSelection", ScriptType.MODULE_CHAIN);
         presetNameField.setText(name);
-        setStatus("Loaded '" + name + "' — click Save active to run it", OK_COLOR);
+        setStatus("Loaded '" + name + "' — Module Chain selected (" + ModuleChain.parse(canonical).size()
+                + " module(s))", OK_COLOR);
     }
 
     /** Delete only the selected preset; the active chain is left untouched. */
