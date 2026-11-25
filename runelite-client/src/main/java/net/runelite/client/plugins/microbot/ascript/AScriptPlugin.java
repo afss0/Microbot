@@ -58,7 +58,7 @@ public class AScriptPlugin extends Plugin {
 
     /**
      * Menu Entry Swapper mechanics for the inventory recipes: while a swap is pending, reorder
-     * the real menu entries so the item's {@code Drop} or {@code Use} row is the left click.
+     * the real menu entries so the item's {@code Use} row is the left click.
      */
     @Subscribe
     public void onPostMenuSort(PostMenuSort event) {
@@ -74,12 +74,17 @@ public class AScriptPlugin extends Plugin {
 
     @Provides
     AScriptConfig provideConfig(ConfigManager configManager) {
+        // The config proxy may be read by the panel before startUp(); migrate first so
+        // a removed enum constant never reaches Enum.valueOf.
+        AScriptConfigMigration.migrate(configManager);
         return configManager.getConfig(AScriptConfig.class);
     }
 
     @Override
     protected void startUp() throws AWTException {
         log.info("[AScript] Plugin started");
+        // Migrate removed drop settings before the config proxy or any panel reads an enum.
+        AScriptConfigMigration.migrate(configManager);
         if (overlayManager != null) {
             overlayManager.add(overlay);
         }

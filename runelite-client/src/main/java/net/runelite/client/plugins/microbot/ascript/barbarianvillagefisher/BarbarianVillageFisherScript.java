@@ -11,7 +11,6 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -38,7 +37,7 @@ import java.util.List;
 import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
 /**
- * Barbarian Village Fisher module — fly/bait fishing with cook/drop/bank options.
+ * Barbarian Village Fisher module — fly/bait fishing with cook/bank options.
  * <p>
  * Adapted from chsami/Microbot-Hub BarbarianVillageFisherScript.
  */
@@ -80,14 +79,14 @@ public class BarbarianVillageFisherScript implements AModule {
     /**
      * The raw ids a cook dispatch may select. Membership is owned by {@link BarbarianFish}
      * (raw {@code ItemID} ids, cooked ids validated against {@code CookingAction}); cooked and
-     * burnt ids are drop/bank-only and must never appear here.
+     * burnt ids are bank-only and must never appear here.
      */
     private static final int[] RAW_FISH = BarbarianFish.rawIds();
     /**
      * Rod and bait are resolved by ID, never by name: every relevant name is a substring
      * of a larger family. "Fishing rod" is contained in "Fly fishing rod", and "Feather"
      * is contained in each coloured feather ("Red feather", "Stripy feather", ...), so a
-     * name lookup can withdraw/lock/drop the wrong item — or count the wrong item as bait
+     * name lookup can withdraw/lock the wrong item — or count the wrong item as bait
      * and fish with an empty inventory.
      */
     private static final int FISHING_ROD_ID = ItemID.FISHING_ROD;
@@ -120,19 +119,12 @@ public class BarbarianVillageFisherScript implements AModule {
     private long lastAfkTime = 0L;
     /** Set when a full cycle ended in banking — the post-cycle break runs bank-closed next tick. */
     private boolean postCycleBreakPending = false;
-    /**
-     * DROP_RAW / COOK_AND_DROP: a drop phase is running. Entered when the inventory fills and
-     * held until the filter is empty — a slice frees slots, so without the latch the phase
-     * resolver would resume fishing with the module's fish still in the bag (the
-     * Woodcutting/Mining latch finding).
-     */
-    private boolean dropping = false;
     /** When the BANKING phase found no loaded bank object (bounded wait). */
     private long bankTurnSinceMs = 0L;
     private static final long BANK_APPROACH_STOP_MS = 20_000;
 
     public enum Phase {
-        NONE, FISHING, WALK_TO_BANK, WALK_TO_FISHING_SPOT, BANKING, DROPPING, COOKING
+        NONE, FISHING, WALK_TO_BANK, WALK_TO_FISHING_SPOT, BANKING, COOKING
     }
 
     // ── AModule contract ─────────────────────────────────────
@@ -190,7 +182,6 @@ public class BarbarianVillageFisherScript implements AModule {
         spotClickRetries = 0;
         lastAfkTime = 0L;
         postCycleBreakPending = false;
-        dropping = false;
         bankTurnSinceMs = 0L;
     }
 
@@ -330,7 +321,6 @@ public class BarbarianVillageFisherScript implements AModule {
         }
 
         consecutiveBankFailures = 0;
-        dropping = false; // a fresh trip — the next fill starts a new drop phase
         // Run the post-cycle break bank-closed on the next tick: the orchestrator closes
         // the bank once needsBank flips false (cannonball/crafting placement).
         postCycleBreakPending = true;
@@ -372,9 +362,6 @@ public class BarbarianVillageFisherScript implements AModule {
             case FISHING:
                 doFishing(config);
                 break;
-            case DROPPING:
-                doDropping(config);
-                break;
             case COOKING:
                 doCooking(config);
                 break;
@@ -408,21 +395,11 @@ public class BarbarianVillageFisherScript implements AModule {
             return;
         }
 
-        // A running drop phase owns the tick regardless of fullness: a slice frees slots, and
-        // without the latch the module would resume fishing with the module's fish still in
-        // the bag (the Woodcutting/Mining latch finding). Cleared when the filter is empty.
-        if (dropping) {
-            currentPhase = Phase.DROPPING;
-            return;
-        }
-
+        // A running cooking phase owns the tick; the full-inventory switch below sends
+        // raw fish to cooking and everything else to the bank.
         // Inventory full
         if (Rs2Inventory.isFull()) {
             switch (func) {
-                case DROP_RAW:
-                    dropping = true;
-                    currentPhase = Phase.DROPPING;
-                    return;
                 case BANK_RAW:
                     if (isCloseTo(BankLocation.EDGEVILLE.getWorldPoint())) {
                         currentPhase = Phase.BANKING;
@@ -431,18 +408,12 @@ public class BarbarianVillageFisherScript implements AModule {
                     }
                     return;
                 case COOK_AND_BANK:
-                case COOK_AND_DROP:
                     if (hasRawFish()) {
                         currentPhase = Phase.COOKING;
-                    } else if (func == BarbarianFishingFunctions.COOK_AND_BANK) {
-                        if (isCloseTo(BankLocation.EDGEVILLE.getWorldPoint())) {
-                            currentPhase = Phase.BANKING;
-                        } else {
-                            currentPhase = Phase.WALK_TO_BANK;
-                        }
+                    } else if (isCloseTo(BankLocation.EDGEVILLE.getWorldPoint())) {
+                        currentPhase = Phase.BANKING;
                     } else {
-                        dropping = true;
-                        currentPhase = Phase.DROPPING;
+                        currentPhase = Phase.WALK_TO_BANK;
                     }
                     return;
             }
@@ -536,39 +507,6 @@ public class BarbarianVillageFisherScript implements AModule {
             }
         } else {
             fail("failed to click fishing spot");
-        }
-    }
-
-    /**
-     * One sliced drop pass over the module's fish ({@link AScriptDrop}): 5–9 slots per tick,
-     * paced and verified, instead of clicking a full bag inside a single tick. The phase
-     * resolver keeps the module in DROPPING until the filter matches nothing; a clean bag
-     * (remaining 0) ends the cycle and runs the bank-free post-cycle break.
-     */
-    private void doDropping(AScriptConfig config) {
-        AScriptDrop.Result result = AScriptDrop.drop(
-                BarbarianVillageFisherScript::isDroppable, "DROPPING", weatherMultiplier);
-        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
-            fail("drop did not land");
-            return;
-        }
-        if (result.getOutcome() == AScriptDrop.Outcome.NOTHING_TO_DROP) {
-            dropping = false;
-            if (Rs2Inventory.isFull()) {
-                // Full with nothing the module owns is a stuck state, not a silent spin.
-                fail("inventory full but nothing droppable (unexpected items?)");
-            } else {
-                // The latch can survive one tick past the last slice; an empty filter is the
-                // normal end of the phase, not a failure.
-                consecutiveFailures = 0;
-                postCycleBreak(config);
-            }
-            return;
-        }
-        consecutiveFailures = 0;
-        if (result.getRemaining() == 0) {
-            dropping = false;
-            postCycleBreak(config);
         }
     }
 
@@ -802,12 +740,6 @@ public class BarbarianVillageFisherScript implements AModule {
         return count;
     }
 
-    /** True when the item is a fish this module produced and may drop. */
-    private static boolean isDroppable(Rs2ItemModel item) {
-        return item != null
-                && (BarbarianFish.isRawOrCooked(item.getId()) || BarbarianFish.isBurnt(item));
-    }
-
     private boolean isCloseTo(WorldPoint location) {
         WorldPoint playerLoc = Rs2Player.getWorldLocation();
         return playerLoc != null && playerLoc.distanceTo(location) <= 10;
@@ -870,6 +802,12 @@ public class BarbarianVillageFisherScript implements AModule {
                 continue;
             }
             if (!AScriptClick.useItemOnObject(fishItem, findCookingFire())) {
+                // A failed item-on-X recipe can leave the cursor selection pending: clear it
+                // before the next tick, otherwise the following inventory menu is built around
+                // "Use <fish>" and the slot selection cannot resolve cleanly.
+                if (!AScriptClick.clearSelection()) {
+                    log.warn("[BarbarianFishing] could not clear the cooking selection after a failed dispatch");
+                }
                 return false;
             }
             // Wait for the make-X dialog to appear (confirm the click landed)
@@ -878,6 +816,11 @@ public class BarbarianVillageFisherScript implements AModule {
                     (int) Rs2Random.logNormalBounded(COOKING_DIALOG_MIN_MS, COOKING_DIALOG_MAX_MS,
                             weatherMultiplier));
             if (!dialogOpened) {
+                // The fire click may have been issued without consuming the cursor selection
+                // (a miss/obstructed object). Clear it here so a full inventory can bank.
+                if (!AScriptClick.clearSelection()) {
+                    log.warn("[BarbarianFishing] could not clear the cooking selection after a missed make-X dialog");
+                }
                 // Make-X box never appeared — dispatch did not engage
                 return false;
             }

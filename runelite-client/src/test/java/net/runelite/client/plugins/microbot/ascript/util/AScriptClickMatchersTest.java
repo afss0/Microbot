@@ -50,7 +50,7 @@ public class AScriptClickMatchersTest {
         assertFalse(AScriptClick.optionMatches(entry, "Take"));
     }
 
-    // ── inventory-slot identity (Use/Drop menu swap) ───────
+    // ── inventory-slot identity (Use/option menu swap) ───────
 
     @Test
     public void inventoryRowMatchesWidgetSlotAndItem() {

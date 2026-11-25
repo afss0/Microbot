@@ -22,10 +22,8 @@ import net.runelite.client.plugins.microbot.ascript.firemaking.FiremakingLog;
 import net.runelite.client.plugins.microbot.ascript.fletching.*;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantActivity;
 import net.runelite.client.plugins.microbot.ascript.jewellenchant.JewelEnchantItem;
-import net.runelite.client.plugins.microbot.ascript.mining.MiningAction;
 import net.runelite.client.plugins.microbot.ascript.mining.MiningOre;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.MLMMiningSpotList;
-import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingAction;
 import net.runelite.client.plugins.microbot.ascript.woodcutting.WoodcuttingTree;
 
 @ConfigGroup(AScriptConfig.GROUP)
@@ -405,17 +403,6 @@ public interface AScriptConfig extends Config {
     }
 
     @ConfigItem(
-            keyName = "mlmDropGems",
-            name = "Drop Gems",
-            description = "Drop gems while mining",
-            position = 1,
-            section = motherloadMineSection
-    )
-    default boolean mlmDropGems() {
-        return false;
-    }
-
-    @ConfigItem(
             keyName = "mlmUseUpstairsHopper",
             name = "Use Upstairs Hopper",
             description = "Use upstairs hopper if unlocked",
@@ -702,7 +689,7 @@ public interface AScriptConfig extends Config {
             section = barbarianVillageFisherSection
     )
     default BarbarianFishingFunctions barbarianVillageFisherFunction() {
-        return BarbarianFishingFunctions.DROP_RAW;
+        return BarbarianFishingFunctions.BANK_RAW;
     }
 
     @ConfigItem(
@@ -893,7 +880,7 @@ public interface AScriptConfig extends Config {
     @ConfigItem(
             keyName = "barbarianFishingAfk",
             name = "Random AFKs",
-            description = "Randomly AFKs between 3 and 120 seconds after every dropped batch",
+            description = "Randomly AFKs between 3 and 120 seconds after every fishing cycle",
             position = 1,
             section = barbarianFishingSection
     )
@@ -931,17 +918,6 @@ public interface AScriptConfig extends Config {
     )
     default WoodcuttingTree woodcuttingTree() {
         return WoodcuttingTree.NONE;
-    }
-
-    @ConfigItem(
-            keyName = "woodcuttingAction",
-            name = "Log Handling",
-            description = "Drop the logs (powercut) or bank them when the inventory fills",
-            position = 1,
-            section = woodcuttingSection
-    )
-    default WoodcuttingAction woodcuttingAction() {
-        return WoodcuttingAction.DROP;
     }
 
     @Range(min = 5, max = 50)
@@ -1019,17 +995,6 @@ public interface AScriptConfig extends Config {
     )
     default boolean miningProgressive() {
         return false;
-    }
-
-    @ConfigItem(
-            keyName = "miningAction",
-            name = "Ore Handling",
-            description = "Drop the ore (powermine) or bank it when the inventory fills",
-            position = 2,
-            section = miningSection
-    )
-    default MiningAction miningAction() {
-        return MiningAction.DROP;
     }
 
     @Range(min = 5, max = 50)

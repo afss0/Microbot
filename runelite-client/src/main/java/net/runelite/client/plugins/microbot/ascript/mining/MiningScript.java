@@ -15,7 +15,6 @@ import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.motherloadmine.Pickaxe;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
@@ -46,13 +45,13 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
 /**
  * Mining sub-script — mines a configured ore type around the activation spot
- * (or travels to a known mine in Progressive mode), with Drop (powermine) or
- * Bank ore handling. Migration of the hub Auto Mining plugin mapped onto the
- * AModule contract: banking collapses into {@link #needsBank}/{@link #doBank}
- * (the orchestrator opens the bank; the module walks only when no bank is in
- * sight), and the mine loop is tick-driven — the mining animation is the
- * in-flight signal and product-count increases are the batch tracker, so
- * pause/resume, rock depletion and restarts are self-healing.
+ * (or travels to a known mine in Progressive mode), with Bank ore handling.
+ * Migration of the hub Auto Mining plugin mapped onto the AModule contract:
+ * banking collapses into {@link #needsBank}/{@link #doBank} (the orchestrator
+ * opens the bank; the module walks only when no bank is in sight), and the mine
+ * loop is tick-driven — the mining animation is the in-flight signal and
+ * product-count increases are the batch tracker, so pause/resume, rock depletion
+ * and restarts are self-healing.
  */
 @Slf4j
 public class MiningScript implements AModule {
@@ -184,8 +183,6 @@ public class MiningScript implements AModule {
     private boolean postBatchBreakDone = false;
     /** True once a batch has been worked since the last bank/trip (break gating). */
     private boolean batchRanSinceBank = false;
-    /** DROP mode: a drop phase is running (entered when full; ends when the count hits 0). */
-    private boolean dropping = false;
     /** Travel watchdog: last observed position and when it last changed. */
     private WorldPoint lastTravelPos = null;
     private long lastTravelMoveAt = 0L;
@@ -209,7 +206,6 @@ public class MiningScript implements AModule {
         lastAfkTime = 0L;
         postBatchBreakDone = false;
         batchRanSinceBank = false;
-        dropping = false;
         lastTravelPos = null;
         lastTravelMoveAt = 0L;
         pickaxeSpecDone = false;
@@ -239,7 +235,6 @@ public class MiningScript implements AModule {
     public String runKey(AScriptConfig config) {
         return "MINING:" + currentPhase
                 + ":" + config.miningOre()
-                + ":" + config.miningAction()
                 + ":" + config.miningProgressive()
                 + ":" + config.miningRadius();
     }
@@ -280,7 +275,7 @@ public class MiningScript implements AModule {
         // [BASALT] The Snowflake noting trip is module-owned (no bank near Weiss).
         if (atBasaltNoteTrip(config)) return false;
 
-        if (config.miningAction() == MiningAction.BANK && Rs2Inventory.isFull()) {
+        if (Rs2Inventory.isFull()) {
             // A batch that actually ran earns the bank-closed break first (the yield);
             // a fresh full inventory banks immediately.
             return !batchRanSinceBank || postBatchBreakDone;
@@ -457,37 +452,8 @@ public class MiningScript implements AModule {
             return;
         }
 
-        // DROP mode: one drop PHASE per fill — entered when the inventory fills, and it
-        // runs until the product count hits 0. The plain "drop while full" shape stops as
-        // soon as a slice frees a slot, so the count would never reach 0 and the batch-end
-        // break would never fire in steady state (the Woodcutting review finding; the
-        // latch is its recommended fix). The phase latch is what makes the batch end
-        // observable, and it is what earns the break below.
-        if (config.miningAction() == MiningAction.DROP) {
-            if (dropping) {
-                if (countProduct(ore) == 0) {
-                    dropping = false;
-                    postBatchBreak(config);
-                    return;
-                }
-                dropSlice(ore);
-                return;
-            }
-            if (Rs2Inventory.isFull()) {
-                if (countProduct(ore) == 0) {
-                    // Full of something else: dropSlice would wait on a count that can never
-                    // shrink and stop the module with "mining drop did not land".
-                    fail("inventory is full but holds no " + ore.getDisplayName());
-                    return;
-                }
-                dropping = true;
-                dropSlice(ore);
-                return;
-            }
-        }
-
-        // Bank needed but not in sight: walk to it (both modes — the missing-pickaxe
-        // trip is mode-independent). This branch MUST run before the full-inventory
+        // Bank needed but not in sight: walk to it (the missing-pickaxe trip is
+        // mode-independent). This branch MUST run before the full-inventory
         // break below (the break stays bank-closed via the needsBank yield).
         if (needsBank(config) && !AScriptBank.bankVisible()) {
             var bank = Rs2Bank.getNearestBank();
@@ -509,9 +475,9 @@ public class MiningScript implements AModule {
             return;
         }
 
-        // BANK mode, full inventory: take the post-batch break (bank still closed); the
+        // Full inventory: take the post-batch break (bank still closed); the
         // orchestrator banks on a later tick via the needsBank yield above.
-        if (config.miningAction() == MiningAction.BANK && Rs2Inventory.isFull()) {
+        if (Rs2Inventory.isFull()) {
             if (batchRanSinceBank) postBatchBreak(config);
             else postBatchBreakDone = true;
             return;
@@ -675,8 +641,7 @@ public class MiningScript implements AModule {
 
     /** [GEM] True at the underground gem mine with a full inventory in Bank mode. */
     private boolean atGemMineDeposit(AScriptConfig config) {
-        if (config.miningAction() != MiningAction.BANK
-                || currentOre(config) != MiningOre.GEM
+        if (currentOre(config) != MiningOre.GEM
                 || !Rs2Inventory.isFull()) {
             return false;
         }
@@ -725,8 +690,7 @@ public class MiningScript implements AModule {
 
     /** [BASALT] True at Weiss with a full inventory in Bank mode AND unnoted basalt to note. */
     private boolean atBasaltNoteTrip(AScriptConfig config) {
-        return config.miningAction() == MiningAction.BANK
-                && currentOre(config) == MiningOre.BASALT
+        return currentOre(config) == MiningOre.BASALT
                 && Rs2Inventory.isFull()
                 && hasUnnotedBasalt();
     }
@@ -787,23 +751,6 @@ public class MiningScript implements AModule {
         List<Rs2ItemModel> basalt = Rs2Inventory.getList(
                 i -> i.getId() == unnotedId || i.getUnNotedId() == unnotedId);
         return !basalt.isEmpty() && basalt.stream().allMatch(Rs2ItemModel::isNoted);
-    }
-
-    /**
-     * One sliced drop pass over the mined product ({@link AScriptDrop}): a rolled 5–9 slots per
-     * tick with log-normal pacing and a count verification. The shared helper owns the route,
-     * slice and verify; this module's {@code dropping} latch owns "keep going until the product
-     * count is 0" and the batch-end break.
-     */
-    private void dropSlice(MiningOre ore) {
-        AScriptDrop.Result result = AScriptDrop.drop(
-                item -> ore.isProduct(item.getId()),
-                "MINING — dropping " + ore.getDisplayName(), weatherMultiplier);
-        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
-            fail("mining drop did not land");
-        } else if (result.getOutcome() == AScriptDrop.Outcome.DROPPED) {
-            consecutiveFailures = 0;
-        }
     }
 
     /** Total held quantity of this ore's product(s). */

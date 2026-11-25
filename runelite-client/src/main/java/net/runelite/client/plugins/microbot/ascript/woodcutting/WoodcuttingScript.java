@@ -11,7 +11,6 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -41,12 +40,12 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
 
 /**
  * Woodcutting sub-script — chops a configured tree type around the activation spot,
- * with Drop (powercut) or Bank log handling. Migration of the hub AutoWoodcutting
- * plugin, mapped onto the AModule contract: banking collapses into
- * {@link #needsBank}/{@link #doBank} (the orchestrator opens the bank; the module
- * walks only when no bank is in sight), and the chop loop is tick-driven — the
- * woodcutting animation is the in-flight signal and log-count increases are the
- * batch tracker, so pause/resume, tree depletion and restarts are self-healing.
+ * with Bank log handling. Migration of the hub AutoWoodcutting plugin, mapped onto
+ * the AModule contract: banking collapses into {@link #needsBank}/{@link #doBank}
+ * (the orchestrator opens the bank; the module walks only when no bank is in
+ * sight), and the chop loop is tick-driven — the woodcutting animation is the
+ * in-flight signal and log-count increases are the batch tracker, so
+ * pause/resume, tree depletion and restarts are self-healing.
  */
 @Slf4j
 public class WoodcuttingScript implements AModule {
@@ -110,8 +109,6 @@ public class WoodcuttingScript implements AModule {
     private WorldPoint anchor = null;
     /** Target-log count observed last tick (-1 = not tracked yet). */
     private int lastLogCount = -1;
-    /** DROP mode: a drop phase is running (entered when full; ends when the count hits 0). */
-    private boolean dropping = false;
     /** When the first tick saw no choppable tree (0 = a tree is available). */
     private long noTreeSinceMs = 0L;
     /** Last time the module walked a few tiles to reload the tree scene. */
@@ -144,7 +141,6 @@ public class WoodcuttingScript implements AModule {
         consecutiveFailures = 0;
         anchor = null;
         lastLogCount = -1;
-        dropping = false;
         noTreeSinceMs = 0L;
         lastAfkTime = 0L;
         lastApproachAt = 0L;
@@ -182,7 +178,6 @@ public class WoodcuttingScript implements AModule {
     public String runKey(AScriptConfig config) {
         return "WOODCUTTING:" + currentPhase
                 + ":" + config.woodcuttingTree()
-                + ":" + config.woodcuttingAction()
                 + ":" + config.woodcuttingRadius();
     }
 
@@ -217,7 +212,7 @@ public class WoodcuttingScript implements AModule {
         // No axe anywhere — it may be sitting in the bank.
         if (!hasAxe()) return true;
 
-        if (config.woodcuttingAction() == WoodcuttingAction.BANK && Rs2Inventory.isFull()) {
+        if (Rs2Inventory.isFull()) {
             // A batch that actually ran earns the bank-closed break first (the yield);
             // a fresh full inventory banks immediately.
             return !batchRanSinceBank || postBatchBreakDone;
@@ -349,7 +344,6 @@ public class WoodcuttingScript implements AModule {
         batchRanSinceBank = false;
         postBatchBreakDone = false;
         lastLogCount = -1;
-        dropping = false; // a fresh trip — the next fill starts a new drop phase
         return true;
     }
 
@@ -375,46 +369,18 @@ public class WoodcuttingScript implements AModule {
         if (player == null) return;
         if (anchor == null) anchor = player;
 
-        // DROP mode: one drop PHASE per fill — entered when the inventory fills and run
-        // until the log count hits 0. The plain "drop while full" shape freed a slot and
-        // resumed chopping, so the count never reached 0, the batch-end break never fired
-        // and batchRanSinceBank never cleared (Mining's dropping latch, mirrored).
-        if (config.woodcuttingAction() == WoodcuttingAction.DROP) {
-            if (dropping) {
-                if (Rs2Inventory.itemQuantity(logId) == 0) {
-                    dropping = false;
-                    postBatchBreak(config);
-                    return;
-                }
-                dropSlice(logId);
-                return;
-            }
-            if (Rs2Inventory.isFull()) {
-                if (Rs2Inventory.itemQuantity(logId) == 0) {
-                    // Full of something else: a drop slice would wait on a count that can never
-                    // shrink and stop the module with "log drop did not land" (Mining's guard).
-                    fail("inventory is full but holds no " + treeChoice.getLogName());
-                    return;
-                }
-                dropping = true;
-                dropSlice(logId);
-                return;
-            }
-        }
-
         // BANK mode, inventory nearly full and a log basket held: fill the basket first —
         // it buys ~28 more logs before the bank trip (fork util; the "Fill" interaction
         // inside it is a shared-util exception, same family as the bank path).
-        if (config.woodcuttingAction() == WoodcuttingAction.BANK
-                && Rs2LogBasket.hasLogBasket() && Rs2Inventory.emptySlotCount() <= 3
+        if (Rs2LogBasket.hasLogBasket() && Rs2Inventory.emptySlotCount() <= 3
                 && Rs2LogBasket.shouldFillBasket(logId)) {
             if (Rs2LogBasket.fillLogBasket()) consecutiveFailures = 0;
             else fail("log basket fill did not land");
             return;
         }
 
-        // Bank needed but not in sight: walk to it (both modes — the missing-axe trip
-        // is mode-independent). This branch MUST run before the full-inventory break
+        // Bank needed but not in sight: walk to it (the missing-axe trip is
+        // mode-independent). This branch MUST run before the full-inventory break
         // below: needsBank stays false while the break is pending (the yield in
         // needsBank above), so the break always runs first, and once the trip is
         // earned this branch walks until the bank loads — readyForBank then hands the
@@ -439,9 +405,9 @@ public class WoodcuttingScript implements AModule {
             return;
         }
 
-        // BANK mode, full inventory: take the post-batch break (bank still closed); the
+        // Full inventory: take the post-batch break (bank still closed); the
         // orchestrator banks on a later tick via the needsBank yield above.
-        if (config.woodcuttingAction() == WoodcuttingAction.BANK && Rs2Inventory.isFull()) {
+        if (Rs2Inventory.isFull()) {
             if (batchRanSinceBank) postBatchBreak(config);
             else postBatchBreakDone = true;
             return;
@@ -456,19 +422,6 @@ public class WoodcuttingScript implements AModule {
 
         // Axe special attack — one activation per full-energy cycle (BVF harpoon shape).
         maybeAxeSpec(config);
-
-        // DROP mode batch end: the logs are gone after a batch ran — bank-free break,
-        // once per batch (MLM placement). lastLogCount > 0 demands that logs were held
-        // since the last break/reset: the chop confirmation below arms
-        // batchRanSinceBank as soon as the animation starts, before the first log
-        // arrives, so count == 0 alone would fire the break at startup and again
-        // through every 0-log window — an empty inventory is not a batch end.
-        if (config.woodcuttingAction() == WoodcuttingAction.DROP
-                && Rs2Inventory.itemQuantity(logId) == 0 && lastLogCount > 0
-                && batchRanSinceBank) {
-            postBatchBreak(config);
-            return;
-        }
 
         int count = Rs2Inventory.itemQuantity(logId);
         // Arm only with logs in hand: with the -1 baseline, `count > lastLogCount`
@@ -579,22 +532,6 @@ public class WoodcuttingScript implements AModule {
     }
 
     // ── Internal helpers ──────────────────────────────────
-
-    /**
-     * One sliced drop pass over the target logs ({@link AScriptDrop}): a rolled 5–9 slots per
-     * tick with log-normal pacing and a count verification. The shared helper owns the route,
-     * the slice and the verify; this module's {@code dropping} latch owns "keep going until the
-     * log count is 0" and the batch-end break.
-     */
-    private void dropSlice(int logId) {
-        AScriptDrop.Result result = AScriptDrop.drop(
-                item -> item.getId() == logId, "WOODCUTTING — dropping logs", weatherMultiplier);
-        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
-            fail("log drop did not land");
-        } else if (result.getOutcome() == AScriptDrop.Outcome.DROPPED) {
-            consecutiveFailures = 0;
-        }
-    }
 
     /**
      * Loot bird nests on the ground near the player (they drop from trees while chopping;
@@ -797,7 +734,7 @@ public class WoodcuttingScript implements AModule {
      * {@code batchRanSinceBank} so the break is only earned by a batch that ran, and
      * resets the log-count baseline — without it the next batch's counts (1..28) would
      * never exceed the previous batch's peak and the batch tracker would never re-arm
-     * (the break would fire once per run instead of once per batch in Drop mode).
+     * (the break would fire once per run instead of once per batch).
      */
     private void postBatchBreak(AScriptConfig config) {
         if (postBatchBreakDone) return;

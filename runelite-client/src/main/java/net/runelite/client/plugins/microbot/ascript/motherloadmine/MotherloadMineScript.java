@@ -12,9 +12,7 @@ import net.runelite.client.plugins.microbot.ascript.AModule;
 import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptPick;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
@@ -25,7 +23,6 @@ import net.runelite.client.plugins.microbot.util.depositbox.Rs2DepositBox;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjects;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
-import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
@@ -54,7 +51,7 @@ public class MotherloadMineScript implements AModule {
 
     // ── Constants ──────────────────────────────────────────────
 
-    /** Gem item IDs that may appear while mining (to drop if configured). */
+    /** Gem item IDs that may appear while mining and are deposited with the ore. */
     private static final List<Integer> GEM_IDS = Arrays.asList(
             ItemID.UNCUT_SAPPHIRE, ItemID.UNCUT_EMERALD, ItemID.UNCUT_RUBY,
             ItemID.UNCUT_DIAMOND, ItemID.UNCUT_DRAGONSTONE
@@ -87,7 +84,6 @@ public class MotherloadMineScript implements AModule {
     private MLMStatus currentStatus = MLMStatus.IDLE;
     private boolean shouldEmptySack = false;
     private boolean shouldRepairWaterwheel = false;
-    private boolean pickedUpHammer = false;
     /** Idle detection for mining — tracks when animation stopped. */
     private long idleSince = 0;
     /** When the last vein search came up empty (0 = a vein was found); bounded so a dead
@@ -115,7 +111,6 @@ public class MotherloadMineScript implements AModule {
         currentStatus = MLMStatus.IDLE;
         shouldEmptySack = false;
         shouldRepairWaterwheel = false;
-        pickedUpHammer = false;
         lastBankWalkPos = null;
         lastBankWalkAt = 0L;
         idleSince = 0;
@@ -299,51 +294,42 @@ public class MotherloadMineScript implements AModule {
         boolean success = true;
         boolean wasEmptyingSack = shouldEmptySack;
 
-        // Drop gems if configured
-        if (config.mlmDropGems() && hasGemsInInventory()) {
-            if (!dropGems()) {
-                success = false;
-            }
-            sleep(Rs2Random.logNormalBounded(400, 800, weatherMultiplier));
-        }
-
         // Deposit hopper: if inventory full of paydirt
-        else {
-            int paydirtCount = Rs2Inventory.count(ItemID.PAYDIRT);
-            if (paydirtCount > 0 && Rs2Inventory.isFull()) {
-                // Fix waterwheel before depositing — only when inventory is full
-                // and ready to deposit, not mid-mining
-                if (shouldRepairWaterwheel || countBrokenStruts() > 1) {
-                    shouldRepairWaterwheel = true;
-                    if (fixWaterwheel()) {
-                        shouldRepairWaterwheel = false;
-                    } else {
-                        success = false;
-                    }
-                } else if (!depositHopper(config)) {
+        int paydirtCount = Rs2Inventory.count(ItemID.PAYDIRT);
+        if (paydirtCount > 0 && Rs2Inventory.isFull()) {
+            // Fix waterwheel before depositing — only when inventory is full
+            // and ready to deposit, not mid-mining
+            if (shouldRepairWaterwheel || countBrokenStruts() > 1) {
+                shouldRepairWaterwheel = true;
+                if (fixWaterwheel()) {
+                    shouldRepairWaterwheel = false;
+                } else {
                     success = false;
                 }
-            }
-            // Empty sack: if sack has contents and no ore in inventory
-            else if (shouldEmptySack || hasOreInInventory() || getSackCount() > 0) {
-                shouldEmptySack = true;
-                if (!emptySack(config)) {
-                    success = false;
-                }
-            }
-            // Full inventory with nothing this module can consume — checked after the gem
-            // drop and the paydirt/sack branches: mining cannot start, and mineVeins used
-            // to "confirm" instantly because its start check accepted isFull(). Failing
-            // here is counted by the tail below and stops after MAX_CONSECUTIVE_MINE_FAILURES.
-            else if (Rs2Inventory.isFull()) {
-                log.warn("[MotherloadMineScript] inventory is full but holds no paydirt or ore");
+            } else if (!depositHopper(config)) {
                 success = false;
             }
-            // Mine veins
-            else {
-                if (!mineVeins(config)) {
-                    success = false;
-                }
+        }
+        // Empty sack: if sack has contents and no ore in inventory, or the inventory
+        // holds ore/gems that the deposit box can take.
+        else if (shouldEmptySack || hasOreInInventory() || hasGemsInInventory() || getSackCount() > 0) {
+            shouldEmptySack = true;
+            if (!emptySack(config)) {
+                success = false;
+            }
+        }
+        // Full inventory with nothing this module can consume — checked after the
+        // paydirt/sack branches: mining cannot start, and mineVeins used to "confirm"
+        // instantly because its start check accepted isFull(). Failing here is counted
+        // by the tail below and stops after MAX_CONSECUTIVE_MINE_FAILURES.
+        else if (Rs2Inventory.isFull()) {
+            log.warn("[MotherloadMineScript] inventory is full but holds no paydirt, ore or gems");
+            success = false;
+        }
+        // Mine veins
+        else {
+            if (!mineVeins(config)) {
+                success = false;
             }
         }
 
@@ -553,12 +539,12 @@ public class MotherloadMineScript implements AModule {
             }
         }
 
-        // If we have ore in inventory, deposit it in the deposit box
-        if (hasOreInInventory()) {
+        // If we have ore or gems in inventory, deposit them in the deposit box
+        if (hasOreInInventory() || hasGemsInInventory()) {
             if (!depositOreInBox()) {
                 return false;
             }
-            if (Rs2Inventory.isEmpty() || !hasOreInInventory()) {
+            if (!hasOreInInventory() && !hasGemsInInventory()) {
                 shouldEmptySack = false;
             }
             return true;
@@ -611,7 +597,7 @@ public class MotherloadMineScript implements AModule {
         // Only close the deposit box if we actually deposited something.
         // If deposit failed (grid item silently no-op), keep the box open
         // so the next tick retries without open/close/open overhead.
-        boolean deposited = sleepUntil(() -> !hasOreInInventory(), 5000);
+        boolean deposited = sleepUntil(() -> !hasOreInInventory() && !hasGemsInInventory(), 5000);
         if (deposited && Rs2DepositBox.isOpen()) {
             Rs2DepositBox.closeDepositBox();
         }
@@ -640,7 +626,6 @@ public class MotherloadMineScript implements AModule {
                 // hammer check below is what verifies the search actually happened.
                 if (clickObject(crate).clicked()) {
                     sleepUntil(() -> AScriptBank.hasUnnotedItem("hammer"), 5000);
-                    pickedUpHammer = true;
                 }
             }
 
@@ -690,17 +675,6 @@ public class MotherloadMineScript implements AModule {
             return false;
         }
 
-        // Drop hammer if we picked it up from the crate (not if equipped Imcando).
-        // dropAtSlot installs the hammer's Drop entry as the left-click entry: a plain click
-        // would "Use" it, and Rs2Inventory.drop() is a menu-entry injection.
-        if (pickedUpHammer && !Rs2Equipment.isWearing("hammer") && AScriptBank.hasUnnotedItem("hammer")) {
-            Rs2ItemModel hammer = AScriptPick.pick("hammer");
-            if (hammer != null && !AScriptClick.dropAtSlot(hammer.getSlot(), hammer.getId())) {
-                log.warn("[MotherloadMineScript] hammer drop did not land");
-            }
-            pickedUpHammer = false;
-        }
-
         // Check if more struts are broken
         if (countBrokenStruts() <= 1) {
             shouldRepairWaterwheel = false;
@@ -719,25 +693,13 @@ public class MotherloadMineScript implements AModule {
         ).stream().count();
     }
 
-    // ── Gem dropping ───────────────────────────────────────────
+    // ── Gem deposits ───────────────────────────────────────────
 
     private boolean hasGemsInInventory() {
         for (int gemId : GEM_IDS) {
             if (Rs2Inventory.hasItem(gemId)) return true;
         }
         return false;
-    }
-
-    private boolean dropGems() {
-        // Small set: one full pass through the shared dropper (it still paces every click and
-        // verifies the count; the slicer is reserved for bulk inventories).
-        AScriptDrop.Result result = AScriptDrop.dropAll(
-                item -> GEM_IDS.contains(item.getId()), "DROPPING GEMS", weatherMultiplier);
-        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
-            log.warn("[MotherloadMineScript] gem drop did not land");
-            return false;
-        }
-        return true;
     }
 
     // ── Clicks ────────────────────────────────────────────────

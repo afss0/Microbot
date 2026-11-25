@@ -7,7 +7,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum BarbarianFishingActivity {
     NONE("None"),
-    FISH("Fish & Drop");
+    FISH("Fish & Bank");
 
     private final String name;
 

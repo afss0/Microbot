@@ -12,7 +12,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Guardrail for {@link MiningOre}'s inventory-product policy: the drop, deposit and
+ * Guardrail for {@link MiningOre}'s inventory-product policy: the deposit and
  * basalt-noting paths classify inventory items with {@code isProduct}, so an ore whose
  * product list is empty (or that claims another ore's product) silently breaks those
  * decisions — the item is never dropped, deposited or noted.

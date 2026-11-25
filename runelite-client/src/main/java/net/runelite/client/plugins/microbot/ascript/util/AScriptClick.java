@@ -80,7 +80,7 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  *       physically. The selection is armed on the item's real <b>{@code Use}</b> row: a plain
  *       slot click dispatches the item's default op, which equips a bolt stack or the
  *       fletcher's knife, so {@link #onPostMenuSort()} moves the real {@code Use} row on top
- *       (the drop recipe's MES mechanics) and no press is issued until it is. Any failure path
+ *       (the same MES mechanics as the inventory-option recipe) and no press is issued until it is. Any failure path
  *       clears a selection the recipe created, because a dangling cursor item silently
  *       converts the NEXT inventory op; an item the click wore by mistake is taken back off
  *       ({@link #unequip(int)}) before the recipe refuses the dispatch. A banknote is rejected
@@ -623,7 +623,7 @@ public final class AScriptClick {
 
     /**
      * Pending menu swap: the client menu's {@code PostMenuSort} moves this item's named real
-     * row ({@code Drop} or {@code Use}) to the top. The swap state has to be static —
+     * row ({@code Use} or another inventory option) to the top. The swap state has to be static —
      * {@link #onPostMenuSort()} is invoked by the plugin listener and has no caller to hand it
      * to.
      */
@@ -632,7 +632,7 @@ public final class AScriptClick {
     private static volatile int menuSwapItemId = -1;
 
     /**
-     * Serializes the armed window among menu-swap callers (drops and item-on-X selections).
+     * Serializes the armed window among menu-swap callers (inventory-option and item-on-X selections).
      * Two concurrent swaps would otherwise overwrite each other's slot and one caller could
      * press the other's row. {@code onPostMenuSort} must NEVER take this lock: it runs on the
      * client thread, while the holder waits on client-thread reads, so locking there would
@@ -673,75 +673,8 @@ public final class AScriptClick {
     }
 
     /**
-     * Drop one inventory item the way RuneLite's Menu Entry Swapper does: the client builds the
-     * item's real menu entries on hover, and {@link #onPostMenuSort()} reorders them so the
-     * item's own {@code Drop} row is the top (left-click) entry. The press then dispatches that
-     * real entry — no fabricated menu entry, no injection, no open menu.
-     * <p>
-     * A raw click would dispatch the default action ("Use" for raw fish, ore and logs), which
-     * selected the item instead of dropping it; the right-click recipe failed live because the
-     * open menu rarely exposed the Drop row at 7 fps.
-     * <p>
-     * The swap stays armed (and is re-applied on every menu rebuild, as MES does) until the
-     * press has been processed, so a movement inside the click cannot resolve to "Use".
-     *
-     * @param slot   inventory slot (0-27)
-     * @param itemId item expected in the slot; an empty or different slot is a no-op
-     * @return true when the slot no longer holds the item
-     */
-    public static boolean dropAtSlot(int slot, int itemId) {
-        ensureInventoryVisible();
-        // An open menu freezes the hover: a press at the slot point would land on whatever
-        // row the menu shows there. Every other recipe closes it first; the drop recipe must
-        // too, or a menu left by a previous action can turn a Drop into an arbitrary row.
-        if (menuOpen() && !closeMenu()) {
-            log.error("[AScriptClick] an option menu is open and will not close — not dropping slot {}", slot);
-            return false;
-        }
-        Rs2ItemModel item = Rs2Inventory.getItemInSlot(slot);
-        if (item == null || item.getId() != itemId) {
-            return false;
-        }
-        Rectangle bounds = Rs2Inventory.itemBounds(item);
-        if (bounds == null) {
-            return false;
-        }
-        Point point = Rs2UiHelper.getClickingPoint(bounds, true);
-        boolean dropped = false;
-        synchronized (MENU_SWAP_LOCK) {
-            armMenuSwap(slot, itemId, "Drop");
-            try {
-                // Hover first: the client builds the real menu for this slot, PostMenuSort reorders
-                // it, and only then does the press mean "Drop". NaturalMouse owns the travel; a
-                // direct VirtualMouse.move would teleport and make the press instantaneous.
-                if (!moveNaturally(point)) {
-                    log.warn("[AScriptClick] the cursor did not settle on the Drop slot — retrying");
-                    return false;
-                }
-                if (!sleepUntil(() -> isMenuSwapOnTop(slot, itemId, "Drop"),
-                        Rs2Random.logNormalBounded(400, 800))) {
-                    log.warn("[AScriptClick] the Drop row never reached the top of the menu");
-                    return false;
-                }
-                Microbot.getMouse().click(point);
-                // The slot clears on the next client frame or two (7 fps in the sandboxes). The swap
-                // stays armed until then so any rebuild during the press re-applies it. Poll through
-                // the shared randomized wait (anti-ban timing, interrupt handling and the
-                // human-override check) instead of a fixed sleep; the trailing re-read keeps a
-                // landing that arrived while a human held input from reading as a failed drop.
-                dropped = sleepUntil(() -> Rs2Inventory.getIdForSlot(slot) != itemId,
-                        Rs2Random.logNormalBounded(500, 1100))
-                        || Rs2Inventory.getIdForSlot(slot) != itemId;
-            } finally {
-                clearMenuSwap();
-            }
-        }
-        return dropped;
-    }
-
-    /**
      * Press one of an inventory item's own actions through the client mouse — the generalised
-     * form of {@link #dropAtSlot} and {@link #select}, used by the auto-eat QOL for
+     * form of {@link #select}, used by the auto-eat QOL for
      * {@code Eat}/{@code Drink}.
      * <p>
      * A physical slot click dispatches the item's <b>default</b> op, which differs by
@@ -798,9 +731,20 @@ public final class AScriptClick {
                     log.warn("[AScriptClick] the cursor did not settle on the '{}' slot", option);
                     return ItemClickResult.BLOCKED;
                 }
-                if (!sleepUntil(() -> isMenuSwapOnTop(slot, itemId, option),
-                        Rs2Random.logNormalBounded(400, 800))) {
-                    log.warn("[AScriptClick] the '{}' row never reached the top of the item menu", option);
+                if (!awaitMenuSwapOnTop(slot, itemId, option, point)) {
+                    log.warn("[AScriptClick] the '{}' row never reached the top of the item menu — trying the right-click menu", option);
+                    RowPick fallback = pressViaMenuRow(point,
+                            entry -> optionMatches(entry, option)
+                                    && occupiesInventorySlot(entry, slot, itemId),
+                            MENU_CLOSED_IS_ENOUGH);
+                    if (fallback == RowPick.DISPATCHED) {
+                        log.info("[AScriptClick] '{}' selected from the right-click menu for slot {}", option, slot);
+                        return ItemClickResult.ISSUED;
+                    }
+                    if (fallback == RowPick.MENU_STUCK) {
+                        log.error("[AScriptClick] the option menu would not close — not pressing '{}'", option);
+                        return ItemClickResult.BLOCKED;
+                    }
                     return ItemClickResult.NO_ACTION;
                 }
                 Microbot.getMouse().click(point);
@@ -863,8 +807,42 @@ public final class AScriptClick {
     }
 
     /**
-     * Drop any pending menu swap and cancel the recipe state at a script/plugin boundary.
-     * A swap left armed by an interrupted run would keep reordering that item's Drop/Use row
+     * Apply the armed inventory swap now, on the client thread. The hover's rebuild normally
+     * triggers {@link #onPostMenuSort()}, but at the sandboxes' low FPS a cursor that was already
+     * resting on the slot can skip the rebuild (and a busy client can delay the event past the
+     * recipe's verification window). Calling the same pure reorder explicitly after the nudge
+     * makes the inventory-option/Use recipe deterministic without fabricating a menu entry.
+     */
+    private static void applyPendingMenuSwap() {
+        if (Microbot.getClientThread().isClientThread()) {
+            onPostMenuSort();
+        } else {
+            Microbot.getClientThread().invoke(AScriptClick::onPostMenuSort);
+        }
+    }
+
+    /**
+     * Wait for the armed row to reach the top, then give a stale hover one deterministic retry:
+     * step the cursor off and back on (forcing a menu rebuild) and apply the swap explicitly.
+     * The normal path pays only the first wait; the retry exists for the low-FPS sandboxes where
+     * the pointer can already rest on the slot and PostMenuSort can arrive after the recipe's
+     * verification window.
+     */
+    private static boolean awaitMenuSwapOnTop(int slot, int itemId, String option, Point point) {
+        if (sleepUntil(() -> isMenuSwapOnTop(slot, itemId, option),
+                Rs2Random.logNormalBounded(400, 800))) {
+            return true;
+        }
+        nudge(point);
+        awaitFrames(2);
+        applyPendingMenuSwap();
+        return sleepUntil(() -> isMenuSwapOnTop(slot, itemId, option),
+                Rs2Random.logNormalBounded(400, 800));
+    }
+
+    /**
+     * Clear any pending menu swap and cancel the recipe state at a script/plugin boundary.
+     * A swap left armed by an interrupted run would keep reordering that item's option/Use row
      * for the whole session; the plugin shutdown/start hooks call this.
      */
     public static void reset() {
@@ -873,7 +851,7 @@ public final class AScriptClick {
 
     /**
      * MES-style swap, called from the plugin on every menu sort: put the pending item's real
-     * {@code Drop} / {@code Use} entry on top of the client menu. Skipped while the menu is
+     * {@code Use} / inventory-option entry on top of the client menu. Skipped while the menu is
      * open — the open menu is not rebuilt, so swapping there would reorder it under the
      * player's mouse.
      */
@@ -1193,7 +1171,7 @@ public final class AScriptClick {
      * {@code VirtualMouse.move(Point)} only emits a single MOVED event, and
      * {@code NaturalMouse.moveTo} early-returns when the pointer is already there — so a
      * pre-click teleport silently turns the following click into an instantaneous press.
-     * Every recipe that pre-hovers a slot (drops, item-on-X selection, Jewel Enchant's cast)
+     * Every recipe that pre-hovers a slot (inventory-option recipes, item-on-X selection, Jewel Enchant's cast)
      * must use this instead.
      *
      * @return true when the pointer is resting on {@code point}
@@ -1866,7 +1844,7 @@ public final class AScriptClick {
      * knife — the live gem-tip bug: the bolts went to the equipment slot instead of the
      * cursor, the recipe then timed out, and the module eventually stopped with its material
      * on the player's body. The click is therefore preceded by the same MES-style swap the
-     * drop recipe uses: {@link #onPostMenuSort()} moves the client's own {@code Use} entry to
+     * inventory-option recipe uses: {@link #onPostMenuSort()} moves the client's own {@code Use} entry to
      * the top, the recipe waits until that is verified, and only then presses. A swap that
      * cannot be resolved means NO click — never a blind default-op press.
      * <p>
@@ -1914,15 +1892,33 @@ public final class AScriptClick {
                             item.getSlot());
                     return false;
                 }
-                if (!sleepUntil(() -> isMenuSwapOnTop(item.getSlot(), item.getId(), USE_OPTION),
-                        Rs2Random.logNormalBounded(400, 800))) {
+                boolean fallbackSelection = false;
+                if (!awaitMenuSwapOnTop(item.getSlot(), item.getId(), USE_OPTION, point)) {
                     log.warn("[AScriptClick] the Use row never reached the top of the item menu "
-                            + "(slot {}) — not clicking", item.getSlot());
-                    return false;
+                            + "(slot {}) — trying the right-click menu", item.getSlot());
+                    RowPick fallback = pressViaMenuRow(point,
+                            entry -> optionMatches(entry, USE_OPTION)
+                                    && occupiesInventorySlot(entry, item.getSlot(), item.getId()),
+                            MENU_CLOSED_IS_ENOUGH);
+                    if (fallback == RowPick.DISPATCHED) {
+                        log.info("[AScriptClick] Use selected from the right-click menu for slot {}", item.getSlot());
+                        fallbackSelection = true;
+                    } else {
+                        if (fallback == RowPick.MENU_STUCK) {
+                            log.error("[AScriptClick] the option menu would not close — not selecting slot {}",
+                                    item.getSlot());
+                        } else {
+                            log.warn("[AScriptClick] the right-click menu never exposed Use for slot {} — not selecting",
+                                    item.getSlot());
+                        }
+                        return false;
+                    }
                 }
-                Microbot.getMouse().click(point);
+                if (!fallbackSelection) {
+                    Microbot.getMouse().click(point);
+                }
                 // Keep the swap armed while the press is processed: a menu rebuild inside the
-                // click must re-apply Use, exactly as the drop recipe does.
+                // click must re-apply Use, exactly as the inventory-option recipe does.
                 if (!sleepUntil(Rs2Inventory::isItemSelected, Rs2Random.logNormalBounded(1500, 2500))) {
                     if (recoverIfWorn(item, "the item click wore it instead of selecting it")) {
                         return false;

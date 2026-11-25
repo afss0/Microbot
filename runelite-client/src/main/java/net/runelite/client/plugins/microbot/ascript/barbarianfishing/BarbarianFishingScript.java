@@ -13,7 +13,6 @@ import net.runelite.client.plugins.microbot.ascript.AScriptConfig;
 import net.runelite.client.plugins.microbot.ascript.ScriptType;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptBank;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptClick;
-import net.runelite.client.plugins.microbot.ascript.util.AScriptDrop;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptNotify;
 import net.runelite.client.plugins.microbot.ascript.util.AScriptSleep;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
@@ -24,7 +23,6 @@ import net.runelite.client.plugins.microbot.util.combat.Rs2Combat;
 import net.runelite.client.plugins.microbot.util.dialogues.Rs2Dialogue;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
-import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.player.Rs2Player;
 import net.runelite.client.plugins.microbot.util.walker.Rs2Walker;
@@ -38,13 +36,13 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntil;
  * Barbarian Fishing module — rod fishing for leaping fish at Otto's Grotto.
  * <p>
  * Migrated from the Microbot-Hub {@code barbarianfishing} plugin onto the aScript
- * module contract: Otto's Grotto powerfishing (drop leaping fish plus the roe/caviar
- * byproducts; keep the barbarian rod + feathers as locked inventory anchors), an
- * optional dragon harpoon special attack whose activation is VERIFIED before
- * latching (the hub version latched on an unconfirmed dispatch), walk-gated banking
- * at the Barbarian Outpost chest when the rod or feathers run out, and client-mouse
- * clicks for every action (no menu injection). The post-batch randomness layer
- * (short pause + optional random AFK, weather-modulated) matches the house pattern.
+ * module contract: Otto's Grotto fishing (keep the barbarian rod + feathers as locked
+ * inventory anchors), an optional dragon harpoon special attack whose activation is
+ * VERIFIED before latching (the hub version latched on an unconfirmed dispatch),
+ * walk-gated banking at the Barbarian Outpost chest when the rod/feathers run out or
+ * the inventory fills with fish, and client-mouse clicks for every action (no menu
+ * injection). The post-trip randomness layer (short pause + optional random AFK,
+ * weather-modulated) matches the house pattern.
  */
 @Slf4j
 public class BarbarianFishingScript implements AModule {
@@ -76,13 +74,7 @@ public class BarbarianFishingScript implements AModule {
             ItemID.DRAGON_HARPOON, ItemID.DRAGON_HARPOON_OR, ItemID.DRAGON_HARPOON_OR_30349
     };
 
-    /** Everything the module drops: the leaping fish plus the roe/caviar byproducts, by id. */
-    private static final int[] DROPPABLE_IDS = {
-            ItemID.LEAPING_TROUT, ItemID.LEAPING_SALMON, ItemID.LEAPING_STURGEON,
-            ItemID.ROE, ItemID.CAVIAR
-    };
-
-    public enum Phase { NONE, FISHING, DROPPING, WALK_TO_SPOT, WALK_TO_BANK }
+    public enum Phase { NONE, FISHING, WALK_TO_SPOT, WALK_TO_BANK }
 
     private Phase currentPhase = Phase.NONE;
     private boolean exitRequested = false;
@@ -94,10 +86,6 @@ public class BarbarianFishingScript implements AModule {
     /** Transient retry counter for spot clicks that produced no catch. */
     private int spotClickRetries = 0;
 
-    /** A drop batch (inventory full -> all droppables gone) is in progress. */
-    private boolean dropSessionActive = false;
-    /** True once the session actually dropped something — gates the post-batch break. */
-    private boolean droppedInSession = false;
     /** Min-gap reference for the random-AFK layer. */
     private long lastAfkTime = 0L;
 
@@ -126,7 +114,7 @@ public class BarbarianFishingScript implements AModule {
             return;
         }
         // Coarse phase for the overlay and the IDLE -> active reset transition;
-        // runtime state (bank proximity, drop session) is re-resolved in doAction.
+        // runtime state (bank proximity) is re-resolved in doAction.
         if (bankTripNeeded()) {
             currentPhase = Phase.WALK_TO_BANK;
         } else if (isCloseToArea()) {
@@ -143,7 +131,7 @@ public class BarbarianFishingScript implements AModule {
 
     @Override
     public String runKey(AScriptConfig config) {
-        // currentPhase is runtime (walking/fishing/dropping), so it must not participate.
+        // currentPhase is runtime (walking/fishing/banking), so it must not participate.
         return "BARBARIAN_FISHING:" + config.barbarianFishingActivity();
     }
 
@@ -153,8 +141,6 @@ public class BarbarianFishingScript implements AModule {
         consecutiveFailures = 0;
         animationWindowMs = FISHING_ANIMATION_DEFAULT_MS;
         spotClickRetries = 0;
-        dropSessionActive = false;
-        droppedInSession = false;
         lastAfkTime = 0L;
         harpoonSpecDone = false;
         harpoonSpecAttempts = 0;
@@ -263,7 +249,6 @@ public class BarbarianFishingScript implements AModule {
                 case WALK_TO_BANK: handleWalkToBank();    break;
                 case WALK_TO_SPOT: handleWalkToSpot();    break;
                 case FISHING:      handleFishing(config); break;
-                case DROPPING:     handleDropping(config); break;
                 default:           break;
             }
         } catch (Exception ex) {
@@ -276,13 +261,6 @@ public class BarbarianFishingScript implements AModule {
     private void resolveDynamicPhase() {
         if (bankTripNeeded()) {
             currentPhase = Phase.WALK_TO_BANK;
-            return;
-        }
-        if (Rs2Inventory.isFull()) {
-            dropSessionActive = true;
-        }
-        if (dropSessionActive) {
-            currentPhase = Phase.DROPPING;
             return;
         }
         if (!isCloseToArea()) {
@@ -367,31 +345,9 @@ public class BarbarianFishingScript implements AModule {
                 (int) Rs2Random.logNormalBounded(16000, 30000, weatherMultiplier));
     }
 
-    private void handleDropping(AScriptConfig config) {
-        AScriptDrop.Result result = AScriptDrop.drop(
-                BarbarianFishingScript::isDroppable, "DROPPING FISH", weatherMultiplier);
-
-        if (result.getOutcome() == AScriptDrop.Outcome.NOTHING_TO_DROP) {
-            dropSessionActive = false;
-            if (droppedInSession) {
-                droppedInSession = false;
-                consecutiveFailures = 0;
-            } else if (Rs2Inventory.isFull()) {
-                // Full inventory with nothing droppable — loud stop instead of a silent spin.
-                fail("inventory full but nothing droppable (unexpected items?)");
-            }
-            return;
-        }
-        if (result.getOutcome() == AScriptDrop.Outcome.NO_PROGRESS) {
-            fail("drop clicks did not land");
-            return;
-        }
-        droppedInSession = true;
-    }
-
     private void handleWalkToBank() {
         Microbot.status = "WALKING TO BANK";
-        if (!bankTripNeeded()) { // supplies restored or config changed
+        if (!bankTripNeeded()) { // supplies restored or inventory emptied
             currentPhase = Phase.WALK_TO_SPOT;
             return;
         }
@@ -470,7 +426,9 @@ public class BarbarianFishingScript implements AModule {
     // ── Helpers ──────────────────────────────────────────────────
 
     private boolean bankTripNeeded() {
-        return !Rs2Inventory.hasItem(ItemID.BARBARIAN_ROD) || !Rs2Inventory.hasItem(ItemID.FEATHER);
+        return Rs2Inventory.isFull()
+                || !Rs2Inventory.hasItem(ItemID.BARBARIAN_ROD)
+                || !Rs2Inventory.hasItem(ItemID.FEATHER);
     }
 
     private boolean isCloseToArea() {
@@ -482,14 +440,6 @@ public class BarbarianFishingScript implements AModule {
         WorldPoint location = Rs2Player.getWorldLocation();
         return location != null
                 && location.distanceTo(BankLocation.BARBARIAN_OUTPOST.getWorldPoint()) <= BANK_CLOSE_DISTANCE;
-    }
-
-    private static boolean isDroppable(Rs2ItemModel item) {
-        if (item == null) return false;
-        for (int id : DROPPABLE_IDS) {
-            if (item.getId() == id) return true;
-        }
-        return false;
     }
 
     /**

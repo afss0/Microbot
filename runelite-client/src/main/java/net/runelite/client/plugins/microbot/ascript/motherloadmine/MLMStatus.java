@@ -10,6 +10,5 @@ public enum MLMStatus {
     MINING,
     DEPOSIT_HOPPER,
     EMPTY_SACK,
-    FIXING_WATERWHEEL,
-    DROP_GEMS
+    FIXING_WATERWHEEL
 }
