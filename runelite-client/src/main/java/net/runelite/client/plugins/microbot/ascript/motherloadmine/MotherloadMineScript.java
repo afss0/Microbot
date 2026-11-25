@@ -23,7 +23,7 @@ import net.runelite.client.plugins.microbot.util.bank.enums.BankLocation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
 import net.runelite.client.plugins.microbot.util.depositbox.Rs2DepositBox;
 import net.runelite.client.plugins.microbot.util.equipment.Rs2Equipment;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjects;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
@@ -457,7 +457,7 @@ public class MotherloadMineScript implements AModule {
         }
         // Fallback: find any nearby vein
         for (int id : MINE_SPOT_IDS) {
-            TileObject vein = Rs2GameObject.findObjectById(id);
+            TileObject vein = Rs2TileObjects.findObjectById(id);
             if (vein != null) return vein;
         }
         return null;
@@ -472,7 +472,7 @@ public class MotherloadMineScript implements AModule {
         }
 
         for (int id : MINE_SPOT_IDS) {
-            TileObject vein = Rs2GameObject.findObjectById(id);
+            TileObject vein = Rs2TileObjects.findObjectById(id);
             if (vein != null && vein.getWorldLocation().distanceTo(target) <= 5) {
                 return vein;
             }
@@ -510,7 +510,7 @@ public class MotherloadMineScript implements AModule {
             }
         }
 
-        TileObject hopper = Rs2GameObject.findObjectById(ObjectID.MOTHERLODE_HOPPER);
+        TileObject hopper = Rs2TileObjects.findObjectById(ObjectID.MOTHERLODE_HOPPER);
         if (hopper == null) {
             log.warn("[MotherloadMineScript] Hopper not found");
             sleep(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
@@ -567,7 +567,7 @@ public class MotherloadMineScript implements AModule {
         // If sack has contents, click to collect
         int sackCount = getSackCount();
         if (sackCount > 0) {
-            TileObject sack = Rs2GameObject.findObjectById(ObjectID.MOTHERLODE_SACK);
+            TileObject sack = Rs2TileObjects.findObjectById(ObjectID.MOTHERLODE_SACK);
             if (sack == null) {
                 log.warn("[MotherloadMineScript] Sack not found");
                 sleep(Rs2Random.logNormalBounded(800, 1600, weatherMultiplier));
@@ -634,7 +634,7 @@ public class MotherloadMineScript implements AModule {
         // Find a hammer — check equipped (Imcando), inventory, then search crate
         if (!Rs2Equipment.isWearing("hammer") && !AScriptBank.hasUnnotedItem("hammer")) {
             // Search crate at 3752,5674
-            TileObject crate = Rs2GameObject.findObjectByLocation(new WorldPoint(3752, 5674, 0));
+            TileObject crate = Rs2TileObjects.findObjectByLocation(new WorldPoint(3752, 5674, 0));
             if (crate != null) {
                 // As elsewhere: the recipe only reports that the click was issued, so the
                 // hammer check below is what verifies the search actually happened.
@@ -657,7 +657,7 @@ public class MotherloadMineScript implements AModule {
         }
 
         // Click broken strut
-        TileObject strut = Rs2GameObject.findObjectById(ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN);
+        TileObject strut = Rs2TileObjects.findObjectById(ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN);
         if (strut == null) {
             log.warn("[MotherloadMineScript] No broken strut found");
             shouldRepairWaterwheel = false;
@@ -713,7 +713,7 @@ public class MotherloadMineScript implements AModule {
     private int countBrokenStruts() {
         WorldPoint playerLoc = Rs2Player.getWorldLocation();
         if (playerLoc == null) return 0;
-        return (int) Rs2GameObject.getAll(
+        return (int) Rs2TileObjects.getAll(
                 (TileObject obj) -> obj.getId() == ObjectID.MOTHERLODE_WHEEL_STRUT_BROKEN
                         && obj.getWorldLocation().distanceTo(playerLoc) <= 15
         ).stream().count();
@@ -748,7 +748,7 @@ public class MotherloadMineScript implements AModule {
      * without clicking ("retry on a later tick"), but these boolean sub-routines feed the
      * module's consecutive-failure counter directly — so wait one frame for the turned view
      * to render and resolve the click again here, as the pre-recipe
-     * {@code Rs2GameObject.interact} did (turn, then act). What is still not clicked after
+     * {@code Rs2TileObjects.interact} did (turn, then act). What is still not clicked after
      * that is a render race and goes to the caller's own accounting, which is where the
      * recipe leaves it.
      * <p>
@@ -808,9 +808,9 @@ public class MotherloadMineScript implements AModule {
     }
 
     private boolean climbDown() {
-        TileObject ladder = Rs2GameObject.findObjectById(ObjectID.MOTHERLODE_LADDER_TOP);
+        TileObject ladder = Rs2TileObjects.findObjectById(ObjectID.MOTHERLODE_LADDER_TOP);
         if (ladder == null) {
-            ladder = Rs2GameObject.findObjectById(ObjectID.MOTHERLODE_LADDER_BOTTOM);
+            ladder = Rs2TileObjects.findObjectById(ObjectID.MOTHERLODE_LADDER_BOTTOM);
         }
         if (ladder != null) {
             // "Climb-down" is the down-ladder's left-click default (see mineVeins); the

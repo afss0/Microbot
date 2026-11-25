@@ -7,7 +7,7 @@ import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjects;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
@@ -1279,8 +1279,8 @@ public final class AScriptBank {
      * in the scene at all, which is the only case that justifies walking.
      */
     public static TileObject findBankObject() {
-        TileObject bank = Rs2GameObject.findBank();
-        return bank != null ? bank : Rs2GameObject.findGrandExchangeBooth();
+        TileObject bank = Rs2TileObjects.findBank();
+        return bank != null ? bank : Rs2TileObjects.findGrandExchangeBooth();
     }
 
     /**

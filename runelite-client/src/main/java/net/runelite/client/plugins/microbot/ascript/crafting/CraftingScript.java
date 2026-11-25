@@ -13,7 +13,7 @@ import static net.runelite.client.plugins.microbot.util.Global.sleepUntilTrue;
 import net.runelite.client.plugins.microbot.util.bank.Rs2Bank;
 import net.runelite.client.plugins.microbot.util.antiban.WeatherModulation;
 import net.runelite.client.plugins.microbot.util.camera.Rs2Camera;
-import net.runelite.client.plugins.microbot.util.gameobject.Rs2GameObject;
+import net.runelite.client.plugins.microbot.api.tileobject.Rs2TileObjects;
 import net.runelite.client.plugins.microbot.util.math.Rs2Random;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2Inventory;
 import net.runelite.client.plugins.microbot.util.inventory.Rs2ItemModel;
@@ -923,7 +923,7 @@ public class CraftingScript implements AModule {
         int before = countMaterial(materialRef);
 
         // Find the spinning wheel by ID from the selected location
-        TileObject wheelObject = Rs2GameObject.findObjectById(location.getObjectID());
+        TileObject wheelObject = Rs2TileObjects.findObjectById(location.getObjectID());
 
         // If not found, walk to the wheel location
         if (wheelObject == null && location.getWorldPoint() != null) {
@@ -932,7 +932,7 @@ public class CraftingScript implements AModule {
             sleep(Rs2Random.logNormalBounded(2000, 4000)); // randomized wait for walker
 
             // Try finding the wheel again after walking
-            wheelObject = Rs2GameObject.findObjectById(location.getObjectID());
+            wheelObject = Rs2TileObjects.findObjectById(location.getObjectID());
         }
 
         // If still not found, deactivate script + notify Discord (once)
@@ -1299,7 +1299,7 @@ public class CraftingScript implements AModule {
      * feed the module's consecutive-failure counter directly, so the recipe's camera-turn
      * outcome (a retry on a later tick, not a failure) must not spend a life. Wait one
      * frame for the turned view to render and resolve the click again here, as the
-     * pre-recipe {@code Rs2GameObject.interact} call sites behaved (turn, then act on a
+     * pre-recipe {@code Rs2TileObjects.interact} call sites behaved (turn, then act on a
      * later tick — except these two blocks pre-check the camera themselves, so the turn
      * here only ever covers the race between that check and this call).
      * <p>
@@ -1323,7 +1323,7 @@ public class CraftingScript implements AModule {
      */
     private TileObject findFurnace(JewelryLocation location) {
         for (int objectId : location.getFurnaceObjectIds()) {
-            TileObject furnace = Rs2GameObject.findObjectById(objectId);
+            TileObject furnace = Rs2TileObjects.findObjectById(objectId);
             if (furnace != null) return furnace;
         }
         return null;
