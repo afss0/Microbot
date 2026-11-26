@@ -74,10 +74,18 @@ public final class Rs2TileObjects {
         if (composition == null || action == null || action.isBlank()) {
             return false;
         }
-        return Arrays.stream(composition.getActions())
-                .filter(Objects::nonNull)
-                .anyMatch(candidate -> candidate.equalsIgnoreCase(action)
-                        || candidate.toLowerCase().contains(action.toLowerCase()));
+        return Boolean.TRUE.equals(Microbot.getClientThread()
+                .runOnClientThreadOptional(() -> {
+                    String[] actions = composition.getActions();
+                    if (actions == null) {
+                        return false;
+                    }
+                    return Arrays.stream(actions)
+                            .filter(Objects::nonNull)
+                            .anyMatch(candidate -> candidate.equalsIgnoreCase(action)
+                                    || candidate.toLowerCase().contains(action.toLowerCase()));
+                })
+                .orElse(false));
     }
 
     public static List<TileObject> getAll() {

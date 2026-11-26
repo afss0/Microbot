@@ -85,6 +85,7 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
 
     /** Beyond this Chebyshev distance the object is out of interaction range: walk first. */
     static final int MAX_INTERACT_DISTANCE = 51;
+    static final int CANT_REACH_RECOVERY_DISTANCE = 2;
     private String[] actions;
 
     /**
@@ -520,26 +521,32 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
             return true;
         }
         if (CantReachTargetRecovery.retryExhausted(
-                Microbot.cantReachTargetRetries, Rs2Random.between(3, 5))) {
+                CantReachTargetRecovery.retries(), Rs2Random.between(3, 5))) {
             int retries = CantReachTargetRecovery.giveUp();
             Microbot.pauseAllScripts.compareAndSet(false, true);
             Microbot.showMessage("Your bot tried to interact with an object for "
                     + retries + " times but failed. Please take a look at what is happening.");
             return false;
         }
-        WorldPoint objectLocation = getRuneLiteWorldLocation();
+        WorldPoint objectLocation = CantReachTargetRecovery.templateLocation(getRuneLiteWorldLocation());
         if (objectLocation == null) {
             return false;
         }
-        Microbot.cantReachTargetRetries++;
+        int attempt = CantReachTargetRecovery.countAttempt();
         Microbot.log("[Interact] can't-reach recovery: walking to object " + getId()
-                + " at " + objectLocation + " (attempt " + Microbot.cantReachTargetRetries + ")");
-        if (!CantReachTargetRecovery.walkTo(objectLocation, 2)) {
-            return false;
+                + " at " + objectLocation + " (attempt " + attempt + ")");
+        if (!CantReachTargetRecovery.walkTo(objectLocation, CANT_REACH_RECOVERY_DISTANCE)) {
+            int distance = distanceToPlayer();
+            if (!CantReachTargetRecovery.withinRange(distance, CANT_REACH_RECOVERY_DISTANCE)) {
+                return false;
+            }
+            Microbot.log("[Interact] can't-reach recovery: walk to object " + getId()
+                    + " ended " + distance + " tile(s) away, clicking it from here (attempt " + attempt + ")");
+            Microbot.cantReachTarget = false;
+            return true;
         }
         Microbot.pauseAllScripts.compareAndSet(true, false);
-        Microbot.cantReachTarget = false;
-        Microbot.cantReachTargetRetries = 0;
+        CantReachTargetRecovery.reset();
         return true;
     }
 
@@ -685,7 +692,7 @@ public class Rs2TileObjectModel implements TileObject, IEntity {
             }
             if (distance > MAX_INTERACT_DISTANCE) {
                 Microbot.log("Object with id " + getId() + " is not close enough to interact with. Walking to the object....");
-                Rs2Walker.walkTo(getRuneLiteWorldLocation());
+                Rs2Walker.walkTo(CantReachTargetRecovery.templateLocation(getRuneLiteWorldLocation()));
                 return false;
             }
 

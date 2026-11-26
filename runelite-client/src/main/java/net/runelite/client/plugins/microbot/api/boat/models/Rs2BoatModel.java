@@ -9,6 +9,7 @@ import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.plugins.microbot.Microbot;
 import net.runelite.client.plugins.microbot.api.IEntity;
+import net.runelite.client.plugins.microbot.api.actor.Rs2ActorModel;
 import net.runelite.client.plugins.microbot.api.boat.data.BoatType;
 import net.runelite.client.plugins.microbot.api.boat.data.Heading;
 import net.runelite.client.plugins.microbot.api.boat.data.PortTaskData;
@@ -257,36 +258,12 @@ public class Rs2BoatModel implements WorldEntity, IEntity {
             }
 
             WorldPoint playerLocation = Rs2Player.getWorldLocation();
-            if (playerLocation == null) {
-                return null;
-            }
-            LocalPoint localPoint = LocalPoint.fromWorld(
-                    player.getWorldView(),
-                    playerLocation
-            );
-
-            if (localPoint == null) {
+            WorldView playerWorldView = player.getWorldView();
+            if (playerLocation == null || playerWorldView == null || playerWorldView.isTopLevel()) {
                 return playerLocation;
             }
 
-            var mainWorldProjection = player
-                    .getWorldView()
-                    .getMainWorldProjection();
-
-            if (mainWorldProjection == null)
-            {
-                return playerLocation;
-            }
-
-            float[] projection = mainWorldProjection
-                    .project(localPoint.getX(), 0, localPoint.getY());
-
-            return Microbot.getClientThread().invoke(() -> WorldPoint.fromLocal(
-                    Microbot.getClient().getTopLevelWorldView(),
-                    (int) projection[0],
-                    (int) projection[2],
-                    0
-            ));
+            return Rs2ActorModel.projectToMainWorld(playerWorldView, playerLocation);
         });
     }
 
@@ -410,7 +387,7 @@ public class Rs2BoatModel implements WorldEntity, IEntity {
         WorldPoint current = getPlayerBoatLocation();
         if (current == null)
         {
-            return Heading.SOUTH.getValue();
+            return -1;
         }
         int deltaX = target.getX() - current.getX();
         int deltaY = target.getY() - current.getY();
