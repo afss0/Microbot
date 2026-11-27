@@ -271,7 +271,7 @@ public class MicrobotPlugin extends Plugin
 
 		clientToolbar.addNavigation(navButton);
 
-		inputSelector = new InputSelector(clientToolbar);
+		Microbot.inputSelector = new InputSelector(clientToolbar);
 		syncInputToScripts(); // scripts that were started before this plugin was listening
 		// Events miss a script whose loop died with its plugin still on, and a stop whose shutDown() threw.
 		inputSyncTimer = new Timer(INPUT_SYNC_MS, e -> syncInputToScripts());
